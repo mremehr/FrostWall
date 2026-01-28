@@ -636,14 +636,16 @@ impl App {
         // Store original wallpaper on first preview
         if !self.preview_mode {
             if let Some(screen) = self.selected_screen() {
-                self.original_wallpaper = swww::get_current(&screen.name)
-                    .map(PathBuf::from);
+                // Get from our tracked wallpapers instead of swww query
+                self.original_wallpaper = self.applied_wallpapers
+                    .get(&screen.name)
+                    .cloned();
             }
             self.preview_mode = true;
         }
 
-        // Apply current selection as preview
-        self.apply_wallpaper()?;
+        // Apply current selection as preview (don't track it)
+        self.apply_wallpaper_internal(false)?;
         Ok(())
     }
 

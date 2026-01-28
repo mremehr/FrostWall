@@ -109,7 +109,7 @@ Features:
 ## Installation
 
 ```bash
-cd FrostWall-Gemini
+cd FrostWall
 cargo build --release
 ```
 
