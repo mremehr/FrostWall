@@ -242,10 +242,13 @@ pub fn get_current(output: &str) -> Option<String> {
 
     let stdout = String::from_utf8_lossy(&result.stdout);
 
+    // Format: "output_name: image_path" or "output_name:\n  image: path"
+    // We need exact match on output name (not prefix match)
+    let prefix = format!("{}:", output);
     for line in stdout.lines() {
-        // Format: "output: image_path"
-        if line.starts_with(output) {
-            return line.split(':').nth(1).map(|s| s.trim().to_string());
+        if line.starts_with(&prefix) {
+            // Extract everything after "output:"
+            return line.strip_prefix(&prefix).map(|s| s.trim().to_string());
         }
     }
 

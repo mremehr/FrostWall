@@ -158,6 +158,56 @@ impl Default for KeybindingsConfig {
     }
 }
 
+impl KeybindingsConfig {
+    /// Parse a keybinding string into a KeyCode
+    pub fn parse_key(s: &str) -> Option<KeyCode> {
+        let s = s.trim();
+
+        // Single character
+        if s.len() == 1 {
+            return Some(KeyCode::Char(s.chars().next().unwrap()));
+        }
+
+        // Named keys (case insensitive)
+        match s.to_lowercase().as_str() {
+            "enter" | "return" => Some(KeyCode::Enter),
+            "esc" | "escape" => Some(KeyCode::Esc),
+            "tab" => Some(KeyCode::Tab),
+            "backtab" | "shift+tab" | "s-tab" => Some(KeyCode::BackTab),
+            "space" => Some(KeyCode::Char(' ')),
+            "backspace" => Some(KeyCode::Backspace),
+            "delete" | "del" => Some(KeyCode::Delete),
+            "insert" | "ins" => Some(KeyCode::Insert),
+            "home" => Some(KeyCode::Home),
+            "end" => Some(KeyCode::End),
+            "pageup" | "pgup" => Some(KeyCode::PageUp),
+            "pagedown" | "pgdn" => Some(KeyCode::PageDown),
+            "up" | "arrow_up" => Some(KeyCode::Up),
+            "down" | "arrow_down" => Some(KeyCode::Down),
+            "left" | "arrow_left" => Some(KeyCode::Left),
+            "right" | "arrow_right" => Some(KeyCode::Right),
+            "f1" => Some(KeyCode::F(1)),
+            "f2" => Some(KeyCode::F(2)),
+            "f3" => Some(KeyCode::F(3)),
+            "f4" => Some(KeyCode::F(4)),
+            "f5" => Some(KeyCode::F(5)),
+            "f6" => Some(KeyCode::F(6)),
+            "f7" => Some(KeyCode::F(7)),
+            "f8" => Some(KeyCode::F(8)),
+            "f9" => Some(KeyCode::F(9)),
+            "f10" => Some(KeyCode::F(10)),
+            "f11" => Some(KeyCode::F(11)),
+            "f12" => Some(KeyCode::F(12)),
+            _ => None,
+        }
+    }
+
+    /// Check if a KeyCode matches a keybinding
+    pub fn matches(&self, key: KeyCode, binding: &str) -> bool {
+        Self::parse_key(binding) == Some(key)
+    }
+}
+
 
 impl Config {
     pub fn config_path() -> PathBuf {
@@ -285,12 +335,14 @@ pub struct App {
     pub active_color_filter: Option<String>,
     /// Export pywal colors on apply
     pub pywal_export: bool,
+    /// Last error message (for UI display)
+    pub last_error: Option<String>,
 }
 
 impl App {
     pub fn new(wallpaper_dir: PathBuf) -> Result<Self> {
         let config = Config::load()?;
-        let cache = WallpaperCache::load_or_scan(&wallpaper_dir)?;
+        let cache = WallpaperCache::load_or_scan_recursive(&wallpaper_dir, config.wallpaper.recursive)?;
 
         // Try to create image picker for thumbnail rendering
         // from_termios() queries terminal for font size
@@ -327,6 +379,7 @@ impl App {
             color_picker_idx: 0,
             active_color_filter: None,
             pywal_export: false,
+            last_error: None,
         })
     }
 
@@ -440,11 +493,15 @@ impl App {
         }
     }
 
-    pub fn apply_wallpaper(&self) -> Result<()> {
+    pub fn apply_wallpaper(&mut self) -> Result<()> {
         if let (Some(screen), Some(wp)) = (self.selected_screen(), self.selected_wallpaper()) {
+            let screen_name = screen.name.clone();
+            let wp_path = wp.path.clone();
+            let wp_colors = wp.colors.clone();
+
             swww::set_wallpaper_with_resize(
-                &screen.name,
-                &wp.path,
+                &screen_name,
+                &wp_path,
                 &self.config.transition(),
                 self.config.display.resize_mode,
                 &self.config.display.fill_color,
@@ -452,21 +509,24 @@ impl App {
 
             // Export pywal colors if enabled
             if self.pywal_export {
-                let _ = crate::pywal::generate_from_wallpaper(&wp.colors, &wp.path);
+                if let Err(e) = crate::pywal::generate_from_wallpaper(&wp_colors, &wp_path) {
+                    self.last_error = Some(format!("pywal: {}", e));
+                }
             }
         }
         Ok(())
     }
 
-    pub fn random_wallpaper(&mut self) {
+    pub fn random_wallpaper(&mut self) -> Result<()> {
         if !self.filtered_wallpapers.is_empty() {
             use rand::Rng;
             let mut rng = rand::thread_rng();
             self.selected_wallpaper_idx = rng.gen_range(0..self.filtered_wallpapers.len());
 
             // Apply immediately
-            let _ = self.apply_wallpaper();
+            self.apply_wallpaper()?;
         }
+        Ok(())
     }
 
     /// Request a thumbnail to be loaded in background
@@ -865,82 +925,78 @@ fn run_app<B: ratatui::backend::Backend>(
                         continue;
                     }
 
-                    match key.code {
-                        KeyCode::Char('q') => {
-                            // Cancel preview before quitting
+                    // Use configurable keybindings
+                    let kb = &app.config.keybindings;
+                    let code = key.code;
+
+                    // Quit (configurable + Esc always works)
+                    if kb.matches(code, &kb.quit.clone()) {
+                        let _ = app.cancel_preview();
+                        app.should_quit = true;
+                    } else if code == KeyCode::Esc {
+                        // Esc cancels preview first, then quits
+                        if app.preview_mode {
                             let _ = app.cancel_preview();
+                        } else {
                             app.should_quit = true;
                         }
-                        KeyCode::Esc => {
-                            // Esc cancels preview first, then quits
-                            if app.preview_mode {
-                                let _ = app.cancel_preview();
-                            } else {
-                                app.should_quit = true;
+                    }
+                    // Navigation (configurable + arrow keys always work)
+                    else if kb.matches(code, &kb.next.clone()) || code == KeyCode::Right {
+                        app.next_wallpaper();
+                    } else if kb.matches(code, &kb.prev.clone()) || code == KeyCode::Left {
+                        app.prev_wallpaper();
+                    }
+                    // Screen navigation (configurable)
+                    else if kb.matches(code, &kb.next_screen.clone()) {
+                        app.next_screen();
+                    } else if kb.matches(code, &kb.prev_screen.clone()) {
+                        app.prev_screen();
+                    }
+                    // Apply wallpaper (configurable)
+                    else if kb.matches(code, &kb.apply.clone()) {
+                        if app.preview_mode {
+                            app.commit_preview();
+                        } else if let Err(e) = app.apply_wallpaper() {
+                            app.last_error = Some(format!("{}", e));
+                        }
+                    }
+                    // Random wallpaper (configurable)
+                    else if kb.matches(code, &kb.random.clone()) {
+                        if let Err(e) = app.random_wallpaper() {
+                            app.last_error = Some(format!("{}", e));
+                        }
+                    }
+                    // Toggle match mode (configurable)
+                    else if kb.matches(code, &kb.toggle_match.clone()) {
+                        app.toggle_match_mode();
+                    }
+                    // Toggle resize mode (configurable)
+                    else if kb.matches(code, &kb.toggle_resize.clone()) {
+                        app.toggle_resize_mode();
+                    }
+                    // Non-configurable keys (these are less commonly changed)
+                    else {
+                        match code {
+                            KeyCode::Char('?') => app.toggle_help(),
+                            KeyCode::Char('s') => app.toggle_sort_mode(),
+                            KeyCode::Char('p') => {
+                                if let Err(e) = app.preview_wallpaper() {
+                                    app.last_error = Some(format!("Preview: {}", e));
+                                }
                             }
-                        }
-                        KeyCode::Char('l') | KeyCode::Right => {
-                            app.next_wallpaper();
-                        }
-                        KeyCode::Char('h') | KeyCode::Left => {
-                            app.prev_wallpaper();
-                        }
-                        KeyCode::Tab => {
-                            app.next_screen();
-                        }
-                        KeyCode::BackTab => {
-                            app.prev_screen();
-                        }
-                        KeyCode::Enter => {
-                            if app.preview_mode {
-                                app.commit_preview();
-                            } else if let Err(e) = app.apply_wallpaper() {
-                                eprintln!("Error: {}", e);
+                            KeyCode::Char('c') => app.toggle_colors(),
+                            KeyCode::Char('C') => app.toggle_color_picker(),
+                            KeyCode::Char('t') => app.cycle_tag_filter(),
+                            KeyCode::Char('T') => app.clear_tag_filter(),
+                            KeyCode::Char('w') => {
+                                if let Err(e) = app.export_pywal() {
+                                    app.last_error = Some(format!("pywal: {}", e));
+                                }
                             }
+                            KeyCode::Char('W') => app.toggle_pywal_export(),
+                            _ => {}
                         }
-                        KeyCode::Char('r') => {
-                            app.random_wallpaper();
-                        }
-                        KeyCode::Char('m') => {
-                            app.toggle_match_mode();
-                        }
-                        KeyCode::Char('f') => {
-                            app.toggle_resize_mode();
-                        }
-                        KeyCode::Char('?') => {
-                            app.toggle_help();
-                        }
-                        KeyCode::Char('s') => {
-                            app.toggle_sort_mode();
-                        }
-                        KeyCode::Char('p') => {
-                            if let Err(e) = app.preview_wallpaper() {
-                                eprintln!("Preview error: {}", e);
-                            }
-                        }
-                        KeyCode::Char('c') => {
-                            app.toggle_colors();
-                        }
-                        KeyCode::Char('C') => {
-                            app.toggle_color_picker();
-                        }
-                        KeyCode::Char('t') => {
-                            app.cycle_tag_filter();
-                        }
-                        KeyCode::Char('T') => {
-                            app.clear_tag_filter();
-                        }
-                        KeyCode::Char('w') => {
-                            // Export pywal colors
-                            if let Err(e) = app.export_pywal() {
-                                eprintln!("pywal export error: {}", e);
-                            }
-                        }
-                        KeyCode::Char('W') => {
-                            // Toggle auto pywal export
-                            app.toggle_pywal_export();
-                        }
-                        _ => {}
                     }
                 }
                 AppEvent::ThumbnailReady(response) => {

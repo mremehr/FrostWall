@@ -2,6 +2,35 @@
 
 All notable changes to FrostWall will be documented in this file.
 
+## [0.4.0] - 2026-01-28
+
+### Added
+- **Configurable Keybindings**: Customize keyboard shortcuts via config file
+  - Parse named keys (Enter, Tab, Esc, F1-F12, arrow keys, etc.)
+  - Configurable: next, prev, apply, quit, random, toggle_match, toggle_resize, next_screen, prev_screen
+- **Recursive Directory Scanning**: Scan subdirectories for wallpapers
+  - Enable via `wallpaper.recursive = true` in config
+  - Uses walkdir crate for efficient traversal
+- **Graceful Shutdown**: Watch daemon handles Ctrl+C cleanly
+  - Saves cache before exit
+  - Proper signal handling via tokio
+
+### Changed
+- **Improved Cache Validation**: More robust cache invalidation
+  - Checks 20 files instead of 5
+  - Verifies modification timestamps
+  - Detects file count changes in directory
+- **Better Error Handling**: Errors displayed in UI instead of lost
+  - `last_error` field shows issues in TUI
+  - All apply/preview/pywal errors properly reported
+- **Fixed swww Output Parsing**: Exact match on output names
+  - DP-1 no longer matches DP-10
+
+### Fixed
+- Random wallpaper now properly returns errors
+- Preview wallpaper errors displayed to user
+- pywal export errors shown in UI
+
 ## [0.3.0] - 2026-01-28
 
 ### Added

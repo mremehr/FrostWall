@@ -704,7 +704,7 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "frostwall"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap 4.5.54",
@@ -728,6 +728,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "walkdir",
 ]
 
 [[package]]

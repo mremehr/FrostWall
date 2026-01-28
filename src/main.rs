@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 #[derive(Parser)]
 #[command(name = "frostwall")]
 #[command(author = "MrMattias")]
-#[command(version = "0.3.0")]
+#[command(version = "0.4.0")]
 #[command(about = "Intelligent wallpaper manager with screen-aware matching")]
 struct Cli {
     #[command(subcommand)]

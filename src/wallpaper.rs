@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use walkdir::WalkDir;
 
 /// How strictly to match wallpaper aspect ratio to screen
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -286,6 +287,10 @@ impl WallpaperCache {
     }
 
     pub fn load_or_scan(source_dir: &Path) -> Result<Self> {
+        Self::load_or_scan_recursive(source_dir, false)
+    }
+
+    pub fn load_or_scan_recursive(source_dir: &Path, recursive: bool) -> Result<Self> {
         let cache_path = Self::cache_path();
 
         if cache_path.exists() {
@@ -299,16 +304,32 @@ impl WallpaperCache {
         }
 
         // Scan fresh
-        Self::scan(source_dir)
+        Self::scan_recursive(source_dir, recursive)
     }
 
     pub fn scan(source_dir: &Path) -> Result<Self> {
-        let entries: Vec<_> = fs::read_dir(source_dir)
-            .with_context(|| format!("Failed to read directory: {}", source_dir.display()))?
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.is_file() && crate::utils::is_image_file(p))
-            .collect();
+        Self::scan_recursive(source_dir, false)
+    }
+
+    pub fn scan_recursive(source_dir: &Path, recursive: bool) -> Result<Self> {
+        let entries: Vec<PathBuf> = if recursive {
+            // Use walkdir for recursive scanning
+            WalkDir::new(source_dir)
+                .follow_links(true)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .map(|e| e.path().to_path_buf())
+                .filter(|p| p.is_file() && crate::utils::is_image_file(p))
+                .collect()
+        } else {
+            // Non-recursive: just read the directory
+            fs::read_dir(source_dir)
+                .with_context(|| format!("Failed to read directory: {}", source_dir.display()))?
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_file() && crate::utils::is_image_file(p))
+                .collect()
+        };
 
         let total = entries.len();
         let processed = AtomicUsize::new(0);
@@ -360,9 +381,65 @@ impl WallpaperCache {
     }
 
     fn validate(&self) -> bool {
-        // Quick check: verify a sample of files still exist
-        // Also check if colors field exists, to invalidate old caches
-        self.wallpapers.iter().take(5).all(|wp| wp.path.exists() && !wp.colors.is_empty())
+        // Check if source directory still exists
+        if !self.source_dir.exists() {
+            return false;
+        }
+
+        // Check a sample of files (up to 20) for existence and modification time
+        let sample_size = self.wallpapers.len().min(20);
+        let step = if self.wallpapers.len() > sample_size {
+            self.wallpapers.len() / sample_size
+        } else {
+            1
+        };
+
+        for (i, wp) in self.wallpapers.iter().enumerate() {
+            // Check every Nth file to get a representative sample
+            if i % step != 0 {
+                continue;
+            }
+
+            // File must exist
+            if !wp.path.exists() {
+                return false;
+            }
+
+            // Must have color data (invalidate old cache format)
+            if wp.colors.is_empty() {
+                return false;
+            }
+
+            // Check if file was modified since caching (if we have mtime)
+            if wp.modified_at > 0 {
+                if let Ok(meta) = std::fs::metadata(&wp.path) {
+                    if let Ok(mtime) = meta.modified() {
+                        if let Ok(duration) = mtime.duration_since(std::time::UNIX_EPOCH) {
+                            let current_mtime = duration.as_secs();
+                            // If file was modified after cache, invalidate
+                            if current_mtime > wp.modified_at {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Quick check: count files in directory to detect additions/removals
+        if let Ok(entries) = std::fs::read_dir(&self.source_dir) {
+            let current_count = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_file() && crate::utils::is_image_file(&e.path()))
+                .count();
+
+            // If file count differs significantly, invalidate
+            if current_count != self.wallpapers.len() {
+                return false;
+            }
+        }
+
+        true
     }
 
     pub fn for_screen(&self, screen: &Screen) -> Vec<&Wallpaper> {

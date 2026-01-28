@@ -1,6 +1,6 @@
 [package]
 name = "frostwall"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["MrMattias"]
 description = "Intelligent wallpaper manager with screen-aware matching for Wayland"
@@ -50,6 +50,9 @@ dialoguer = "0.11"
 
 # File system watching
 notify = "6"
+
+# Directory walking
+walkdir = "2"
 
 # Logging (optional, for debug)
 tracing = "0.1"

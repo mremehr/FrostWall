@@ -5,7 +5,8 @@ use crate::wallpaper::WallpaperCache;
 use anyhow::{Context, Result};
 use notify::{Config as NotifyConfig, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::Path;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 /// Watch daemon configuration
@@ -55,6 +56,13 @@ pub async fn run_watch(watch_config: WatchConfig) -> Result<()> {
     println!("   Watching:  {}", watch_config.watch_dir);
     println!();
 
+    // Set up graceful shutdown
+    let running = Arc::new(AtomicBool::new(true));
+    let running_clone = running.clone();
+
+    // Handle Ctrl+C
+    ctrlc_handler(running_clone);
+
     // Initial scan
     let mut cache = WallpaperCache::load_or_scan(&wallpaper_dir)?;
     println!("✓ Loaded {} wallpapers", cache.wallpapers.len());
@@ -101,7 +109,7 @@ pub async fn run_watch(watch_config: WatchConfig) -> Result<()> {
 
     println!("\n🔄 Running... (Ctrl+C to stop)\n");
 
-    loop {
+    while running.load(Ordering::SeqCst) {
         // Check for file system events
         while let Ok(event) = fs_rx.try_recv() {
             use notify::EventKind;
@@ -153,15 +161,26 @@ pub async fn run_watch(watch_config: WatchConfig) -> Result<()> {
         }
 
         // Sleep a bit before next check
-        std::thread::sleep(Duration::from_secs(1));
+        std::thread::sleep(Duration::from_millis(500));
     }
 
-    // Keep watcher alive
-    #[allow(unreachable_code)]
-    {
-        drop(_watcher);
-        Ok(())
-    }
+    // Graceful shutdown
+    println!("\n❄️  Shutting down gracefully...");
+    drop(_watcher);
+    cache.save()?;
+    println!("✓ Cache saved. Goodbye!");
+
+    Ok(())
+}
+
+/// Set up Ctrl+C handler
+fn ctrlc_handler(running: Arc<AtomicBool>) {
+    // Use tokio's signal handling
+    tokio::spawn(async move {
+        if let Ok(()) = tokio::signal::ctrl_c().await {
+            running.store(false, Ordering::SeqCst);
+        }
+    });
 }
 
 fn set_random_wallpapers(
