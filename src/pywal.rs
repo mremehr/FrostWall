@@ -1,0 +1,348 @@
+//! pywal integration - Generate terminal color schemes from wallpaper colors
+//!
+//! Exports colors to:
+//! - ~/.cache/wal/colors.json (JSON format)
+//! - ~/.cache/wal/colors (newline-separated hex)
+//! - ~/.cache/wal/colors.sh (shell variables)
+//! - ~/.cache/wal/colors.Xresources (X11 format)
+
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+/// pywal color scheme
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalColors {
+    pub wallpaper: String,
+    pub alpha: String,
+    pub special: WalSpecial,
+    pub colors: WalColorMap,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalSpecial {
+    pub background: String,
+    pub foreground: String,
+    pub cursor: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalColorMap {
+    pub color0: String,
+    pub color1: String,
+    pub color2: String,
+    pub color3: String,
+    pub color4: String,
+    pub color5: String,
+    pub color6: String,
+    pub color7: String,
+    pub color8: String,
+    pub color9: String,
+    pub color10: String,
+    pub color11: String,
+    pub color12: String,
+    pub color13: String,
+    pub color14: String,
+    pub color15: String,
+}
+
+/// Get pywal cache directory
+pub fn wal_cache_dir() -> PathBuf {
+    dirs::cache_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("wal")
+}
+
+/// Generate a 16-color terminal palette from dominant colors
+///
+/// Takes 5 dominant colors and expands them to 16 terminal colors:
+/// - color0: darkest (background)
+/// - color1-6: main colors
+/// - color7: light foreground
+/// - color8-14: lighter variants
+/// - color15: brightest (white)
+pub fn generate_palette(dominant_colors: &[String], wallpaper_path: &Path) -> WalColors {
+    // Ensure we have at least some colors
+    let colors: Vec<&str> = dominant_colors
+        .iter()
+        .map(|s| s.as_str())
+        .chain(std::iter::repeat("#808080"))
+        .take(5)
+        .collect();
+
+    // Sort by luminance to find darkest/lightest
+    let mut sorted_colors: Vec<(f32, &str)> = colors
+        .iter()
+        .map(|&c| (luminance(c), c))
+        .collect();
+    sorted_colors.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+    let darkest = sorted_colors[0].1;
+    let lightest = sorted_colors[sorted_colors.len() - 1].1;
+
+    // Build 16-color palette
+    let color_map = WalColorMap {
+        color0: darken(darkest, 0.2),           // Background (darkened)
+        color1: colors[0].to_string(),          // Red-ish
+        color2: colors[1].to_string(),          // Green-ish
+        color3: colors[2].to_string(),          // Yellow-ish
+        color4: colors[3].to_string(),          // Blue-ish
+        color5: colors[4].to_string(),          // Magenta-ish
+        color6: blend(colors[1], colors[3]),    // Cyan-ish (blend)
+        color7: lighten(lightest, 0.1),         // Light gray
+        color8: lighten(darkest, 0.3),          // Bright black
+        color9: lighten(colors[0], 0.2),        // Bright red
+        color10: lighten(colors[1], 0.2),       // Bright green
+        color11: lighten(colors[2], 0.2),       // Bright yellow
+        color12: lighten(colors[3], 0.2),       // Bright blue
+        color13: lighten(colors[4], 0.2),       // Bright magenta
+        color14: lighten(&blend(colors[1], colors[3]), 0.2), // Bright cyan
+        color15: lighten(lightest, 0.3),        // White
+    };
+
+    WalColors {
+        wallpaper: wallpaper_path.to_string_lossy().to_string(),
+        alpha: "100".to_string(),
+        special: WalSpecial {
+            background: color_map.color0.clone(),
+            foreground: color_map.color7.clone(),
+            cursor: color_map.color7.clone(),
+        },
+        colors: color_map,
+    }
+}
+
+/// Export colors to pywal cache directory
+pub fn export_colors(colors: &WalColors) -> Result<PathBuf> {
+    let cache_dir = wal_cache_dir();
+    fs::create_dir_all(&cache_dir)
+        .context("Failed to create wal cache directory")?;
+
+    // Export colors.json
+    let json_path = cache_dir.join("colors.json");
+    let json = serde_json::to_string_pretty(colors)?;
+    fs::write(&json_path, &json)?;
+
+    // Export colors (plain hex, one per line)
+    let plain_path = cache_dir.join("colors");
+    let plain = format!(
+        "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
+        colors.colors.color0, colors.colors.color1, colors.colors.color2, colors.colors.color3,
+        colors.colors.color4, colors.colors.color5, colors.colors.color6, colors.colors.color7,
+        colors.colors.color8, colors.colors.color9, colors.colors.color10, colors.colors.color11,
+        colors.colors.color12, colors.colors.color13, colors.colors.color14, colors.colors.color15,
+    );
+    fs::write(&plain_path, &plain)?;
+
+    // Export colors.sh (shell variables)
+    let sh_path = cache_dir.join("colors.sh");
+    let sh = format!(
+        r#"# Shell variables
+# Generated by FrostWall
+wallpaper='{}'
+background='{}'
+foreground='{}'
+cursor='{}'
+color0='{}'
+color1='{}'
+color2='{}'
+color3='{}'
+color4='{}'
+color5='{}'
+color6='{}'
+color7='{}'
+color8='{}'
+color9='{}'
+color10='{}'
+color11='{}'
+color12='{}'
+color13='{}'
+color14='{}'
+color15='{}'
+"#,
+        colors.wallpaper,
+        colors.special.background, colors.special.foreground, colors.special.cursor,
+        colors.colors.color0, colors.colors.color1, colors.colors.color2, colors.colors.color3,
+        colors.colors.color4, colors.colors.color5, colors.colors.color6, colors.colors.color7,
+        colors.colors.color8, colors.colors.color9, colors.colors.color10, colors.colors.color11,
+        colors.colors.color12, colors.colors.color13, colors.colors.color14, colors.colors.color15,
+    );
+    fs::write(&sh_path, &sh)?;
+
+    // Export colors.Xresources
+    let xres_path = cache_dir.join("colors.Xresources");
+    let xres = format!(
+        r#"! X colors
+! Generated by FrostWall
+*background: {}
+*foreground: {}
+*cursorColor: {}
+*color0: {}
+*color1: {}
+*color2: {}
+*color3: {}
+*color4: {}
+*color5: {}
+*color6: {}
+*color7: {}
+*color8: {}
+*color9: {}
+*color10: {}
+*color11: {}
+*color12: {}
+*color13: {}
+*color14: {}
+*color15: {}
+"#,
+        colors.special.background, colors.special.foreground, colors.special.cursor,
+        colors.colors.color0, colors.colors.color1, colors.colors.color2, colors.colors.color3,
+        colors.colors.color4, colors.colors.color5, colors.colors.color6, colors.colors.color7,
+        colors.colors.color8, colors.colors.color9, colors.colors.color10, colors.colors.color11,
+        colors.colors.color12, colors.colors.color13, colors.colors.color14, colors.colors.color15,
+    );
+    fs::write(&xres_path, &xres)?;
+
+    Ok(cache_dir)
+}
+
+/// Apply exported colors (reload terminals, etc.)
+pub fn apply_colors() -> Result<()> {
+    use std::process::Command;
+
+    // Try to reload various terminals/applications
+    // xrdb for X11 applications
+    let xres_path = wal_cache_dir().join("colors.Xresources");
+    if xres_path.exists() {
+        let _ = Command::new("xrdb")
+            .arg("-merge")
+            .arg(&xres_path)
+            .output();
+    }
+
+    // Send escape sequences to reload terminal colors
+    // This works for terminals that support OSC 4/10/11
+    print_terminal_sequences();
+
+    Ok(())
+}
+
+/// Print terminal escape sequences to update colors
+fn print_terminal_sequences() {
+    // This would send OSC sequences to update terminal colors in real-time
+    // For now, we just note that users should restart their terminal
+    // or source ~/.cache/wal/colors.sh
+}
+
+// --- Color manipulation helpers ---
+
+fn parse_hex(hex: &str) -> Option<(u8, u8, u8)> {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() >= 6 {
+        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+        Some((r, g, b))
+    } else {
+        None
+    }
+}
+
+fn to_hex(r: u8, g: u8, b: u8) -> String {
+    format!("#{:02x}{:02x}{:02x}", r, g, b)
+}
+
+fn luminance(hex: &str) -> f32 {
+    if let Some((r, g, b)) = parse_hex(hex) {
+        // Relative luminance formula
+        0.299 * (r as f32) + 0.587 * (g as f32) + 0.114 * (b as f32)
+    } else {
+        128.0
+    }
+}
+
+fn lighten(hex: &str, amount: f32) -> String {
+    if let Some((r, g, b)) = parse_hex(hex) {
+        let r = (r as f32 + (255.0 - r as f32) * amount).min(255.0) as u8;
+        let g = (g as f32 + (255.0 - g as f32) * amount).min(255.0) as u8;
+        let b = (b as f32 + (255.0 - b as f32) * amount).min(255.0) as u8;
+        to_hex(r, g, b)
+    } else {
+        hex.to_string()
+    }
+}
+
+fn darken(hex: &str, amount: f32) -> String {
+    if let Some((r, g, b)) = parse_hex(hex) {
+        let r = (r as f32 * (1.0 - amount)).max(0.0) as u8;
+        let g = (g as f32 * (1.0 - amount)).max(0.0) as u8;
+        let b = (b as f32 * (1.0 - amount)).max(0.0) as u8;
+        to_hex(r, g, b)
+    } else {
+        hex.to_string()
+    }
+}
+
+fn blend(hex1: &str, hex2: &str) -> String {
+    if let (Some((r1, g1, b1)), Some((r2, g2, b2))) = (parse_hex(hex1), parse_hex(hex2)) {
+        let r = ((r1 as u16 + r2 as u16) / 2) as u8;
+        let g = ((g1 as u16 + g2 as u16) / 2) as u8;
+        let b = ((b1 as u16 + b2 as u16) / 2) as u8;
+        to_hex(r, g, b)
+    } else {
+        hex1.to_string()
+    }
+}
+
+/// CLI command to generate and export pywal colors
+pub fn cmd_pywal(wallpaper_path: &Path, apply: bool) -> Result<()> {
+    use crate::wallpaper::WallpaperCache;
+
+    // Load cache to get colors
+    let cache_dir = wallpaper_path.parent().unwrap_or(Path::new("."));
+    let cache = WallpaperCache::load_or_scan(cache_dir)?;
+
+    // Find the wallpaper in cache or scan it fresh
+    let colors = cache.wallpapers.iter()
+        .find(|w| w.path == wallpaper_path)
+        .map(|wp| wp.colors.clone())
+        .unwrap_or_else(|| {
+            // Not in cache, scan the file directly
+            crate::wallpaper::Wallpaper::from_path(wallpaper_path)
+                .map(|wp| wp.colors)
+                .unwrap_or_default()
+        });
+
+    if colors.is_empty() {
+        anyhow::bail!("No colors extracted from wallpaper");
+    }
+
+    // Generate palette
+    let palette = generate_palette(&colors, wallpaper_path);
+
+    // Export
+    let cache_path = export_colors(&palette)?;
+    println!("✓ Exported colors to {}", cache_path.display());
+
+    // List generated files
+    println!("  - colors.json");
+    println!("  - colors");
+    println!("  - colors.sh");
+    println!("  - colors.Xresources");
+
+    // Apply if requested
+    if apply {
+        apply_colors()?;
+        println!("\n✓ Applied colors (xrdb merged)");
+        println!("  Restart your terminal or run: source ~/.cache/wal/colors.sh");
+    }
+
+    Ok(())
+}
+
+/// Generate pywal colors from currently selected wallpaper in TUI
+pub fn generate_from_wallpaper(colors: &[String], wallpaper_path: &Path) -> Result<()> {
+    let palette = generate_palette(colors, wallpaper_path);
+    export_colors(&palette)?;
+    Ok(())
+}

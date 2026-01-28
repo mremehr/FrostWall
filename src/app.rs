@@ -1,0 +1,959 @@
+use crate::screen::{self, Screen};
+use crate::swww::{self, FillColor, ResizeMode, Transition, TransitionType};
+use crate::thumbnail::ThumbnailCache;
+use crate::ui;
+use crate::wallpaper::{MatchMode, SortMode, Wallpaper, WallpaperCache};
+use anyhow::Result;
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs;
+use std::io;
+use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
+pub struct Config {
+    #[serde(default)]
+    pub wallpaper: WallpaperConfig,
+    #[serde(default)]
+    pub display: DisplayConfig,
+    #[serde(default)]
+    pub transition: TransitionConfig,
+    #[serde(default)]
+    pub thumbnails: ThumbnailConfig,
+    #[serde(default)]
+    pub theme: ThemeConfig,
+    #[serde(default)]
+    pub keybindings: KeybindingsConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WallpaperConfig {
+    pub directory: PathBuf,
+    pub extensions: Vec<String>,
+    pub recursive: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DisplayConfig {
+    #[serde(default)]
+    pub match_mode: MatchMode,
+    #[serde(default)]
+    pub resize_mode: ResizeMode,
+    #[serde(default)]
+    pub fill_color: FillColor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransitionConfig {
+    pub transition_type: String,
+    pub duration: f32,
+    pub fps: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThumbnailConfig {
+    pub width: u32,
+    pub height: u32,
+    pub quality: u8,
+    pub grid_columns: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThemeConfig {
+    pub mode: String, // "auto", "light", "dark"
+    pub check_interval_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindingsConfig {
+    pub next: String,
+    pub prev: String,
+    pub apply: String,
+    pub quit: String,
+    pub random: String,
+    pub toggle_match: String,
+    pub toggle_resize: String,
+    pub next_screen: String,
+    pub prev_screen: String,
+}
+
+impl Default for WallpaperConfig {
+    fn default() -> Self {
+        Self {
+            directory: dirs::picture_dir()
+                .map(|p| p.join("wallpapers"))
+                .unwrap_or_else(|| PathBuf::from("~/Pictures/wallpapers")),
+            extensions: vec![
+                "jpg".into(), "jpeg".into(), "png".into(),
+                "webp".into(), "bmp".into(), "gif".into(),
+            ],
+            recursive: false,
+        }
+    }
+}
+
+impl Default for DisplayConfig {
+    fn default() -> Self {
+        Self {
+            match_mode: MatchMode::Flexible,
+            resize_mode: ResizeMode::Fit,
+            fill_color: FillColor::black(),
+        }
+    }
+}
+
+impl Default for TransitionConfig {
+    fn default() -> Self {
+        Self {
+            transition_type: "fade".to_string(),
+            duration: 1.0,
+            fps: 60,
+        }
+    }
+}
+
+impl Default for ThumbnailConfig {
+    fn default() -> Self {
+        Self {
+            width: 800,
+            height: 600,
+            quality: 92,
+            grid_columns: 3,
+        }
+    }
+}
+
+impl Default for ThemeConfig {
+    fn default() -> Self {
+        Self {
+            mode: "auto".to_string(),
+            check_interval_ms: 500,
+        }
+    }
+}
+
+impl Default for KeybindingsConfig {
+    fn default() -> Self {
+        Self {
+            next: "l".to_string(),
+            prev: "h".to_string(),
+            apply: "Enter".to_string(),
+            quit: "q".to_string(),
+            random: "r".to_string(),
+            toggle_match: "m".to_string(),
+            toggle_resize: "f".to_string(),
+            next_screen: "Tab".to_string(),
+            prev_screen: "BackTab".to_string(),
+        }
+    }
+}
+
+
+impl Config {
+    pub fn config_path() -> PathBuf {
+        directories::ProjectDirs::from("com", "mrmattias", "frostwall")
+            .map(|dirs| dirs.config_dir().to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("config.toml")
+    }
+
+    pub fn load() -> Result<Self> {
+        let path = Self::config_path();
+
+        if path.exists() {
+            let data = fs::read_to_string(&path)?;
+            let config: Config = toml::from_str(&data)?;
+            Ok(config)
+        } else {
+            // Create default config
+            let config = Config::default();
+            config.save()?;
+            Ok(config)
+        }
+    }
+
+    pub fn save(&self) -> Result<()> {
+        let path = Self::config_path();
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let data = toml::to_string_pretty(self)?;
+        fs::write(&path, data)?;
+
+        Ok(())
+    }
+
+    pub fn transition(&self) -> Transition {
+        let transition_type = match self.transition.transition_type.as_str() {
+            "fade" => TransitionType::Fade,
+            "wipe" => TransitionType::Wipe,
+            "grow" => TransitionType::Grow,
+            "center" => TransitionType::Center,
+            "outer" => TransitionType::Outer,
+            "none" => TransitionType::None,
+            _ => TransitionType::Fade,
+        };
+
+        Transition {
+            transition_type,
+            duration: self.transition.duration,
+            fps: self.transition.fps,
+        }
+    }
+
+    /// Get wallpaper directory, expanding ~ if needed
+    pub fn wallpaper_dir(&self) -> PathBuf {
+        let dir = &self.wallpaper.directory;
+        if dir.starts_with("~") {
+            if let Some(home) = dirs::home_dir() {
+                return home.join(dir.strip_prefix("~").unwrap_or(dir));
+            }
+        }
+        dir.clone()
+    }
+
+    /// Check if an extension is supported
+    #[allow(dead_code)]
+    pub fn is_supported_extension(&self, ext: &str) -> bool {
+        self.wallpaper.extensions.iter().any(|e| e.eq_ignore_ascii_case(ext))
+    }
+}
+
+/// Request to load a thumbnail in background
+pub struct ThumbnailRequest {
+    pub cache_idx: usize,
+    pub source_path: PathBuf,
+}
+
+/// Response from thumbnail loading
+pub struct ThumbnailResponse {
+    pub cache_idx: usize,
+    pub image: image::DynamicImage,
+}
+
+/// Events from background threads
+pub enum AppEvent {
+    Key(event::KeyEvent),
+    ThumbnailReady(ThumbnailResponse),
+    Tick,
+}
+
+pub struct App {
+    pub screens: Vec<Screen>,
+    pub cache: WallpaperCache,
+    pub config: Config,
+    pub selected_screen_idx: usize,
+    pub selected_wallpaper_idx: usize,
+    pub filtered_wallpapers: Vec<usize>,
+    pub should_quit: bool,
+    pub image_picker: Option<Picker>,
+    pub thumbnail_cache: HashMap<usize, Box<dyn StatefulProtocol>>,
+    /// Tracks which thumbnails are currently being loaded
+    pub loading_thumbnails: std::collections::HashSet<usize>,
+    /// Channel to request thumbnail loading
+    thumb_request_tx: Option<Sender<ThumbnailRequest>>,
+    /// Show help popup
+    pub show_help: bool,
+    /// Current sort mode
+    pub sort_mode: SortMode,
+    /// Live preview mode - store original wallpaper to revert
+    pub preview_mode: bool,
+    pub original_wallpaper: Option<PathBuf>,
+    /// Active tag filter (None = show all)
+    pub active_tag_filter: Option<String>,
+    /// Show color palette of selected wallpaper
+    pub show_colors: bool,
+    /// Show color picker popup
+    pub show_color_picker: bool,
+    /// Available colors for filtering (extracted from all wallpapers)
+    pub available_colors: Vec<String>,
+    /// Selected color index in picker
+    pub color_picker_idx: usize,
+    /// Active color filter
+    pub active_color_filter: Option<String>,
+    /// Export pywal colors on apply
+    pub pywal_export: bool,
+}
+
+impl App {
+    pub fn new(wallpaper_dir: PathBuf) -> Result<Self> {
+        let config = Config::load()?;
+        let cache = WallpaperCache::load_or_scan(&wallpaper_dir)?;
+
+        // Try to create image picker for thumbnail rendering
+        // from_termios() queries terminal for font size
+        // guess_protocol() then detects the best graphics protocol (Kitty, Sixel, etc.)
+        let image_picker = Picker::from_termios()
+            .ok()
+            .map(|mut p| {
+                // Actively query terminal for graphics protocol support
+                p.guess_protocol();
+                p
+            })
+            .or_else(|| Some(Picker::new((8, 16))));
+
+        Ok(Self {
+            screens: Vec::new(),
+            cache,
+            config,
+            selected_screen_idx: 0,
+            selected_wallpaper_idx: 0,
+            filtered_wallpapers: Vec::new(),
+            should_quit: false,
+            image_picker,
+            thumbnail_cache: HashMap::new(),
+            loading_thumbnails: std::collections::HashSet::new(),
+            thumb_request_tx: None,
+            show_help: false,
+            sort_mode: SortMode::Name,
+            preview_mode: false,
+            original_wallpaper: None,
+            active_tag_filter: None,
+            show_colors: false,
+            show_color_picker: false,
+            available_colors: Vec::new(),
+            color_picker_idx: 0,
+            active_color_filter: None,
+            pywal_export: false,
+        })
+    }
+
+    pub async fn init_screens(&mut self) -> Result<()> {
+        self.screens = screen::detect_screens().await?;
+        self.update_filtered_wallpapers();
+        Ok(())
+    }
+
+    pub fn update_filtered_wallpapers(&mut self) {
+        let match_mode = self.config.display.match_mode;
+        let tag_filter = self.active_tag_filter.clone();
+        let color_filter = self.active_color_filter.clone();
+
+        if let Some(screen) = self.screens.get(self.selected_screen_idx) {
+            self.filtered_wallpapers = self
+                .cache
+                .wallpapers
+                .iter()
+                .enumerate()
+                .filter(|(_, wp)| {
+                    // Screen matching
+                    if !wp.matches_screen_with_mode(screen, match_mode) {
+                        return false;
+                    }
+                    // Tag filtering
+                    if let Some(ref tag) = tag_filter {
+                        if !wp.has_tag(tag) {
+                            return false;
+                        }
+                    }
+                    // Color filtering
+                    if let Some(ref color) = color_filter {
+                        if !wp.colors.iter().any(|c| c == color) {
+                            return false;
+                        }
+                    }
+                    true
+                })
+                .map(|(i, _)| i)
+                .collect();
+        } else {
+            self.filtered_wallpapers = (0..self.cache.wallpapers.len()).collect();
+        }
+
+        // Apply current sort
+        self.apply_sort();
+
+        if self.selected_wallpaper_idx >= self.filtered_wallpapers.len() {
+            self.selected_wallpaper_idx = 0;
+        }
+
+        // Clear thumbnail cache when filter changes
+        self.thumbnail_cache.clear();
+        self.loading_thumbnails.clear();
+    }
+
+    /// Toggle match mode and refresh filter
+    pub fn toggle_match_mode(&mut self) {
+        self.config.display.match_mode = self.config.display.match_mode.next();
+        self.update_filtered_wallpapers();
+    }
+
+    /// Toggle resize mode
+    pub fn toggle_resize_mode(&mut self) {
+        self.config.display.resize_mode = self.config.display.resize_mode.next();
+    }
+
+    pub fn selected_wallpaper(&self) -> Option<&Wallpaper> {
+        self.filtered_wallpapers
+            .get(self.selected_wallpaper_idx)
+            .and_then(|&i| self.cache.wallpapers.get(i))
+    }
+
+    pub fn selected_screen(&self) -> Option<&Screen> {
+        self.screens.get(self.selected_screen_idx)
+    }
+
+    pub fn next_wallpaper(&mut self) {
+        if !self.filtered_wallpapers.is_empty() {
+            self.selected_wallpaper_idx =
+                (self.selected_wallpaper_idx + 1) % self.filtered_wallpapers.len();
+        }
+    }
+
+    pub fn prev_wallpaper(&mut self) {
+        if !self.filtered_wallpapers.is_empty() {
+            self.selected_wallpaper_idx = if self.selected_wallpaper_idx == 0 {
+                self.filtered_wallpapers.len() - 1
+            } else {
+                self.selected_wallpaper_idx - 1
+            };
+        }
+    }
+
+    pub fn next_screen(&mut self) {
+        if !self.screens.is_empty() {
+            self.selected_screen_idx = (self.selected_screen_idx + 1) % self.screens.len();
+            self.update_filtered_wallpapers();
+        }
+    }
+
+    pub fn prev_screen(&mut self) {
+        if !self.screens.is_empty() {
+            self.selected_screen_idx = if self.selected_screen_idx == 0 {
+                self.screens.len() - 1
+            } else {
+                self.selected_screen_idx - 1
+            };
+            self.update_filtered_wallpapers();
+        }
+    }
+
+    pub fn apply_wallpaper(&self) -> Result<()> {
+        if let (Some(screen), Some(wp)) = (self.selected_screen(), self.selected_wallpaper()) {
+            swww::set_wallpaper_with_resize(
+                &screen.name,
+                &wp.path,
+                &self.config.transition(),
+                self.config.display.resize_mode,
+                &self.config.display.fill_color,
+            )?;
+
+            // Export pywal colors if enabled
+            if self.pywal_export {
+                let _ = crate::pywal::generate_from_wallpaper(&wp.colors, &wp.path);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn random_wallpaper(&mut self) {
+        if !self.filtered_wallpapers.is_empty() {
+            use rand::Rng;
+            let mut rng = rand::thread_rng();
+            self.selected_wallpaper_idx = rng.gen_range(0..self.filtered_wallpapers.len());
+
+            // Apply immediately
+            let _ = self.apply_wallpaper();
+        }
+    }
+
+    /// Request a thumbnail to be loaded in background
+    pub fn request_thumbnail(&mut self, cache_idx: usize) {
+        // Bounds check
+        if cache_idx >= self.cache.wallpapers.len() {
+            return;
+        }
+
+        // Skip if already loaded or loading
+        if self.thumbnail_cache.contains_key(&cache_idx)
+            || self.loading_thumbnails.contains(&cache_idx)
+        {
+            return;
+        }
+
+        if let Some(wp) = self.cache.wallpapers.get(cache_idx) {
+            if let Some(tx) = &self.thumb_request_tx {
+                let request = ThumbnailRequest {
+                    cache_idx,
+                    source_path: wp.path.clone(),
+                };
+                if tx.send(request).is_ok() {
+                    self.loading_thumbnails.insert(cache_idx);
+                }
+            }
+        }
+    }
+
+    /// Handle a loaded thumbnail from background thread
+    pub fn handle_thumbnail_ready(&mut self, response: ThumbnailResponse) {
+        self.loading_thumbnails.remove(&response.cache_idx);
+
+        if let Some(picker) = &mut self.image_picker {
+            let protocol = picker.new_resize_protocol(response.image);
+            self.thumbnail_cache.insert(response.cache_idx, protocol);
+        }
+    }
+
+    /// Check if a thumbnail is ready
+    pub fn get_thumbnail(&mut self, cache_idx: usize) -> Option<&mut Box<dyn StatefulProtocol>> {
+        self.thumbnail_cache.get_mut(&cache_idx)
+    }
+
+    /// Check if a thumbnail is currently loading
+    pub fn is_loading(&self, cache_idx: usize) -> bool {
+        self.loading_thumbnails.contains(&cache_idx)
+    }
+
+    /// Set the thumbnail request channel
+    pub fn set_thumb_channel(&mut self, tx: Sender<ThumbnailRequest>) {
+        self.thumb_request_tx = Some(tx);
+    }
+
+    /// Toggle help popup
+    pub fn toggle_help(&mut self) {
+        self.show_help = !self.show_help;
+    }
+
+    /// Cycle through sort modes
+    pub fn toggle_sort_mode(&mut self) {
+        self.sort_mode = self.sort_mode.next();
+        self.apply_sort();
+    }
+
+    /// Apply current sort mode to filtered wallpapers
+    fn apply_sort(&mut self) {
+        let cache = &self.cache;
+        let sort_mode = self.sort_mode;
+
+        self.filtered_wallpapers.sort_by(|&a, &b| {
+            let wp_a = &cache.wallpapers[a];
+            let wp_b = &cache.wallpapers[b];
+
+            match sort_mode {
+                SortMode::Name => wp_a.path.cmp(&wp_b.path),
+                SortMode::Size => {
+                    // Use cached file_size (no filesystem calls)
+                    wp_b.file_size.cmp(&wp_a.file_size) // Largest first
+                }
+                SortMode::Date => {
+                    // Use cached modified_at (no filesystem calls)
+                    wp_b.modified_at.cmp(&wp_a.modified_at) // Newest first
+                }
+            }
+        });
+
+        // Reset selection after sort
+        self.selected_wallpaper_idx = 0;
+    }
+
+    /// Enter preview mode - temporarily apply wallpaper
+    pub fn preview_wallpaper(&mut self) -> Result<()> {
+        // Store original wallpaper on first preview
+        if !self.preview_mode {
+            if let Some(screen) = self.selected_screen() {
+                self.original_wallpaper = swww::get_current(&screen.name)
+                    .map(PathBuf::from);
+            }
+            self.preview_mode = true;
+        }
+
+        // Apply current selection as preview
+        self.apply_wallpaper()?;
+        Ok(())
+    }
+
+    /// Revert to original wallpaper (cancel preview)
+    pub fn cancel_preview(&mut self) -> Result<()> {
+        if self.preview_mode {
+            if let (Some(screen), Some(original)) = (self.selected_screen(), &self.original_wallpaper) {
+                swww::set_wallpaper_with_resize(
+                    &screen.name,
+                    original,
+                    &self.config.transition(),
+                    self.config.display.resize_mode,
+                    &self.config.display.fill_color,
+                )?;
+            }
+            self.preview_mode = false;
+            self.original_wallpaper = None;
+        }
+        Ok(())
+    }
+
+    /// Commit preview (keep current wallpaper)
+    pub fn commit_preview(&mut self) {
+        self.preview_mode = false;
+        self.original_wallpaper = None;
+    }
+
+    /// Toggle color display for selected wallpaper
+    pub fn toggle_colors(&mut self) {
+        self.show_colors = !self.show_colors;
+    }
+
+    /// Cycle through available tags as filter
+    pub fn cycle_tag_filter(&mut self) {
+        let all_tags = self.cache.all_tags();
+
+        if all_tags.is_empty() {
+            self.active_tag_filter = None;
+            return;
+        }
+
+        self.active_tag_filter = match &self.active_tag_filter {
+            None => Some(all_tags[0].clone()),
+            Some(current) => {
+                // Find current position and move to next
+                if let Some(pos) = all_tags.iter().position(|t| t == current) {
+                    if pos + 1 < all_tags.len() {
+                        Some(all_tags[pos + 1].clone())
+                    } else {
+                        None // Wrap around to "all"
+                    }
+                } else {
+                    None
+                }
+            }
+        };
+
+        self.update_filtered_wallpapers();
+    }
+
+    /// Clear tag filter
+    pub fn clear_tag_filter(&mut self) {
+        self.active_tag_filter = None;
+        self.update_filtered_wallpapers();
+    }
+
+    /// Get available tags
+    #[allow(dead_code)]
+    pub fn available_tags(&self) -> Vec<String> {
+        self.cache.all_tags()
+    }
+
+    /// Toggle color picker popup
+    pub fn toggle_color_picker(&mut self) {
+        if !self.show_color_picker {
+            // Build list of unique colors from all wallpapers
+            self.available_colors = self.get_unique_colors();
+            self.color_picker_idx = 0;
+        }
+        self.show_color_picker = !self.show_color_picker;
+    }
+
+    /// Get unique colors across all wallpapers
+    fn get_unique_colors(&self) -> Vec<String> {
+        let mut colors: Vec<String> = self.cache.wallpapers
+            .iter()
+            .flat_map(|wp| wp.colors.iter().cloned())
+            .collect();
+        colors.sort();
+        colors.dedup();
+        // Limit to reasonable number
+        colors.truncate(32);
+        colors
+    }
+
+    /// Navigate color picker
+    pub fn color_picker_next(&mut self) {
+        if !self.available_colors.is_empty() {
+            self.color_picker_idx = (self.color_picker_idx + 1) % self.available_colors.len();
+        }
+    }
+
+    pub fn color_picker_prev(&mut self) {
+        if !self.available_colors.is_empty() {
+            self.color_picker_idx = if self.color_picker_idx == 0 {
+                self.available_colors.len() - 1
+            } else {
+                self.color_picker_idx - 1
+            };
+        }
+    }
+
+    /// Apply selected color filter
+    pub fn apply_color_filter(&mut self) {
+        if let Some(color) = self.available_colors.get(self.color_picker_idx) {
+            self.active_color_filter = Some(color.clone());
+            self.show_color_picker = false;
+            self.update_filtered_wallpapers();
+        }
+    }
+
+    /// Clear color filter
+    pub fn clear_color_filter(&mut self) {
+        self.active_color_filter = None;
+        self.update_filtered_wallpapers();
+    }
+
+    /// Export pywal colors for current wallpaper
+    pub fn export_pywal(&self) -> Result<()> {
+        if let Some(wp) = self.selected_wallpaper() {
+            crate::pywal::generate_from_wallpaper(&wp.colors, &wp.path)?;
+        }
+        Ok(())
+    }
+
+    /// Toggle pywal export on apply
+    pub fn toggle_pywal_export(&mut self) {
+        self.pywal_export = !self.pywal_export;
+    }
+}
+
+pub async fn run_tui(wallpaper_dir: PathBuf) -> Result<()> {
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    let mut app = App::new(wallpaper_dir)?;
+    app.init_screens().await?;
+
+    // Set up channels for background thumbnail loading
+    let (thumb_tx, thumb_rx) = mpsc::channel::<ThumbnailRequest>();
+    let (event_tx, event_rx) = mpsc::channel::<AppEvent>();
+
+    app.set_thumb_channel(thumb_tx);
+
+    // Spawn thumbnail worker thread
+    let event_tx_thumb = event_tx.clone();
+    let disk_cache = ThumbnailCache::new();
+    thread::spawn(move || {
+        thumbnail_worker(thumb_rx, event_tx_thumb, disk_cache);
+    });
+
+    // Spawn event polling thread
+    let event_tx_input = event_tx.clone();
+    thread::spawn(move || {
+        input_worker(event_tx_input);
+    });
+
+    let res = run_app(&mut terminal, &mut app, event_rx);
+
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
+    terminal.show_cursor()?;
+
+    app.cache.save()?;
+    app.config.save()?;
+
+    res
+}
+
+/// Background thread that loads thumbnails using fast_image_resize
+fn thumbnail_worker(
+    rx: Receiver<ThumbnailRequest>,
+    tx: Sender<AppEvent>,
+    disk_cache: ThumbnailCache,
+) {
+    while let Ok(request) = rx.recv() {
+        // Load thumbnail (uses fast_image_resize with disk caching)
+        match disk_cache.load(&request.source_path) {
+            Ok(image) => {
+                let response = ThumbnailResponse {
+                    cache_idx: request.cache_idx,
+                    image,
+                };
+                if tx.send(AppEvent::ThumbnailReady(response)).is_err() {
+                    break;
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "Thumbnail failed for {}: {}",
+                    request.source_path.display(),
+                    e
+                );
+            }
+        }
+    }
+}
+
+/// Background thread that polls for input events
+fn input_worker(tx: Sender<AppEvent>) {
+    loop {
+        if event::poll(std::time::Duration::from_millis(50)).unwrap_or(false) {
+            if let Ok(Event::Key(key)) = event::read() {
+                if tx.send(AppEvent::Key(key)).is_err() {
+                    break;
+                }
+            }
+        } else if tx.send(AppEvent::Tick).is_err() {
+            break;
+        }
+    }
+}
+
+fn run_app<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+    event_rx: Receiver<AppEvent>,
+) -> Result<()> {
+    let mut last_theme_check = std::time::Instant::now();
+    let mut current_theme_is_light = crate::ui::theme::is_light_theme();
+
+    loop {
+        // Check for theme change every 500ms and force full redraw
+        if last_theme_check.elapsed() >= std::time::Duration::from_millis(500) {
+            let new_is_light = crate::ui::theme::is_light_theme();
+            if new_is_light != current_theme_is_light {
+                current_theme_is_light = new_is_light;
+                terminal.clear()?;  // Force full terminal redraw
+            }
+            last_theme_check = std::time::Instant::now();
+        }
+
+        terminal.draw(|f| ui::draw(f, app))?;
+
+        // Process all pending events
+        while let Ok(event) = event_rx.try_recv() {
+            match event {
+                AppEvent::Key(key) => {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+
+                    // Handle help popup first (blocks other input)
+                    if app.show_help {
+                        match key.code {
+                            KeyCode::Char('?') | KeyCode::Esc | KeyCode::Enter => {
+                                app.show_help = false;
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
+                    // Handle color picker popup
+                    if app.show_color_picker {
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Char('C') => {
+                                app.show_color_picker = false;
+                            }
+                            KeyCode::Char('l') | KeyCode::Right => {
+                                app.color_picker_next();
+                            }
+                            KeyCode::Char('h') | KeyCode::Left => {
+                                app.color_picker_prev();
+                            }
+                            KeyCode::Enter => {
+                                app.apply_color_filter();
+                            }
+                            KeyCode::Char('x') | KeyCode::Backspace => {
+                                app.clear_color_filter();
+                                app.show_color_picker = false;
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
+                    match key.code {
+                        KeyCode::Char('q') => {
+                            // Cancel preview before quitting
+                            let _ = app.cancel_preview();
+                            app.should_quit = true;
+                        }
+                        KeyCode::Esc => {
+                            // Esc cancels preview first, then quits
+                            if app.preview_mode {
+                                let _ = app.cancel_preview();
+                            } else {
+                                app.should_quit = true;
+                            }
+                        }
+                        KeyCode::Char('l') | KeyCode::Right => {
+                            app.next_wallpaper();
+                        }
+                        KeyCode::Char('h') | KeyCode::Left => {
+                            app.prev_wallpaper();
+                        }
+                        KeyCode::Tab => {
+                            app.next_screen();
+                        }
+                        KeyCode::BackTab => {
+                            app.prev_screen();
+                        }
+                        KeyCode::Enter => {
+                            if app.preview_mode {
+                                app.commit_preview();
+                            } else if let Err(e) = app.apply_wallpaper() {
+                                eprintln!("Error: {}", e);
+                            }
+                        }
+                        KeyCode::Char('r') => {
+                            app.random_wallpaper();
+                        }
+                        KeyCode::Char('m') => {
+                            app.toggle_match_mode();
+                        }
+                        KeyCode::Char('f') => {
+                            app.toggle_resize_mode();
+                        }
+                        KeyCode::Char('?') => {
+                            app.toggle_help();
+                        }
+                        KeyCode::Char('s') => {
+                            app.toggle_sort_mode();
+                        }
+                        KeyCode::Char('p') => {
+                            if let Err(e) = app.preview_wallpaper() {
+                                eprintln!("Preview error: {}", e);
+                            }
+                        }
+                        KeyCode::Char('c') => {
+                            app.toggle_colors();
+                        }
+                        KeyCode::Char('C') => {
+                            app.toggle_color_picker();
+                        }
+                        KeyCode::Char('t') => {
+                            app.cycle_tag_filter();
+                        }
+                        KeyCode::Char('T') => {
+                            app.clear_tag_filter();
+                        }
+                        KeyCode::Char('w') => {
+                            // Export pywal colors
+                            if let Err(e) = app.export_pywal() {
+                                eprintln!("pywal export error: {}", e);
+                            }
+                        }
+                        KeyCode::Char('W') => {
+                            // Toggle auto pywal export
+                            app.toggle_pywal_export();
+                        }
+                        _ => {}
+                    }
+                }
+                AppEvent::ThumbnailReady(response) => {
+                    app.handle_thumbnail_ready(response);
+                }
+                AppEvent::Tick => {
+                    // Just redraw on tick
+                }
+            }
+        }
+
+        if app.should_quit {
+            return Ok(());
+        }
+    }
+}

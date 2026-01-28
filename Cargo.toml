@@ -1,0 +1,60 @@
+[package]
+name = "frostwall"
+version = "0.3.0"
+edition = "2021"
+authors = ["MrMattias"]
+description = "Intelligent wallpaper manager with screen-aware matching for Wayland"
+license = "GPL-2.0"
+repository = "https://github.com/mrmattias/frostwall"
+keywords = ["wallpaper", "wayland", "tui", "swww", "ratatui"]
+categories = ["command-line-utilities"]
+readme = "README.md"
+
+[dependencies]
+# TUI
+ratatui = "0.28"
+crossterm = "0.28"
+
+# Image analysis & rendering
+image = "0.25"
+ratatui-image = "1"
+fast_image_resize = { version = "5", features = ["image"] }
+kmeans_colors = "0.6.0"
+palette = "0.7"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Config & serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+directories = "5"
+dirs = "5"
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Random number generation
+rand = "0.8"
+
+# Parallel processing
+rayon = "1.10"
+
+# Interactive CLI
+dialoguer = "0.11"
+
+# File system watching
+notify = "6"
+
+# Logging (optional, for debug)
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[profile.release]
+lto = true
+strip = true

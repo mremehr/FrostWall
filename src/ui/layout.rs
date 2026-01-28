@@ -1,0 +1,637 @@
+use crate::app::App;
+use crate::ui::theme::{frost_theme, FrostTheme};
+use ratatui::{
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph},
+    Frame,
+};
+use ratatui_image::StatefulImage;
+
+const THUMBNAIL_WIDTH: u16 = 48;
+const THUMBNAIL_HEIGHT: u16 = 28;
+
+pub fn draw(f: &mut Frame, app: &mut App) {
+    let theme = frost_theme();
+    let area = f.area();
+
+    // Main container with frost border
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border_focused))
+        .style(Style::default().bg(theme.bg_dark));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    // Vertical layout: header, carousel, (optional colors), footer
+    let constraints = if app.show_colors {
+        vec![
+            Constraint::Length(2),  // Header
+            Constraint::Min(8),     // Carousel
+            Constraint::Length(3),  // Color palette
+            Constraint::Length(2),  // Footer
+        ]
+    } else {
+        vec![
+            Constraint::Length(2),  // Header
+            Constraint::Min(10),    // Carousel
+            Constraint::Length(2),  // Footer
+        ]
+    };
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(inner);
+
+    draw_header(f, app, chunks[0], &theme);
+    draw_carousel(f, app, chunks[1], &theme);
+
+    if app.show_colors {
+        draw_color_palette(f, app, chunks[2], &theme);
+        draw_footer(f, app, chunks[3], &theme);
+    } else {
+        draw_footer(f, app, chunks[2], &theme);
+    }
+
+    // Draw popups on top
+    if app.show_color_picker {
+        draw_color_picker(f, app, area, &theme);
+    } else if app.show_help {
+        draw_help_popup(f, area, &theme);
+    }
+}
+
+fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
+    let screen_info = if let Some(screen) = app.selected_screen() {
+        format!(
+            "{} · {}x{} · {:?}",
+            screen.name, screen.width, screen.height, screen.aspect_category
+        )
+    } else {
+        "No screens".to_string()
+    };
+
+    let count_info = format!(
+        "{}/{}",
+        app.selected_wallpaper_idx + 1,
+        app.filtered_wallpapers.len()
+    );
+
+    // Show current modes
+    let match_mode = app.config.display.match_mode.display_name();
+    let resize_mode = app.config.display.resize_mode.display_name();
+    let sort_mode = app.sort_mode.display_name();
+
+    let mut header_spans = vec![
+        Span::styled(
+            " FrostWall ",
+            Style::default()
+                .fg(theme.accent_highlight)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+
+    // Preview mode indicator
+    if app.preview_mode {
+        header_spans.push(Span::styled(
+            "[PREVIEW] ",
+            Style::default().fg(theme.warning).add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    header_spans.extend(vec![
+        Span::styled("│ ", Style::default().fg(theme.fg_muted)),
+        Span::styled(screen_info, Style::default().fg(theme.fg_secondary)),
+        Span::styled(" │ ", Style::default().fg(theme.fg_muted)),
+        Span::styled(count_info, Style::default().fg(theme.accent_primary)),
+        Span::styled(" │ ", Style::default().fg(theme.fg_muted)),
+        Span::styled(format!("[{}]", match_mode), Style::default().fg(theme.accent_primary)),
+        Span::styled(" ", Style::default()),
+        Span::styled(format!("[{}]", resize_mode), Style::default().fg(theme.accent_secondary)),
+        Span::styled(" ", Style::default()),
+        Span::styled(format!("[⇅{}]", sort_mode), Style::default().fg(theme.fg_secondary)),
+    ]);
+
+    // Tag filter indicator
+    if let Some(tag) = &app.active_tag_filter {
+        header_spans.push(Span::styled(" ", Style::default()));
+        header_spans.push(Span::styled(
+            format!("[#{}]", tag),
+            Style::default().fg(theme.accent_highlight),
+        ));
+    }
+
+    // Color filter indicator
+    if let Some(color) = &app.active_color_filter {
+        header_spans.push(Span::styled(" ", Style::default()));
+        if let Some(c) = parse_hex_color(color) {
+            header_spans.push(Span::styled("█", Style::default().fg(c)));
+        }
+        header_spans.push(Span::styled(
+            format!("[{}]", color),
+            Style::default().fg(theme.fg_secondary),
+        ));
+    }
+
+    // Pywal indicator
+    if app.pywal_export {
+        header_spans.push(Span::styled(" ", Style::default()));
+        header_spans.push(Span::styled(
+            "[wal]",
+            Style::default().fg(theme.success),
+        ));
+    }
+
+    let header = Line::from(header_spans);
+
+    let paragraph = Paragraph::new(header).alignment(Alignment::Center);
+    f.render_widget(paragraph, area);
+}
+
+fn draw_carousel(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme) {
+    // Horizontal layout: left arrow, thumbnails, right arrow
+    let arrow_width = 3;
+    let thumbnails_area_width = area.width.saturating_sub(arrow_width * 2);
+
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(arrow_width),
+            Constraint::Min(thumbnails_area_width),
+            Constraint::Length(arrow_width),
+        ])
+        .split(area);
+
+    // Left arrow
+    let can_go_left = app.selected_wallpaper_idx > 0;
+    let left_arrow = Paragraph::new(if can_go_left { "❮" } else { " " })
+        .style(Style::default().fg(if can_go_left {
+            theme.accent_primary
+        } else {
+            theme.fg_muted
+        }))
+        .alignment(Alignment::Center);
+
+    // Center vertically
+    let left_area = center_vertically(chunks[0], 1);
+    f.render_widget(left_arrow, left_area);
+
+    // Right arrow
+    let can_go_right = app.selected_wallpaper_idx < app.filtered_wallpapers.len().saturating_sub(1);
+    let right_arrow = Paragraph::new(if can_go_right { "❯" } else { " " })
+        .style(Style::default().fg(if can_go_right {
+            theme.accent_primary
+        } else {
+            theme.fg_muted
+        }))
+        .alignment(Alignment::Center);
+
+    let right_area = center_vertically(chunks[2], 1);
+    f.render_widget(right_arrow, right_area);
+
+    // Thumbnails area
+    draw_thumbnails(f, app, chunks[1], theme);
+}
+
+fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme) {
+    if app.filtered_wallpapers.is_empty() {
+        let empty = Paragraph::new("No matching wallpapers")
+            .style(Style::default().fg(theme.fg_muted))
+            .alignment(Alignment::Center);
+        let centered = center_vertically(area, 1);
+        f.render_widget(empty, centered);
+        return;
+    }
+
+    // Calculate visible range centered on selection
+    let total = app.filtered_wallpapers.len();
+    let grid_columns = app.config.thumbnails.grid_columns;
+    let visible = grid_columns.min(total);
+    let half = visible / 2;
+
+    let start = if app.selected_wallpaper_idx <= half {
+        0
+    } else if app.selected_wallpaper_idx >= total.saturating_sub(half + 1) {
+        total.saturating_sub(visible)
+    } else {
+        app.selected_wallpaper_idx - half
+    };
+
+    let end = (start + visible).min(total);
+
+    // Calculate thumbnail positions
+    let thumb_total_width = THUMBNAIL_WIDTH + 2; // +2 for spacing
+    let total_thumbs_width = (visible as u16) * thumb_total_width;
+    let start_x = area.x + (area.width.saturating_sub(total_thumbs_width)) / 2;
+
+    // Center vertically
+    let thumb_y = area.y + (area.height.saturating_sub(THUMBNAIL_HEIGHT + 2)) / 2;
+
+    // Collect cache indices that need loading
+    let indices_to_load: Vec<usize> = (start..end)
+        .map(|idx| app.filtered_wallpapers[idx])
+        .collect();
+
+    // Request thumbnails for visible items (non-blocking)
+    for &cache_idx in &indices_to_load {
+        app.request_thumbnail(cache_idx);
+    }
+
+    for (i, idx) in (start..end).enumerate() {
+        let cache_idx = app.filtered_wallpapers[idx];
+        let is_selected = idx == app.selected_wallpaper_idx;
+
+        // Get filename before mutable borrow
+        let filename = app.cache.wallpapers
+            .get(cache_idx)
+            .and_then(|wp| wp.path.file_stem())
+            .and_then(|n| n.to_str())
+            .unwrap_or("?")
+            .to_string();
+
+        let is_loading = app.is_loading(cache_idx);
+
+        let thumb_x = start_x + (i as u16) * thumb_total_width;
+
+        // Bounds check - skip if outside visible area
+        if thumb_x + THUMBNAIL_WIDTH > area.x + area.width {
+            continue;
+        }
+        if thumb_y + THUMBNAIL_HEIGHT + 2 > area.y + area.height {
+            continue;
+        }
+
+        let thumb_area = Rect::new(thumb_x, thumb_y, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT + 2);
+
+        // Draw thumbnail frame
+        let border_color = if is_selected {
+            theme.accent_highlight
+        } else {
+            theme.border
+        };
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color))
+            .style(Style::default().bg(theme.bg_medium));
+
+        let inner = block.inner(thumb_area);
+        f.render_widget(block, thumb_area);
+
+        // Try to render image if available
+        if let Some(protocol) = app.get_thumbnail(cache_idx) {
+            let image = StatefulImage::new(None);
+            f.render_stateful_widget(image, inner, protocol);
+        } else if is_loading {
+            // Show loading indicator
+            let loading = Paragraph::new("...")
+                .style(Style::default().fg(theme.accent_primary))
+                .alignment(Alignment::Center);
+            let loading_area = center_vertically(inner, 1);
+            f.render_widget(loading, loading_area);
+        } else {
+            // Fallback: show filename
+            let max_chars = inner.width as usize;
+            let display = if max_chars == 0 {
+                String::new()
+            } else if filename.chars().count() <= max_chars {
+                filename.clone()
+            } else {
+                // Safe truncation using char boundaries
+                let truncated: String = filename.chars().take(max_chars.saturating_sub(1)).collect();
+                format!("{}…", truncated)
+            };
+
+            let label = Paragraph::new(display)
+                .style(Style::default().fg(theme.fg_secondary))
+                .alignment(Alignment::Center);
+
+            let label_area = center_vertically(inner, 1);
+            f.render_widget(label, label_area);
+        }
+
+        // Selection indicator below thumbnail (with bounds check)
+        if is_selected && thumb_area.bottom() < area.y + area.height {
+            let indicator_area = Rect::new(thumb_x, thumb_area.bottom(), THUMBNAIL_WIDTH, 1);
+            let indicator = Paragraph::new("▲")
+                .style(Style::default().fg(theme.accent_highlight))
+                .alignment(Alignment::Center);
+            f.render_widget(indicator, indicator_area);
+        }
+    }
+}
+
+fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
+    let help = if app.preview_mode {
+        // Preview mode footer
+        Line::from(vec![
+            Span::styled("Enter", Style::default().fg(theme.accent_primary)),
+            Span::styled(" commit ", Style::default().fg(theme.fg_muted)),
+            Span::styled("Esc", Style::default().fg(theme.accent_primary)),
+            Span::styled(" cancel ", Style::default().fg(theme.fg_muted)),
+            Span::styled("←/→", Style::default().fg(theme.accent_primary)),
+            Span::styled(" browse", Style::default().fg(theme.fg_muted)),
+        ])
+    } else {
+        // Normal footer
+        Line::from(vec![
+            Span::styled("←/→", Style::default().fg(theme.accent_primary)),
+            Span::styled(" nav ", Style::default().fg(theme.fg_muted)),
+            Span::styled("Enter", Style::default().fg(theme.accent_primary)),
+            Span::styled(" apply ", Style::default().fg(theme.fg_muted)),
+            Span::styled("p", Style::default().fg(theme.accent_primary)),
+            Span::styled(" preview ", Style::default().fg(theme.fg_muted)),
+            Span::styled("c", Style::default().fg(theme.accent_primary)),
+            Span::styled(" colors ", Style::default().fg(theme.fg_muted)),
+            Span::styled("t", Style::default().fg(theme.accent_primary)),
+            Span::styled(" tag ", Style::default().fg(theme.fg_muted)),
+            Span::styled("?", Style::default().fg(theme.accent_primary)),
+            Span::styled(" help ", Style::default().fg(theme.fg_muted)),
+            Span::styled("q", Style::default().fg(theme.accent_primary)),
+            Span::styled(" quit", Style::default().fg(theme.fg_muted)),
+        ])
+    };
+
+    let paragraph = Paragraph::new(help).alignment(Alignment::Center);
+    f.render_widget(paragraph, area);
+}
+
+fn center_vertically(area: Rect, height: u16) -> Rect {
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    Rect::new(area.x, y, area.width, height)
+}
+
+fn draw_color_palette(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
+    // Get colors from selected wallpaper
+    let colors = app.selected_wallpaper()
+        .map(|wp| wp.colors.clone())
+        .unwrap_or_default();
+
+    if colors.is_empty() {
+        let text = Paragraph::new("No color data")
+            .style(Style::default().fg(theme.fg_muted))
+            .alignment(Alignment::Center);
+        f.render_widget(text, area);
+        return;
+    }
+
+    // Build color swatches
+    let mut spans = vec![
+        Span::styled("Colors: ", Style::default().fg(theme.fg_secondary)),
+    ];
+
+    for (i, color_hex) in colors.iter().enumerate() {
+        // Parse hex color
+        if let Some(color) = parse_hex_color(color_hex) {
+            // Color block using background color
+            spans.push(Span::styled(
+                "  █████  ",
+                Style::default().fg(color),
+            ));
+            spans.push(Span::styled(
+                color_hex,
+                Style::default().fg(theme.fg_muted),
+            ));
+
+            if i < colors.len() - 1 {
+                spans.push(Span::styled(" ", Style::default()));
+            }
+        }
+    }
+
+    // Get tags too
+    let tags = app.selected_wallpaper()
+        .map(|wp| wp.tags.clone())
+        .unwrap_or_default();
+
+    if !tags.is_empty() {
+        spans.push(Span::styled("  │  Tags: ", Style::default().fg(theme.fg_secondary)));
+        for (i, tag) in tags.iter().enumerate() {
+            spans.push(Span::styled(
+                format!("#{}", tag),
+                Style::default().fg(theme.accent_highlight),
+            ));
+            if i < tags.len() - 1 {
+                spans.push(Span::styled(" ", Style::default()));
+            }
+        }
+    }
+
+    let line = Line::from(spans);
+    let paragraph = Paragraph::new(line).alignment(Alignment::Center);
+    f.render_widget(paragraph, area);
+}
+
+fn parse_hex_color(hex: &str) -> Option<ratatui::style::Color> {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() >= 6 {
+        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+        Some(ratatui::style::Color::Rgb(r, g, b))
+    } else {
+        None
+    }
+}
+
+fn draw_color_picker(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
+    let colors = &app.available_colors;
+    if colors.is_empty() {
+        return;
+    }
+
+    // Calculate popup size based on color count
+    let cols = 8; // Colors per row
+    let rows = colors.len().div_ceil(cols);
+    let popup_width = 60.min(area.width.saturating_sub(4));
+    let popup_height = (rows as u16 * 2 + 6).min(area.height.saturating_sub(4));
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    // Clear background
+    let clear = Block::default().style(Style::default().bg(theme.bg_dark));
+    f.render_widget(clear, popup_area);
+
+    // Popup border
+    let title = if let Some(ref color) = app.active_color_filter {
+        format!(" Color Filter [{}] ", color)
+    } else {
+        " Color Filter ".to_string()
+    };
+
+    let block = Block::default()
+        .title(title)
+        .title_style(Style::default().fg(theme.accent_highlight).add_modifier(Modifier::BOLD))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.accent_primary))
+        .style(Style::default().bg(theme.bg_dark));
+
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    // Draw color swatches in a grid
+    let swatch_width = 6;
+    let swatch_height = 1;
+    let spacing = 1;
+
+    for (i, color_hex) in colors.iter().enumerate() {
+        let col = i % cols;
+        let row = i / cols;
+
+        let x = inner.x + (col as u16) * (swatch_width + spacing);
+        let y = inner.y + (row as u16) * (swatch_height + spacing);
+
+        if x + swatch_width > inner.x + inner.width || y + swatch_height > inner.y + inner.height {
+            continue;
+        }
+
+        let swatch_area = Rect::new(x, y, swatch_width, swatch_height);
+
+        // Parse color
+        let color = parse_hex_color(color_hex).unwrap_or(theme.fg_muted);
+
+        // Highlight selected
+        let is_selected = i == app.color_picker_idx;
+        let style = if is_selected {
+            Style::default().bg(color).fg(theme.bg_dark).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().bg(color)
+        };
+
+        let text = if is_selected { "▶▶▶▶" } else { "████" };
+        let swatch = Paragraph::new(text).style(style);
+        f.render_widget(swatch, swatch_area);
+    }
+
+    // Footer with instructions
+    let footer_y = inner.y + inner.height.saturating_sub(2);
+    if footer_y > inner.y {
+        let footer_area = Rect::new(inner.x, footer_y, inner.width, 2);
+        let footer = Line::from(vec![
+            Span::styled("←/→", Style::default().fg(theme.accent_primary)),
+            Span::styled(" select ", Style::default().fg(theme.fg_muted)),
+            Span::styled("Enter", Style::default().fg(theme.accent_primary)),
+            Span::styled(" apply ", Style::default().fg(theme.fg_muted)),
+            Span::styled("x", Style::default().fg(theme.accent_primary)),
+            Span::styled(" clear ", Style::default().fg(theme.fg_muted)),
+            Span::styled("Esc", Style::default().fg(theme.accent_primary)),
+            Span::styled(" close", Style::default().fg(theme.fg_muted)),
+        ]);
+        let para = Paragraph::new(footer).alignment(Alignment::Center);
+        f.render_widget(para, footer_area);
+    }
+}
+
+fn draw_help_popup(f: &mut Frame, area: Rect, theme: &FrostTheme) {
+    // Center the popup
+    let popup_width = 50.min(area.width.saturating_sub(4));
+    let popup_height = 26.min(area.height.saturating_sub(4));
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    // Clear background
+    let clear = Block::default().style(Style::default().bg(theme.bg_dark));
+    f.render_widget(clear, popup_area);
+
+    // Popup border
+    let block = Block::default()
+        .title(" ❄️ FrostWall Help ")
+        .title_style(Style::default().fg(theme.accent_highlight).add_modifier(Modifier::BOLD))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.accent_primary))
+        .style(Style::default().bg(theme.bg_dark));
+
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    // Help content
+    let help_text = vec![
+        Line::from(vec![
+            Span::styled("Navigation", Style::default().fg(theme.accent_highlight).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("  h/←     ", Style::default().fg(theme.accent_primary)),
+            Span::styled("Previous wallpaper", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(vec![
+            Span::styled("  l/→     ", Style::default().fg(theme.accent_primary)),
+            Span::styled("Next wallpaper", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Tab     ", Style::default().fg(theme.accent_primary)),
+            Span::styled("Next screen", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(vec![
+            Span::styled("  S-Tab   ", Style::default().fg(theme.accent_primary)),
+            Span::styled("Previous screen", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Actions", Style::default().fg(theme.accent_highlight).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Enter   ", Style::default().fg(theme.accent_primary)),
+            Span::styled("Apply wallpaper", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(vec![
+            Span::styled("  p       ", Style::default().fg(theme.accent_primary)),
+            Span::styled("Preview (temporary)", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(vec![
+            Span::styled("  r       ", Style::default().fg(theme.accent_primary)),
+            Span::styled("Random wallpaper", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Options", Style::default().fg(theme.accent_highlight).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("  m       ", Style::default().fg(theme.accent_primary)),
+            Span::styled("Toggle match mode", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(vec![
+            Span::styled("  f       ", Style::default().fg(theme.accent_primary)),
+            Span::styled("Toggle resize mode", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(vec![
+            Span::styled("  s       ", Style::default().fg(theme.accent_primary)),
+            Span::styled("Toggle sort mode", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(vec![
+            Span::styled("  c       ", Style::default().fg(theme.accent_primary)),
+            Span::styled("Show/hide colors", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(vec![
+            Span::styled("  t       ", Style::default().fg(theme.accent_primary)),
+            Span::styled("Cycle tag filter", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(vec![
+            Span::styled("  T       ", Style::default().fg(theme.accent_primary)),
+            Span::styled("Clear tag filter", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(vec![
+            Span::styled("  C       ", Style::default().fg(theme.accent_primary)),
+            Span::styled("Open color picker", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(vec![
+            Span::styled("  w       ", Style::default().fg(theme.accent_primary)),
+            Span::styled("Export pywal colors", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(vec![
+            Span::styled("  W       ", Style::default().fg(theme.accent_primary)),
+            Span::styled("Toggle auto pywal", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(vec![
+            Span::styled("  q/Esc   ", Style::default().fg(theme.accent_primary)),
+            Span::styled("Quit", Style::default().fg(theme.fg_secondary)),
+        ]),
+    ];
+
+    let paragraph = Paragraph::new(help_text);
+    f.render_widget(paragraph, inner);
+}

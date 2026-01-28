@@ -1,0 +1,68 @@
+# FrostWall Configuration
+# ~/.config/frostwall/config.toml
+
+[wallpaper]
+# Directory containing wallpapers (supports ~ expansion)
+directory = "~/Pictures/wallpapers"
+
+# Supported image formats
+extensions = ["jpg", "jpeg", "png", "webp", "bmp", "gif"]
+
+# Scan subdirectories recursively
+recursive = false
+
+[display]
+# Aspect ratio matching: "Strict", "Flexible", "All"
+match_mode = "Flexible"
+
+# How to fit wallpaper: "Fit", "Crop", "Center", "Stretch"
+resize_mode = "Fit"
+
+# Fill color for padding (RGBA)
+[display.fill_color]
+r = 0
+g = 0
+b = 0
+a = 255
+
+[transition]
+# Type: fade, wipe, grow, center, outer, none
+transition_type = "fade"
+
+# Duration in seconds
+duration = 1.0
+
+# Frames per second
+fps = 60
+
+[thumbnails]
+# Thumbnail dimensions (cached on disk)
+width = 800
+height = 600
+
+# JPEG quality (0-100)
+quality = 92
+
+# Visible thumbnails in TUI grid
+grid_columns = 3
+
+[theme]
+# Theme mode: "auto", "light", "dark"
+mode = "auto"
+
+# How often to check for theme changes (ms)
+check_interval_ms = 500
+
+[keybindings]
+# Navigation
+next = "l"
+prev = "h"
+next_screen = "Tab"
+prev_screen = "BackTab"
+
+# Actions
+apply = "Enter"
+quit = "q"
+random = "r"
+toggle_match = "m"
+toggle_resize = "f"
