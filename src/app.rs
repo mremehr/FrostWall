@@ -321,6 +321,8 @@ pub struct App {
     /// Live preview mode - store original wallpaper to revert
     pub preview_mode: bool,
     pub original_wallpaper: Option<PathBuf>,
+    /// Track last applied wallpaper per screen (for preview revert)
+    pub applied_wallpapers: std::collections::HashMap<String, PathBuf>,
     /// Active tag filter (None = show all)
     pub active_tag_filter: Option<String>,
     /// Show color palette of selected wallpaper
@@ -380,6 +382,7 @@ impl App {
             active_color_filter: None,
             pywal_export: false,
             last_error: None,
+            applied_wallpapers: std::collections::HashMap::new(),
         })
     }
 
@@ -494,6 +497,11 @@ impl App {
     }
 
     pub fn apply_wallpaper(&mut self) -> Result<()> {
+        self.apply_wallpaper_internal(true)
+    }
+
+    /// Internal apply - track controls whether we update applied_wallpapers
+    fn apply_wallpaper_internal(&mut self, track: bool) -> Result<()> {
         if let (Some(screen), Some(wp)) = (self.selected_screen(), self.selected_wallpaper()) {
             let screen_name = screen.name.clone();
             let wp_path = wp.path.clone();
@@ -506,6 +514,11 @@ impl App {
                 self.config.display.resize_mode,
                 &self.config.display.fill_color,
             )?;
+
+            // Track applied wallpaper (unless in preview mode)
+            if track && !self.preview_mode {
+                self.applied_wallpapers.insert(screen_name.clone(), wp_path.clone());
+            }
 
             // Export pywal colors if enabled
             if self.pywal_export {
@@ -669,6 +682,7 @@ impl App {
 
         if all_tags.is_empty() {
             self.active_tag_filter = None;
+            self.last_error = Some("No tags defined. Use 'frostwall tag add <path> <tag>' to add tags.".to_string());
             return;
         }
 
@@ -688,6 +702,8 @@ impl App {
             }
         };
 
+        // Clear any previous error
+        self.last_error = None;
         self.update_filtered_wallpapers();
     }
 

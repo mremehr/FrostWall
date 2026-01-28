@@ -232,7 +232,6 @@ pub fn set_wallpaper_all_with_resize(
 }
 
 /// Get current wallpaper for an output (if available)
-#[allow(dead_code)]
 pub fn get_current(output: &str) -> Option<String> {
     let result = Command::new("swww").arg("query").output().ok()?;
 
@@ -242,13 +241,60 @@ pub fn get_current(output: &str) -> Option<String> {
 
     let stdout = String::from_utf8_lossy(&result.stdout);
 
-    // Format: "output_name: image_path" or "output_name:\n  image: path"
-    // We need exact match on output name (not prefix match)
+    // swww query output format varies:
+    // - "OUTPUT: /path/to/image.png"
+    // - "OUTPUT: image: /path/to/image.png"
+    // - "OUTPUT:\n  image: /path/to/image.png"
     let prefix = format!("{}:", output);
     for line in stdout.lines() {
         if line.starts_with(&prefix) {
-            // Extract everything after "output:"
-            return line.strip_prefix(&prefix).map(|s| s.trim().to_string());
+            let rest = line.strip_prefix(&prefix)?.trim();
+
+            // Handle "image: /path" or "image=/path" format
+            if let Some(path) = rest.strip_prefix("image:") {
+                return Some(path.trim().to_string());
+            }
+            if let Some(path) = rest.strip_prefix("image=") {
+                return Some(path.trim().to_string());
+            }
+            // Handle direct path format
+            if rest.starts_with('/') {
+                return Some(rest.to_string());
+            }
+            // Return whatever we got
+            if !rest.is_empty() {
+                return Some(rest.to_string());
+            }
+        }
+        // Also check for indented "image:" line after output header
+        if line.trim().starts_with("image:") && !stdout.contains(&format!("{}:", output)) {
+            continue; // Skip if we haven't seen our output yet
+        }
+    }
+
+    // Try a different approach: find output line, then look for image path
+    let mut found_output = false;
+    for line in stdout.lines() {
+        if line.starts_with(&prefix) {
+            found_output = true;
+            let rest = line.strip_prefix(&prefix).unwrap_or("").trim();
+            if !rest.is_empty() && rest.starts_with('/') {
+                return Some(rest.to_string());
+            }
+            continue;
+        }
+        if found_output {
+            let trimmed = line.trim();
+            if let Some(path) = trimmed.strip_prefix("image:") {
+                return Some(path.trim().to_string());
+            }
+            if let Some(path) = trimmed.strip_prefix("image=") {
+                return Some(path.trim().to_string());
+            }
+            // Stop if we hit another output
+            if trimmed.contains(':') && !trimmed.starts_with("image") {
+                break;
+            }
         }
     }
 

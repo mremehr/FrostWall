@@ -16,6 +16,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let theme = frost_theme();
     let area = f.area();
 
+    // Check if a popup is showing (need to skip image rendering)
+    let popup_active = app.show_help || app.show_color_picker;
+
     // Main container with frost border
     let block = Block::default()
         .borders(Borders::ALL)
@@ -25,12 +28,30 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    // Vertical layout: header, carousel, (optional colors), footer
+    // Vertical layout: header, carousel, (optional error), (optional colors), footer
+    let has_error = app.last_error.is_some();
     let constraints = if app.show_colors {
+        if has_error {
+            vec![
+                Constraint::Length(2),  // Header
+                Constraint::Length(1),  // Error
+                Constraint::Min(7),     // Carousel
+                Constraint::Length(3),  // Color palette
+                Constraint::Length(2),  // Footer
+            ]
+        } else {
+            vec![
+                Constraint::Length(2),  // Header
+                Constraint::Min(8),     // Carousel
+                Constraint::Length(3),  // Color palette
+                Constraint::Length(2),  // Footer
+            ]
+        }
+    } else if has_error {
         vec![
             Constraint::Length(2),  // Header
-            Constraint::Min(8),     // Carousel
-            Constraint::Length(3),  // Color palette
+            Constraint::Length(1),  // Error
+            Constraint::Min(9),     // Carousel
             Constraint::Length(2),  // Footer
         ]
     } else {
@@ -46,15 +67,31 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .constraints(constraints)
         .split(inner);
 
-    draw_header(f, app, chunks[0], &theme);
-    draw_carousel(f, app, chunks[1], &theme);
+    let mut chunk_idx = 0;
+
+    draw_header(f, app, chunks[chunk_idx], &theme);
+    chunk_idx += 1;
+
+    if has_error {
+        draw_error(f, app, chunks[chunk_idx], &theme);
+        chunk_idx += 1;
+    }
+
+    // Only draw carousel with images if no popup is active
+    // (ratatui-image renders directly to terminal, bypassing widget z-order)
+    if popup_active {
+        draw_carousel_placeholder(f, chunks[chunk_idx], &theme);
+    } else {
+        draw_carousel(f, app, chunks[chunk_idx], &theme);
+    }
+    chunk_idx += 1;
 
     if app.show_colors {
-        draw_color_palette(f, app, chunks[2], &theme);
-        draw_footer(f, app, chunks[3], &theme);
-    } else {
-        draw_footer(f, app, chunks[2], &theme);
+        draw_color_palette(f, app, chunks[chunk_idx], &theme);
+        chunk_idx += 1;
     }
+
+    draw_footer(f, app, chunks[chunk_idx], &theme);
 
     // Draw popups on top
     if app.show_color_picker {
@@ -62,6 +99,26 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     } else if app.show_help {
         draw_help_popup(f, area, &theme);
     }
+}
+
+fn draw_error(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
+    if let Some(error) = &app.last_error {
+        let error_line = Line::from(vec![
+            Span::styled("⚠ ", Style::default().fg(theme.warning)),
+            Span::styled(error, Style::default().fg(theme.warning)),
+        ]);
+        let paragraph = Paragraph::new(error_line).alignment(Alignment::Center);
+        f.render_widget(paragraph, area);
+    }
+}
+
+fn draw_carousel_placeholder(f: &mut Frame, area: Rect, theme: &FrostTheme) {
+    // Simple placeholder when popup is active (images would render over popup)
+    let text = Paragraph::new("(popup active)")
+        .style(Style::default().fg(theme.fg_muted))
+        .alignment(Alignment::Center);
+    let centered = center_vertically(area, 1);
+    f.render_widget(text, centered);
 }
 
 fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
