@@ -235,11 +235,9 @@ impl PairingHistory {
             // Base score from pairing history
             let mut score = self.get_affinity(selected_wp, &wp.path);
 
-            // Bonus for shared colors (fallback when no history)
-            let shared_colors = wp.colors.iter()
-                .filter(|c| selected_colors.contains(c))
-                .count();
-            score += shared_colors as f32 * 0.5;
+            // Bonus for similar colors using perceptual LAB distance
+            let color_similarity = crate::utils::palette_similarity(selected_colors, &wp.colors);
+            score += color_similarity * 5.0; // Weight color similarity
 
             // Bonus for shared tags
             // (would need selected wallpaper's tags passed in)
@@ -332,6 +330,15 @@ impl PairingHistory {
     /// Get number of records
     pub fn record_count(&self) -> usize {
         self.data.records.len()
+    }
+
+    /// Get the most recent pairing with multiple screens
+    pub fn get_last_multi_screen_pairing(&self) -> Option<HashMap<String, PathBuf>> {
+        self.data.records
+            .iter()
+            .rev()
+            .find(|r| r.wallpapers.len() > 1)
+            .map(|r| r.wallpapers.clone())
     }
 
     /// Get number of affinity pairs

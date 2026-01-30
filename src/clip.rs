@@ -31,6 +31,7 @@ pub const CLIP_EMBEDDING_DIM: usize = 512;
 const VISUAL_MODEL_URL: &str = "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/vision_model.onnx";
 
 /// Predefined tag categories with descriptive text prompts
+#[allow(dead_code)]
 pub const TAG_CATEGORIES: &[(&str, &[&str])] = &[
     ("nature", &["a photo of nature", "natural landscape scenery"]),
     ("city", &["urban cityscape with buildings", "city skyline photography"]),
@@ -371,9 +372,11 @@ fn preprocess_image(path: &Path) -> Result<Array4<f32>> {
 
 // Stub implementations when clip feature is disabled
 #[cfg(not(feature = "clip"))]
+#[allow(dead_code)]
 pub struct ClipTagger;
 
 #[cfg(not(feature = "clip"))]
+#[allow(dead_code)]
 impl ClipTagger {
     pub fn models_available() -> bool {
         false

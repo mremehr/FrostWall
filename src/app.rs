@@ -39,6 +39,8 @@ pub struct Config {
     pub clip: ClipConfig,
     #[serde(default)]
     pub pairing: PairingConfig,
+    #[serde(default)]
+    pub time_profiles: crate::timeprofile::TimeProfiles,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -404,6 +406,10 @@ pub struct App {
     pub current_wallpapers: HashMap<String, PathBuf>,
     /// Remember selected wallpaper index per screen
     screen_positions: HashMap<usize, usize>,
+    /// Command mode (vim-style :)
+    pub command_mode: bool,
+    /// Command input buffer
+    pub command_buffer: String,
 }
 
 impl App {
@@ -454,6 +460,8 @@ impl App {
             pairing_suggestions: Vec::new(),
             current_wallpapers: HashMap::new(),
             screen_positions: HashMap::new(),
+            command_mode: false,
+            command_buffer: String::new(),
         })
     }
 
@@ -485,9 +493,12 @@ impl App {
                             return false;
                         }
                     }
-                    // Color filtering
+                    // Color filtering with perceptual matching
                     if let Some(ref color) = color_filter {
-                        if !wp.colors.iter().any(|c| c == color) {
+                        // Include if any color is perceptually similar (>0.7 similarity)
+                        let has_similar = wp.colors.iter()
+                            .any(|c| crate::utils::color_similarity(c, color) > 0.7);
+                        if !has_similar {
                             return false;
                         }
                     }
@@ -867,6 +878,180 @@ impl App {
         self.cache.all_tags()
     }
 
+    // ===== Command Mode (vim-style :) =====
+
+    /// Enter command mode
+    pub fn enter_command_mode(&mut self) {
+        self.command_mode = true;
+        self.command_buffer.clear();
+    }
+
+    /// Exit command mode without executing
+    pub fn exit_command_mode(&mut self) {
+        self.command_mode = false;
+        self.command_buffer.clear();
+    }
+
+    /// Add character to command buffer
+    pub fn command_input(&mut self, c: char) {
+        self.command_buffer.push(c);
+    }
+
+    /// Remove last character from command buffer
+    pub fn command_backspace(&mut self) {
+        self.command_buffer.pop();
+    }
+
+    /// Execute the current command
+    pub fn execute_command(&mut self) {
+        let cmd = self.command_buffer.trim().to_string();
+        self.command_mode = false;
+        self.command_buffer.clear();
+
+        if cmd.is_empty() {
+            return;
+        }
+
+        // Parse command and args
+        let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
+        let command = parts[0].to_lowercase();
+        let args = parts.get(1).map(|s| s.trim()).unwrap_or("");
+
+        match command.as_str() {
+            // Quit
+            "q" | "quit" | "exit" => {
+                self.should_quit = true;
+            }
+
+            // Tag filter
+            "t" | "tag" => {
+                if args.is_empty() {
+                    // List available tags
+                    let tags = self.cache.all_tags();
+                    if tags.is_empty() {
+                        self.last_error = Some("No tags available".to_string());
+                    } else {
+                        self.last_error = Some(format!("Tags: {}", tags.join(", ")));
+                    }
+                } else {
+                    // Filter by tag
+                    let tag = args.to_string();
+                    let tags = self.cache.all_tags();
+                    // Fuzzy match - find tag that contains the search term
+                    if let Some(matched) = tags.iter().find(|t| t.to_lowercase().contains(&args.to_lowercase())) {
+                        self.active_tag_filter = Some(matched.clone());
+                        self.update_filtered_wallpapers();
+                    } else {
+                        self.last_error = Some(format!("Tag not found: {}", tag));
+                    }
+                }
+            }
+
+            // Clear filters
+            "c" | "clear" => {
+                self.active_tag_filter = None;
+                self.active_color_filter = None;
+                self.update_filtered_wallpapers();
+            }
+
+            // Random wallpaper
+            "r" | "random" => {
+                let _ = self.random_wallpaper();
+            }
+
+            // Apply current wallpaper
+            "a" | "apply" => {
+                let _ = self.apply_wallpaper();
+            }
+
+            // Sort mode
+            "sort" => {
+                match args.to_lowercase().as_str() {
+                    "name" | "n" => {
+                        self.sort_mode = SortMode::Name;
+                        self.update_filtered_wallpapers();
+                    }
+                    "date" | "d" => {
+                        self.sort_mode = SortMode::Date;
+                        self.update_filtered_wallpapers();
+                    }
+                    "size" | "s" => {
+                        self.sort_mode = SortMode::Size;
+                        self.update_filtered_wallpapers();
+                    }
+                    _ => {
+                        self.last_error = Some("Sort modes: name, date, size".to_string());
+                    }
+                }
+            }
+
+            // Similar wallpapers
+            "similar" | "sim" => {
+                if let Some(wp) = self.selected_wallpaper() {
+                    let colors = wp.colors.clone();
+                    let path = wp.path.clone();
+                    self.find_and_select_similar(&colors, &path);
+                }
+            }
+
+            // Help
+            "h" | "help" => {
+                self.show_help = true;
+            }
+
+            // Screen navigation
+            "screen" => {
+                if let Ok(n) = args.parse::<usize>() {
+                    if n > 0 && n <= self.screens.len() {
+                        // Save current position
+                        self.screen_positions.insert(self.selected_screen_idx, self.selected_wallpaper_idx);
+                        self.selected_screen_idx = n - 1;
+                        self.update_filtered_wallpapers();
+                        // Restore position for new screen
+                        if let Some(&pos) = self.screen_positions.get(&self.selected_screen_idx) {
+                            if pos < self.filtered_wallpapers.len() {
+                                self.selected_wallpaper_idx = pos;
+                            }
+                        }
+                    } else {
+                        self.last_error = Some(format!("Screen {} not found", n));
+                    }
+                }
+            }
+
+            // Go to wallpaper by number
+            "go" | "g" => {
+                if let Ok(n) = args.parse::<usize>() {
+                    if n > 0 && n <= self.filtered_wallpapers.len() {
+                        self.selected_wallpaper_idx = n - 1;
+                    }
+                }
+            }
+
+            _ => {
+                self.last_error = Some(format!("Unknown command: {}", command));
+            }
+        }
+    }
+
+    /// Find similar wallpapers and select the best match
+    fn find_and_select_similar(&mut self, colors: &[String], current_path: &std::path::Path) {
+        let wallpaper_colors: Vec<(usize, &[String])> = self.cache.wallpapers
+            .iter()
+            .enumerate()
+            .filter(|(_, wp)| wp.path != current_path && !wp.colors.is_empty())
+            .map(|(i, wp)| (i, wp.colors.as_slice()))
+            .collect();
+
+        let similar = crate::utils::find_similar_wallpapers(colors, &wallpaper_colors, 1);
+        if let Some((_, idx)) = similar.first() {
+            // Find this index in filtered wallpapers
+            if let Some(pos) = self.filtered_wallpapers.iter().position(|&i| i == *idx) {
+                self.selected_wallpaper_idx = pos;
+            }
+        }
+    }
+
     /// Toggle color picker popup
     pub fn toggle_color_picker(&mut self) {
         if !self.show_color_picker {
@@ -1136,6 +1321,26 @@ fn run_app<B: ratatui::backend::Backend>(
                         continue;
                     }
 
+                    // Handle command mode (vim-style :)
+                    if app.command_mode {
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.exit_command_mode();
+                            }
+                            KeyCode::Enter => {
+                                app.execute_command();
+                            }
+                            KeyCode::Backspace => {
+                                app.command_backspace();
+                            }
+                            KeyCode::Char(c) => {
+                                app.command_input(c);
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
                     // Use configurable keybindings
                     let kb = &app.config.keybindings;
                     let code = key.code;
@@ -1179,6 +1384,7 @@ fn run_app<B: ratatui::backend::Backend>(
                     // Non-configurable keys
                     else {
                         match code {
+                            KeyCode::Char(':') => app.enter_command_mode(),
                             KeyCode::Char('?') => app.toggle_help(),
                             KeyCode::Char('s') => app.toggle_sort_mode(),
                             KeyCode::Char('c') => app.toggle_colors(),

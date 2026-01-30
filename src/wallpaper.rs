@@ -1,7 +1,7 @@
 use crate::clip::AutoTag;
 use crate::screen::{AspectCategory, Screen};
 use anyhow::{Context, Result};
-use image::{imageops::FilterType, GenericImageView};
+use image::imageops::FilterType;
 use kmeans_colors::get_kmeans_hamerly;
 use palette::{IntoColor, Lab, Srgb};
 use rayon::prelude::*;
@@ -193,7 +193,23 @@ impl Wallpaper {
             })
             .collect();
 
+        // Generate auto-tags from colors
+        self.generate_auto_tags();
+
         Ok(())
+    }
+
+    /// Generate auto-tags based on color analysis
+    pub fn generate_auto_tags(&mut self) {
+        if self.colors.is_empty() {
+            return;
+        }
+
+        let tags = crate::utils::auto_tag_from_colors(&self.colors);
+        self.auto_tags = tags
+            .into_iter()
+            .map(|(name, confidence)| AutoTag { name, confidence })
+            .collect();
     }
 
     /// Full path with colors (legacy, slower)
@@ -204,6 +220,7 @@ impl Wallpaper {
     }
 
     /// Create from path, reusing existing colors if available
+    #[allow(dead_code)]
     pub fn from_path_with_existing(path: &Path, existing_colors: Option<Vec<String>>) -> Result<Self> {
         let (width, height) = image::image_dimensions(path)
             .context("Failed to read image dimensions")?;
@@ -341,16 +358,19 @@ impl Wallpaper {
     }
 
     /// Get auto tags above a confidence threshold
+    #[allow(dead_code)]
     pub fn auto_tags_above(&self, threshold: f32) -> Vec<&AutoTag> {
         self.auto_tags.iter().filter(|t| t.confidence >= threshold).collect()
     }
 
     /// Set auto tags (replaces existing)
+    #[allow(dead_code)]
     pub fn set_auto_tags(&mut self, tags: Vec<AutoTag>) {
         self.auto_tags = tags;
     }
 
     /// Set embedding (replaces existing)
+    #[allow(dead_code)]
     pub fn set_embedding(&mut self, embedding: Vec<f32>) {
         self.embedding = Some(embedding);
     }
@@ -459,7 +479,6 @@ impl WallpaperCache {
         eprintln!(" done!");
 
         // Sort by filename for consistent ordering
-        let mut wallpapers = wallpapers;
         wallpapers.sort_by(|a, b| a.path.cmp(&b.path));
 
         Ok(Self {

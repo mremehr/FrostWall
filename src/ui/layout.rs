@@ -401,16 +401,81 @@ fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme)
     }
 }
 
-fn draw_footer(f: &mut Frame, _app: &App, area: Rect, theme: &FrostTheme) {
+fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
+    // Command mode - show command input line
+    if app.command_mode {
+        let cmd_line = Line::from(vec![
+            Span::styled(":", Style::default().fg(theme.accent_primary).add_modifier(Modifier::BOLD)),
+            Span::styled(&app.command_buffer, Style::default().fg(theme.fg_primary)),
+            Span::styled("█", Style::default().fg(theme.accent_primary)), // Cursor
+        ]);
+        let paragraph = Paragraph::new(cmd_line);
+        f.render_widget(paragraph, area);
+        return;
+    }
+
+    // Show pairing preview if auto_apply is enabled and there are suggestions
+    let has_preview = app.config.pairing.enabled
+        && app.config.pairing.auto_apply
+        && !app.pairing_suggestions.is_empty();
+
+    if has_preview && area.height >= 2 {
+        // Split footer into preview line and help line
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1), // Preview
+                Constraint::Length(1), // Help
+            ])
+            .split(area);
+
+        // Preview line showing what will be auto-paired
+        let mut preview_spans = vec![
+            Span::styled("⚡ Auto-pair: ", Style::default().fg(theme.success).add_modifier(Modifier::BOLD)),
+        ];
+
+        for (i, suggestion) in app.pairing_suggestions.iter().take(3).enumerate() {
+            if i > 0 {
+                preview_spans.push(Span::styled(", ", Style::default().fg(theme.fg_muted)));
+            }
+            let filename = suggestion
+                .file_stem()
+                .and_then(|n| n.to_str())
+                .unwrap_or("?");
+            // Truncate long names
+            let display = if filename.len() > 20 {
+                format!("{}…", &filename[..19])
+            } else {
+                filename.to_string()
+            };
+            preview_spans.push(Span::styled(display, Style::default().fg(theme.success)));
+        }
+
+        if app.pairing_suggestions.len() > 3 {
+            preview_spans.push(Span::styled(
+                format!(" +{} more", app.pairing_suggestions.len() - 3),
+                Style::default().fg(theme.fg_muted),
+            ));
+        }
+
+        let preview = Line::from(preview_spans);
+        f.render_widget(Paragraph::new(preview).alignment(Alignment::Center), chunks[0]);
+
+        // Help line
+        draw_help_line(f, chunks[1], theme);
+    } else {
+        draw_help_line(f, area, theme);
+    }
+}
+
+fn draw_help_line(f: &mut Frame, area: Rect, theme: &FrostTheme) {
     let help = Line::from(vec![
         Span::styled("←/→", Style::default().fg(theme.accent_primary)),
         Span::styled(" nav ", Style::default().fg(theme.fg_muted)),
         Span::styled("Enter", Style::default().fg(theme.accent_primary)),
         Span::styled(" apply ", Style::default().fg(theme.fg_muted)),
-        Span::styled("r", Style::default().fg(theme.accent_primary)),
-        Span::styled(" random ", Style::default().fg(theme.fg_muted)),
-        Span::styled("c", Style::default().fg(theme.accent_primary)),
-        Span::styled(" colors ", Style::default().fg(theme.fg_muted)),
+        Span::styled(":", Style::default().fg(theme.accent_primary)),
+        Span::styled(" cmd ", Style::default().fg(theme.fg_muted)),
         Span::styled("?", Style::default().fg(theme.accent_primary)),
         Span::styled(" help ", Style::default().fg(theme.fg_muted)),
         Span::styled("q", Style::default().fg(theme.accent_primary)),
@@ -591,7 +656,7 @@ fn draw_color_picker(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
 fn draw_help_popup(f: &mut Frame, area: Rect, theme: &FrostTheme) {
     // Center the popup
     let popup_width = 50.min(area.width.saturating_sub(4));
-    let popup_height = 26.min(area.height.saturating_sub(4));
+    let popup_height = 34.min(area.height.saturating_sub(4));
     let popup_x = (area.width.saturating_sub(popup_width)) / 2;
     let popup_y = (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
@@ -643,6 +708,30 @@ fn draw_help_popup(f: &mut Frame, area: Rect, theme: &FrostTheme) {
         Line::from(vec![
             Span::styled("  r       ", Style::default().fg(theme.accent_primary)),
             Span::styled("Random wallpaper", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(vec![
+            Span::styled("  :       ", Style::default().fg(theme.accent_primary)),
+            Span::styled("Command mode (vim-style)", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Commands (:)", Style::default().fg(theme.accent_highlight).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("  :t <tag>", Style::default().fg(theme.accent_primary)),
+            Span::styled(" Filter by tag", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(vec![
+            Span::styled("  :clear  ", Style::default().fg(theme.accent_primary)),
+            Span::styled(" Clear all filters", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(vec![
+            Span::styled("  :sim    ", Style::default().fg(theme.accent_primary)),
+            Span::styled(" Find similar", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(vec![
+            Span::styled("  :sort n ", Style::default().fg(theme.accent_primary)),
+            Span::styled(" Sort (name/date/size)", Style::default().fg(theme.fg_secondary)),
         ]),
         Line::from(""),
         Line::from(vec![

@@ -1,6 +1,7 @@
 use crate::app::Config;
 use crate::screen;
 use crate::swww;
+use crate::timeprofile::TimePeriod;
 use crate::wallpaper::WallpaperCache;
 use anyhow::{Context, Result};
 use notify::{Config as NotifyConfig, RecommendedWatcher, RecursiveMode, Watcher};
@@ -188,8 +189,46 @@ fn set_random_wallpapers(
     screens: &[screen::Screen],
     config: &Config,
 ) -> Result<()> {
+    // Check if time profiles are enabled
+    let use_time_profiles = config.time_profiles.enabled;
+    let period = TimePeriod::current();
+
+    if use_time_profiles {
+        println!("  {} Time period: {}", period.emoji(), period.name());
+    }
+
     for screen in screens {
-        if let Some(wp) = cache.random_for_screen(screen) {
+        let wp = if use_time_profiles {
+            // Get wallpapers sorted by time profile score
+            let suitable: Vec<_> = cache.wallpapers.iter()
+                .filter(|wp| !wp.colors.is_empty())
+                .filter(|wp| wp.matches_screen(screen))
+                .map(|wp| {
+                    let score = config.time_profiles.score_wallpaper(&wp.colors, &wp.tags);
+                    (wp, score)
+                })
+                .filter(|(_, score)| *score >= 0.4) // Minimum threshold
+                .collect();
+
+            if suitable.is_empty() {
+                // Fallback to random if no suitable wallpapers
+                cache.random_for_screen(screen)
+            } else {
+                // Pick randomly from top 20% of scored wallpapers
+                let top_count = (suitable.len() / 5).max(3).min(suitable.len());
+                let mut sorted = suitable;
+                sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+                use rand::seq::SliceRandom;
+                sorted[..top_count]
+                    .choose(&mut rand::thread_rng())
+                    .map(|(wp, _)| *wp)
+            }
+        } else {
+            cache.random_for_screen(screen)
+        };
+
+        if let Some(wp) = wp {
             swww::set_wallpaper_with_resize(
                 &screen.name,
                 &wp.path,
