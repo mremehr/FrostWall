@@ -228,6 +228,12 @@ impl PairingHistory {
 
     /// Get top N matching wallpapers for other screens
     /// Returns wallpapers sorted by affinity score (highest first)
+    ///
+    /// Scoring formula:
+    /// - Base: pairing history affinity
+    /// - Color similarity: weighted palette match (0-5 points)
+    /// - Color harmony: complementary/analogous/triadic bonus (0-3 points)
+    /// - Tag matching: shared tags bonus (0-6 points, max 3 tags)
     pub fn get_top_matches(
         &self,
         selected_wp: &Path,
@@ -236,6 +242,22 @@ impl PairingHistory {
         selected_colors: &[String],
         limit: usize,
     ) -> Vec<(PathBuf, f32)> {
+        // Find the selected wallpaper to get its weights and tags
+        let selected = available_wallpapers.iter().find(|wp| wp.path == selected_wp);
+        let selected_weights: Vec<f32> = selected
+            .map(|wp| wp.color_weights.clone())
+            .unwrap_or_default();
+        let selected_tags: Vec<String> = selected
+            .map(|wp| wp.all_tags())
+            .unwrap_or_default();
+
+        // Use equal weights if none available
+        let selected_weights = if selected_weights.is_empty() {
+            vec![1.0 / selected_colors.len().max(1) as f32; selected_colors.len()]
+        } else {
+            selected_weights
+        };
+
         if available_wallpapers.is_empty() {
             return Vec::new();
         }
@@ -247,9 +269,39 @@ impl PairingHistory {
                 // Base score from pairing history
                 let mut score = self.get_affinity(selected_wp, &wp.path);
 
-                // Bonus for similar colors using perceptual LAB distance
-                let color_similarity = crate::utils::palette_similarity(selected_colors, &wp.colors);
-                score += color_similarity * 5.0; // Weight color similarity
+                // Get candidate weights (or default to equal)
+                let wp_weights = if wp.color_weights.is_empty() {
+                    vec![1.0 / wp.colors.len().max(1) as f32; wp.colors.len()]
+                } else {
+                    wp.color_weights.clone()
+                };
+
+                // Color similarity with weights (0-5 points)
+                let color_similarity = crate::utils::palette_similarity_weighted(
+                    selected_colors,
+                    &selected_weights,
+                    &wp.colors,
+                    &wp_weights,
+                );
+                score += color_similarity * 5.0;
+
+                // Color harmony bonus (0-3 points)
+                let (harmony, strength) = crate::utils::detect_harmony(
+                    selected_colors,
+                    &selected_weights,
+                    &wp.colors,
+                    &wp_weights,
+                );
+                let harmony_bonus = harmony.bonus() * strength * 3.0;
+                score += harmony_bonus;
+
+                // Tag matching bonus (0-6 points, 2 points per shared tag, max 3)
+                let wp_tags = wp.all_tags();
+                let shared_tags = selected_tags.iter()
+                    .filter(|t| wp_tags.contains(t))
+                    .count();
+                let tag_bonus = (shared_tags as f32).min(3.0) * 2.0;
+                score += tag_bonus;
 
                 (wp.path.clone(), score)
             })

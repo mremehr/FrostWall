@@ -85,6 +85,9 @@ pub struct Wallpaper {
     /// CLIP-generated auto tags with confidence scores
     #[serde(default)]
     pub auto_tags: Vec<AutoTag>,
+    /// Color weights/proportions (how much of the image each color represents, 0.0-1.0)
+    #[serde(default)]
+    pub color_weights: Vec<f32>,
     /// Cached CLIP embedding for similarity search (512 dimensions)
     #[serde(default)]
     pub embedding: Option<Vec<f32>>,
@@ -137,6 +140,7 @@ impl Wallpaper {
             height,
             aspect_category,
             colors: Vec::new(), // Colors extracted lazily
+            color_weights: Vec::new(),
             tags: Vec::new(),
             auto_tags: Vec::new(),
             embedding: None,
@@ -181,17 +185,35 @@ impl Wallpaper {
             0,
         );
 
-        self.colors = result
+        // Calculate color weights (proportion of image each color represents)
+        let total_pixels = lab.len() as f32;
+        let mut counts = vec![0usize; K];
+        for &idx in &result.indices {
+            counts[idx as usize] += 1;
+        }
+
+        // Create paired colors and weights, then sort by weight descending
+        let mut color_weight_pairs: Vec<(String, f32)> = result
             .centroids
             .iter()
-            .map(|c| {
+            .zip(counts.iter())
+            .map(|(c, &count)| {
                 let rgb: Srgb = (*c).into_color();
                 let r = (rgb.red * 255.0) as u8;
                 let g = (rgb.green * 255.0) as u8;
                 let b = (rgb.blue * 255.0) as u8;
-                format!("#{:02x}{:02x}{:02x}", r, g, b)
+                let hex = format!("#{:02x}{:02x}{:02x}", r, g, b);
+                let weight = count as f32 / total_pixels;
+                (hex, weight)
             })
             .collect();
+
+        // Sort by weight descending (most dominant color first)
+        color_weight_pairs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Unzip into separate vectors
+        self.colors = color_weight_pairs.iter().map(|(c, _)| c.clone()).collect();
+        self.color_weights = color_weight_pairs.iter().map(|(_, w)| *w).collect();
 
         // Generate auto-tags from colors
         self.generate_auto_tags();
@@ -240,6 +262,7 @@ impl Wallpaper {
             height,
             aspect_category,
             colors: existing_colors.unwrap_or_default(),
+            color_weights: Vec::new(), // Will be populated on extract_colors()
             tags: Vec::new(),
             auto_tags: Vec::new(),
             embedding: None,
