@@ -41,7 +41,10 @@ pub async fn run_init() -> Result<()> {
     let expanded_dir = expand_tilde(&wallpaper_dir);
     if !expanded_dir.exists() {
         let create = Confirm::with_theme(&theme)
-            .with_prompt(format!("Directory doesn't exist. Create {}?", expanded_dir.display()))
+            .with_prompt(format!(
+                "Directory doesn't exist. Create {}?",
+                expanded_dir.display()
+            ))
             .default(true)
             .interact()?;
 
@@ -57,7 +60,10 @@ pub async fn run_init() -> Result<()> {
         Ok(screens) => {
             println!("Found {} screen(s):", screens.len());
             for s in &screens {
-                println!("  • {} ({}x{}, {:?})", s.name, s.width, s.height, s.aspect_category);
+                println!(
+                    "  • {} ({}x{}, {:?})",
+                    s.name, s.width, s.height, s.aspect_category
+                );
             }
         }
         Err(e) => {

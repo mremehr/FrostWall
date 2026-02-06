@@ -76,3 +76,31 @@ recommended_repaint_delay = 5
 recommended_input_delay = 1
 # Set to true after showing optimization hint
 hint_shown = false
+
+[pairing]
+# Enable intelligent pairing suggestions
+enabled = true
+# Auto-apply best suggestions to other screens
+auto_apply = false
+# Undo window after auto-apply (seconds)
+undo_window_secs = 5
+# Minimum score confidence for auto-apply
+auto_apply_threshold = 0.7
+# Max records kept in pairing history
+max_history_records = 1000
+# Number of alternatives shown in pairing preview
+preview_match_limit = 10
+
+# Scoring weights (set to 0.0 to disable that signal)
+# Screen-specific co-occurrence history
+screen_context_weight = 8.0
+# Visual similarity (palette/brightness/saturation)
+visual_weight = 5.0
+# Color harmony bonus
+harmony_weight = 3.0
+# Shared tags bonus (per shared tag, up to 3 tags)
+tag_weight = 2.0
+# Semantic CLIP embedding similarity
+semantic_weight = 7.0
+# Penalty for repeating same wallpaper on same target screen
+repetition_penalty_weight = 1.0

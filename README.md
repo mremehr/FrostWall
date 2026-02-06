@@ -10,7 +10,7 @@ Managing wallpapers across multiple monitors with different aspect ratios (ultra
 
 - **Smart matching**: Automatically filters wallpapers that fit each screen's aspect category
 - **Multi-monitor aware**: Detects all connected outputs via niri/wlr-randr
-- **Visual pairing**: Split-view interface lets you see your selected wallpaper alongside suggested matches for other screens - pick the perfect combination with real thumbnail previews
+- **Visual pairing**: 50/50 split-view with dynamic, large previews for selected wallpaper + suggested matches
 - **Color harmony**: LAB color space matching ensures your multi-monitor setup looks cohesive
 - **Visual browsing**: TUI with real image thumbnails (Kitty/Sixel graphics protocols)
 - **Scriptable**: CLI commands for keybindings, scripts, and automation
@@ -37,19 +37,18 @@ Match modes control filtering:
 The killer feature: press `p` to enter pairing mode and see a split-view with:
 
 ```
-┌────────────────────────────────┬─────────────────┐
-│                                │  Pair 1/3       │
-│     [Your selected wallpaper]  │  ┌───────────┐  │
-│          65% width             │  │ DP-1 thumb│  │
-│                                │  └───────────┘  │
-│                                │  ┌───────────┐  │
-│                                │  │ DP-2 thumb│  │
-│                                │  └───────────┘  │
-└────────────────────────────────┴─────────────────┘
+┌───────────────────────────────┬───────────────────────────────┐
+│                               │ Pair 1/10                     │
+│   [Selected wallpaper]        │ [Screen preview thumbnails]   │
+│   Dynamic size on resize      │ Dynamic size on resize        │
+│   (left panel, 50%)           │ (right panel, 50%)            │
+└───────────────────────────────┴───────────────────────────────┘
 ```
 
 - **Real thumbnails** - See actual images, not just filenames
-- **Multiple alternatives** - Cycle through top 3 matches with `←`/`→`
+- **Multiple alternatives** - Cycle through top matches (`preview_match_limit`, default 10)
+- **Equal thumbnail slots** - Preview thumbnails share the same slot size; aspect is preserved
+- **Responsive layout** - Pairing preview scales live when terminal window is resized
 - **Color-based suggestions** - Matches based on LAB color similarity
 - **History learning** - Remembers which wallpapers you pair together
 - **One-press apply** - `Enter` sets all screens at once
@@ -60,7 +59,8 @@ Multi-monitor wallpaper pairing that learns from your choices:
 
 - **Affinity tracking** - Records which wallpapers you use together
 - **LAB color matching** - Suggests wallpapers with perceptually similar colors
-- **Score-based ranking** - Combines history + color similarity for best matches
+- **Score-based ranking** - Combines history, visual similarity, harmony, tags, and semantic CLIP similarity
+- **Configurable weights** - Tune scoring weights in `[pairing]` without recompiling
 - **Position memory** - TUI remembers your browsing position per screen
 
 ### Auto-Tagging
@@ -98,12 +98,13 @@ cargo build --release --features clip-cuda
 # Tag wallpapers with AI
 frostwall auto-tag                    # Tag all wallpapers
 frostwall auto-tag --incremental      # Only tag new wallpapers
-frostwall auto-tag --threshold 0.6    # Custom confidence threshold
+frostwall auto-tag --threshold 0.55   # Custom confidence threshold
 frostwall auto-tag --verbose          # Show per-image results
+frostwall --dir ~/pictures/wallpapers auto-tag --incremental --threshold 0.55
 ```
 
-26 semantic categories detected by CLIP:
-`abstract`, `anime`, `architecture`, `bright`, `city`, `cozy`, `cyberpunk`, `dark`, `desert`, `fantasy`, `forest`, `geometric`, `landscape_orientation`, `minimal`, `mountain`, `nature`, `ocean`, `pastel`, `portrait`, `retro`, `space`, `sunset`, `tropical`, `urban`, `vibrant`, `vintage`
+36 semantic categories detected by CLIP:
+`abstract`, `anime`, `anime_character`, `architecture`, `bright`, `city`, `concept_art`, `cozy`, `cyberpunk`, `dark`, `desert`, `epic_battle`, `ethereal`, `fantasy`, `fantasy_landscape`, `forest`, `geometric`, `landscape_orientation`, `minimal`, `moody_fantasy`, `mountain`, `nature`, `nightscape`, `ocean`, `painterly`, `pastel`, `pixel_art`, `portrait`, `retro`, `sakura`, `space`, `sunset`, `tropical`, `urban`, `vibrant`, `vintage`
 
 Features:
 - Uses CLIP ViT-B/32 visual encoder via ONNX Runtime
@@ -335,7 +336,17 @@ mode = "auto"              # auto, light, dark
 
 [pairing]
 enabled = true             # Enable intelligent pairing
+auto_apply = false         # Auto-apply best suggestion to other screens
+undo_window_secs = 5       # Undo timeout after auto-apply
+auto_apply_threshold = 0.7 # Confidence needed for auto-apply
 max_history_records = 1000 # Maximum pairing records to keep
+preview_match_limit = 10   # Number of alternatives in pairing preview
+screen_context_weight = 8.0      # Screen-specific history weight
+visual_weight = 5.0              # Palette/brightness/saturation weight
+harmony_weight = 3.0             # Color harmony bonus weight
+tag_weight = 2.0                 # Per shared tag (up to 3 tags)
+semantic_weight = 7.0            # CLIP embedding similarity weight
+repetition_penalty_weight = 1.0  # Recent repetition penalty multiplier
 
 [time_profiles]
 enabled = false            # Enable time-based wallpaper selection
@@ -385,8 +396,8 @@ preferred_tags = ["dark", "space", "minimal"]
 
 | Key | Action |
 |-----|--------|
-| `←` / `→` | Cycle through alternatives (1/3, 2/3, 3/3) |
-| `1` / `2` / `3` | Jump to specific alternative |
+| `←` / `→` | Cycle through alternatives (up to `preview_match_limit`) |
+| `1`-`9`, `0` | Jump to alternative index (`0` = 10th) |
 | `Enter` | Apply all wallpapers (selected + suggestions) |
 | `p` / `Esc` | Close pairing preview |
 
@@ -503,14 +514,14 @@ Each wallpaper stores metadata including colors, tags, and optional CLIP embeddi
 ### v0.5.0
 
 - **CLIP AI auto-tagging** - Semantic image tagging using CLIP ViT-B/32 (optional `--features clip`)
-  - 26 semantic categories: abstract, anime, architecture, city, fantasy, retro, tropical, and more
+  - 36 semantic categories including library-tuned tags like `pixel_art`, `anime_character`, `fantasy_landscape`, `sakura`, and `concept_art`
   - Pre-computed text embeddings for fast inference
   - Auto-downloads model from HuggingFace on first use
   - **CUDA GPU acceleration** - Optional `--features clip-cuda` for 10-50x faster tagging
-- **Visual pairing preview** - Split-view with real thumbnails for multi-monitor pairing
+- **Visual pairing preview** - 50/50 split-view with larger, dynamic thumbnails for multi-monitor pairing
 - **Manual pairing control** - Press `p` to preview and select matching wallpapers
-- **Improved pairing** - More options for pairing, better color matching
-- **Cleaner UX** - 65/35 split layout shows your selection alongside suggestions
+- **Improved pairing** - More options for pairing, better color and semantic matching
+- **Configurable pairing scoring** - Tune history/visual/harmony/tag/semantic/repetition weights in config
 
 ### v0.4.0
 

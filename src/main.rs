@@ -1,5 +1,6 @@
 mod app;
 mod clip;
+#[cfg(feature = "clip")]
 mod clip_embeddings;
 mod collections;
 mod init;
@@ -23,7 +24,7 @@ use std::path::{Path, PathBuf};
 #[derive(Parser)]
 #[command(name = "frostwall")]
 #[command(author = "MrMattias")]
-#[command(version = "0.4.0")]
+#[command(version)]
 #[command(about = "Intelligent wallpaper manager with screen-aware matching")]
 struct Cli {
     #[command(subcommand)]
@@ -305,7 +306,11 @@ async fn main() -> Result<()> {
         Some(Commands::Init) => {
             init::run_init().await?;
         }
-        Some(Commands::Watch { interval, shuffle, watch_dir }) => {
+        Some(Commands::Watch {
+            interval,
+            shuffle,
+            watch_dir,
+        }) => {
             let interval = watch::parse_interval(&interval)
                 .unwrap_or_else(|| std::time::Duration::from_secs(30 * 60));
             let watch_config = watch::WatchConfig {
@@ -315,17 +320,15 @@ async fn main() -> Result<()> {
             };
             watch::run_watch(watch_config).await?;
         }
-        Some(Commands::Profile { action }) => {
-            match action {
-                ProfileAction::List => profile::cmd_profile_list()?,
-                ProfileAction::Create { name } => profile::cmd_profile_create(&name)?,
-                ProfileAction::Delete { name } => profile::cmd_profile_delete(&name)?,
-                ProfileAction::Use { name } => profile::cmd_profile_use(&name)?,
-                ProfileAction::Set { name, key, value } => {
-                    profile::cmd_profile_set(&name, &key, &value)?
-                }
+        Some(Commands::Profile { action }) => match action {
+            ProfileAction::List => profile::cmd_profile_list()?,
+            ProfileAction::Create { name } => profile::cmd_profile_create(&name)?,
+            ProfileAction::Delete { name } => profile::cmd_profile_delete(&name)?,
+            ProfileAction::Use { name } => profile::cmd_profile_use(&name)?,
+            ProfileAction::Set { name, key, value } => {
+                profile::cmd_profile_set(&name, &key, &value)?
             }
-        }
+        },
         Some(Commands::Tag { action }) => {
             cmd_tag(action, &wallpaper_dir)?;
         }
@@ -336,7 +339,12 @@ async fn main() -> Result<()> {
             cmd_pair(action, &wallpaper_dir)?;
         }
         #[cfg(feature = "clip")]
-        Some(Commands::AutoTag { incremental, threshold, max_tags, verbose }) => {
+        Some(Commands::AutoTag {
+            incremental,
+            threshold,
+            max_tags,
+            verbose,
+        }) => {
             cmd_auto_tag(&wallpaper_dir, incremental, threshold, max_tags, verbose).await?;
         }
         Some(Commands::Collection { action }) => {
@@ -376,7 +384,7 @@ async fn cmd_random(wallpaper_dir: &Path) -> Result<()> {
 
 async fn cmd_next(wallpaper_dir: &Path) -> Result<()> {
     let screens = screen::detect_screens().await?;
-    let mut cache = wallpaper::WallpaperCache::load_or_scan(wallpaper_dir)?;
+    let mut cache = wallpaper::WallpaperCache::load_or_scan_for_ai(wallpaper_dir)?;
 
     for screen in &screens {
         if let Some(wp) = cache.next_for_screen(screen) {
@@ -391,7 +399,7 @@ async fn cmd_next(wallpaper_dir: &Path) -> Result<()> {
 
 async fn cmd_prev(wallpaper_dir: &Path) -> Result<()> {
     let screens = screen::detect_screens().await?;
-    let mut cache = wallpaper::WallpaperCache::load_or_scan(wallpaper_dir)?;
+    let mut cache = wallpaper::WallpaperCache::load_or_scan_for_ai(wallpaper_dir)?;
 
     for screen in &screens {
         if let Some(wp) = cache.prev_for_screen(screen) {
@@ -443,8 +451,22 @@ fn cmd_pair(action: PairAction, wallpaper_dir: &Path) -> Result<()> {
             println!("  Records: {}", history.record_count());
             println!("  Affinity pairs: {}", history.affinity_count());
             println!();
-            println!("Pairing is {}", if config.pairing.enabled { "enabled" } else { "disabled" });
-            println!("Auto-apply is {}", if config.pairing.auto_apply { "enabled" } else { "disabled" });
+            println!(
+                "Pairing is {}",
+                if config.pairing.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            );
+            println!(
+                "Auto-apply is {}",
+                if config.pairing.auto_apply {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            );
         }
         PairAction::Clear => {
             let history = pairing::PairingHistory::new(config.pairing.max_history_records);
@@ -456,7 +478,9 @@ fn cmd_pair(action: PairAction, wallpaper_dir: &Path) -> Result<()> {
             let cache = wallpaper::WallpaperCache::load_or_scan(wallpaper_dir)?;
 
             // Find wallpapers with affinity to the given path
-            let mut suggestions: Vec<_> = cache.wallpapers.iter()
+            let mut suggestions: Vec<_> = cache
+                .wallpapers
+                .iter()
                 .filter(|wp| wp.path != path)
                 .map(|wp| {
                     let affinity = history.get_affinity(&path, &wp.path);
@@ -508,7 +532,11 @@ async fn cmd_collection(action: CollectionAction) -> Result<()> {
 
                 let mut store = collections::CollectionStore::load()?;
                 store.add(name.clone(), wallpapers.clone(), description)?;
-                println!("✓ Saved collection '{}' with {} screen(s)", name, wallpapers.len());
+                println!(
+                    "✓ Saved collection '{}' with {} screen(s)",
+                    name,
+                    wallpapers.len()
+                );
 
                 for (screen, path) in &wallpapers {
                     println!("  {}: {}", screen, path.display());
@@ -532,7 +560,12 @@ async fn cmd_collection(action: CollectionAction) -> Result<()> {
                         config.display.resize_mode,
                         &config.display.fill_color,
                     ) {
-                        eprintln!("Warning: Failed to set {} on {}: {}", wp_path.display(), screen_name, e);
+                        eprintln!(
+                            "Warning: Failed to set {} on {}: {}",
+                            wp_path.display(),
+                            screen_name,
+                            e
+                        );
                     } else {
                         println!("✓ {}: {}", screen_name, wp_path.display());
                     }
@@ -551,7 +584,7 @@ async fn cmd_collection(action: CollectionAction) -> Result<()> {
 }
 
 fn cmd_tag(action: TagAction, wallpaper_dir: &Path) -> Result<()> {
-    let mut cache = wallpaper::WallpaperCache::load_or_scan(wallpaper_dir)?;
+    let mut cache = wallpaper::WallpaperCache::load_or_scan_for_ai(wallpaper_dir)?;
 
     match action {
         TagAction::List => {
@@ -603,12 +636,17 @@ fn cmd_similar(wallpaper_dir: &Path, target_path: &Path, limit: usize) -> Result
     let cache = wallpaper::WallpaperCache::load_or_scan(wallpaper_dir)?;
 
     // Find the target wallpaper
-    let target = cache.wallpapers.iter()
+    let target = cache
+        .wallpapers
+        .iter()
         .find(|wp| wp.path == target_path)
         .or_else(|| {
             // Try matching by filename
             let target_name = target_path.file_name();
-            cache.wallpapers.iter().find(|wp| wp.path.file_name() == target_name)
+            cache
+                .wallpapers
+                .iter()
+                .find(|wp| wp.path.file_name() == target_name)
         });
 
     let target = match target {
@@ -629,7 +667,8 @@ fn cmd_similar(wallpaper_dir: &Path, target_path: &Path, limit: usize) -> Result
     println!();
 
     // Build list of (index, colors) excluding target
-    let wallpaper_colors: Vec<(usize, &[String])> = cache.wallpapers
+    let wallpaper_colors: Vec<(usize, &[String])> = cache
+        .wallpapers
         .iter()
         .enumerate()
         .filter(|(_, wp)| wp.path != target.path && !wp.colors.is_empty())
@@ -644,9 +683,7 @@ fn cmd_similar(wallpaper_dir: &Path, target_path: &Path, limit: usize) -> Result
         println!("Similar wallpapers (by color profile):");
         for (score, idx) in similar {
             let wp = &cache.wallpapers[idx];
-            let filename = wp.path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("?");
+            let filename = wp.path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
             println!("  {:.0}% - {}", score * 100.0, filename);
         }
     }
@@ -668,13 +705,13 @@ async fn cmd_auto_tag(
 
     let mut tagger = ClipTagger::new().await?;
 
-    let mut cache = wallpaper::WallpaperCache::load_or_scan(wallpaper_dir)?;
+    let mut cache = wallpaper::WallpaperCache::load_or_scan_for_ai(wallpaper_dir)?;
 
     let to_process: Vec<usize> = cache
         .wallpapers
         .iter()
         .enumerate()
-        .filter(|(_, wp)| !incremental || wp.auto_tags.is_empty())
+        .filter(|(_, wp)| !incremental || wp.auto_tags.is_empty() || wp.embedding.is_none())
         .map(|(i, _)| i)
         .collect();
 
@@ -696,34 +733,32 @@ async fn cmd_auto_tag(
             eprintln!("Image: {}", path.display());
         }
 
-        match tagger.tag_image_verbose(&path, threshold, show_debug) {
-            Ok(mut tags) => {
+        match tagger.analyze_image_verbose(&path, threshold, show_debug) {
+            Ok(mut analysis) => {
                 // Limit to max_tags (tags are already sorted by confidence)
-                if max_tags > 0 && tags.len() > max_tags {
-                    tags.truncate(max_tags);
+                if max_tags > 0 && analysis.tags.len() > max_tags {
+                    analysis.tags.truncate(max_tags);
                 }
 
                 if verbose {
-                    let tag_names: Vec<_> = tags.iter().map(|t| &t.name).collect();
+                    let tag_names: Vec<_> = analysis.tags.iter().map(|t| &t.name).collect();
                     println!(
-                        "[{}/{}] {}: {:?}",
+                        "[{}/{}] {}: {:?} (emb={})",
                         progress + 1,
                         to_process.len(),
                         path.file_name().unwrap_or_default().to_string_lossy(),
-                        tag_names
+                        tag_names,
+                        analysis.embedding.len(),
                     );
                 } else if (progress + 1) % 10 == 0 || progress + 1 == to_process.len() {
                     eprint!("\rProgress: {}/{}", progress + 1, to_process.len());
                 }
 
-                cache.wallpapers[*idx].set_auto_tags(tags);
+                cache.wallpapers[*idx].set_auto_tags(analysis.tags);
+                cache.wallpapers[*idx].set_embedding(analysis.embedding);
             }
             Err(e) => {
-                eprintln!(
-                    "\nWarning: Failed to tag {}: {}",
-                    path.display(),
-                    e
-                );
+                eprintln!("\nWarning: Failed to tag {}: {}", path.display(), e);
             }
         }
     }
@@ -738,7 +773,9 @@ async fn cmd_auto_tag(
     let tags = clip::ClipTagger::available_tags();
     println!("\nTag distribution:");
     for tag in tags {
-        let count = cache.wallpapers.iter()
+        let count = cache
+            .wallpapers
+            .iter()
             .filter(|wp| wp.auto_tags.iter().any(|t| t.name == tag))
             .count();
         if count > 0 {
@@ -762,15 +799,26 @@ async fn cmd_time_profile(action: TimeProfileAction, wallpaper_dir: &Path) -> Re
 
             println!("{} Current time period: {}", period.emoji(), period.name());
             println!();
-            println!("Time profiles: {}", if config.time_profiles.enabled { "enabled" } else { "disabled" });
+            println!(
+                "Time profiles: {}",
+                if config.time_profiles.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            );
             println!();
             println!("Settings for {}:", period.name());
-            println!("  Brightness range: {:.0}% - {:.0}%",
+            println!(
+                "  Brightness range: {:.0}% - {:.0}%",
                 settings.brightness_range.0 * 100.0,
                 settings.brightness_range.1 * 100.0
             );
             println!("  Preferred tags: {}", settings.preferred_tags.join(", "));
-            println!("  Brightness weight: {:.0}%", settings.brightness_weight * 100.0);
+            println!(
+                "  Brightness weight: {:.0}%",
+                settings.brightness_weight * 100.0
+            );
             println!("  Tag weight: {:.0}%", settings.tag_weight * 100.0);
         }
         TimeProfileAction::Enable => {
@@ -788,11 +836,17 @@ async fn cmd_time_profile(action: TimeProfileAction, wallpaper_dir: &Path) -> Re
             let cache = wallpaper::WallpaperCache::load_or_scan(wallpaper_dir)?;
             let period = TimePeriod::current();
 
-            println!("{} Previewing wallpapers for {} period:", period.emoji(), period.name());
+            println!(
+                "{} Previewing wallpapers for {} period:",
+                period.emoji(),
+                period.name()
+            );
             println!();
 
             // Score and sort wallpapers
-            let mut scored: Vec<_> = cache.wallpapers.iter()
+            let mut scored: Vec<_> = cache
+                .wallpapers
+                .iter()
                 .filter(|wp| !wp.colors.is_empty())
                 .map(|wp| {
                     let score = config.time_profiles.score_wallpaper(&wp.colors, &wp.tags);
@@ -803,9 +857,7 @@ async fn cmd_time_profile(action: TimeProfileAction, wallpaper_dir: &Path) -> Re
             scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
             for (wp, score) in scored.into_iter().take(limit) {
-                let filename = wp.path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("?");
+                let filename = wp.path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
                 let tags = if wp.tags.is_empty() {
                     String::new()
                 } else {
@@ -820,10 +872,15 @@ async fn cmd_time_profile(action: TimeProfileAction, wallpaper_dir: &Path) -> Re
             let transition = config.transition();
             let period = TimePeriod::current();
 
-            println!("{} Setting wallpapers for {} period...", period.emoji(), period.name());
+            println!(
+                "{} Setting wallpapers for {} period...",
+                period.emoji(),
+                period.name()
+            );
 
             // Get top wallpapers for current time
-            let sorted = timeprofile::sort_by_time_profile(&cache.wallpapers, &config.time_profiles);
+            let sorted =
+                timeprofile::sort_by_time_profile(&cache.wallpapers, &config.time_profiles);
 
             for (i, screen) in screens.iter().enumerate() {
                 if let Some(wp) = sorted.get(i) {
@@ -834,9 +891,11 @@ async fn cmd_time_profile(action: TimeProfileAction, wallpaper_dir: &Path) -> Re
                         config.display.resize_mode,
                         &config.display.fill_color,
                     )?;
-                    println!("  {}: {}", screen.name, wp.path.file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("?"));
+                    println!(
+                        "  {}: {}",
+                        screen.name,
+                        wp.path.file_name().and_then(|n| n.to_str()).unwrap_or("?")
+                    );
                 }
             }
         }
@@ -870,7 +929,14 @@ fn cmd_import(action: ImportAction, wallpaper_dir: &Path) -> Result<()> {
             println!("\nFound {} images:\n", results.len());
             for (i, img) in results.iter().enumerate() {
                 let author = img.author.as_deref().unwrap_or("Unknown");
-                println!("  {}. {}x{} by {} [{}]", i + 1, img.width, img.height, author, img.id);
+                println!(
+                    "  {}. {}x{} by {} [{}]",
+                    i + 1,
+                    img.width,
+                    img.height,
+                    author,
+                    img.id
+                );
             }
 
             println!("\nDownload with: frostwall import download <id>");
@@ -922,8 +988,11 @@ fn cmd_import(action: ImportAction, wallpaper_dir: &Path) -> Result<()> {
                     let id = id.split('.').next().unwrap_or(id);
                     webimport::GalleryImage {
                         id: id.to_string(),
-                        url: format!("https://w.wallhaven.cc/full/{}/wallhaven-{}.jpg",
-                            &id[..2.min(id.len())], id),
+                        url: format!(
+                            "https://w.wallhaven.cc/full/{}/wallhaven-{}.jpg",
+                            &id[..2.min(id.len())],
+                            id
+                        ),
                         thumb_url: String::new(),
                         width: 0,
                         height: 0,

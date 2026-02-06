@@ -39,22 +39,22 @@ impl FrostTheme {
             bg_light: Color::Reset,
 
             // Dark text for light background
-            fg_primary: Color::Rgb(10, 15, 20),      // #0a0f14 - near black
-            fg_secondary: Color::Rgb(26, 45, 66),    // #1a2d42 - dark blue-gray
-            fg_muted: Color::Rgb(42, 63, 85),        // #2a3f55 - muted dark
+            fg_primary: Color::Rgb(10, 15, 20), // #0a0f14 - near black
+            fg_secondary: Color::Rgb(26, 45, 66), // #1a2d42 - dark blue-gray
+            fg_muted: Color::Rgb(42, 63, 85),   // #2a3f55 - muted dark
 
             // Ice accents (darker for light bg)
-            accent_primary: Color::Rgb(30, 69, 112),    // #1e4570 - deep ice blue
-            accent_secondary: Color::Rgb(46, 90, 144),  // #2e5a90 - bright ice blue
+            accent_primary: Color::Rgb(30, 69, 112), // #1e4570 - deep ice blue
+            accent_secondary: Color::Rgb(46, 90, 144), // #2e5a90 - bright ice blue
             accent_highlight: Color::Rgb(153, 101, 21), // #996515 - dark golden
 
             // Status
-            success: Color::Rgb(13, 94, 58),    // #0d5e3a - dark ice green
-            warning: Color::Rgb(153, 101, 21),  // #996515 - dark golden
-            error: Color::Rgb(160, 24, 36),     // #a01824 - dark cold red
+            success: Color::Rgb(13, 94, 58), // #0d5e3a - dark ice green
+            warning: Color::Rgb(153, 101, 21), // #996515 - dark golden
+            error: Color::Rgb(160, 24, 36),  // #a01824 - dark cold red
 
             // Borders
-            border: Color::Rgb(184, 212, 241),     // #b8d4f1 - soft ice
+            border: Color::Rgb(184, 212, 241), // #b8d4f1 - soft ice
             border_focused: Color::Rgb(46, 90, 144), // #2e5a90 - bright ice blue
         }
     }
@@ -68,22 +68,22 @@ impl FrostTheme {
             bg_light: Color::Reset,
 
             // Light text for dark background
-            fg_primary: Color::Rgb(245, 250, 255),   // #f5faff - bright white
+            fg_primary: Color::Rgb(245, 250, 255), // #f5faff - bright white
             fg_secondary: Color::Rgb(200, 220, 240), // #c8dcf0 - soft ice
-            fg_muted: Color::Rgb(80, 100, 120),      // #506478 - muted gray
+            fg_muted: Color::Rgb(80, 100, 120),    // #506478 - muted gray
 
             // Ice accents (brighter for dark bg)
-            accent_primary: Color::Rgb(100, 200, 255),   // #64c8ff - bright ice blue
-            accent_secondary: Color::Rgb(80, 250, 150),  // #50fa96 - cold green
-            accent_highlight: Color::Rgb(255, 215, 95),  // #ffd75f - warm yellow
+            accent_primary: Color::Rgb(100, 200, 255), // #64c8ff - bright ice blue
+            accent_secondary: Color::Rgb(80, 250, 150), // #50fa96 - cold green
+            accent_highlight: Color::Rgb(255, 215, 95), // #ffd75f - warm yellow
 
             // Status
-            success: Color::Rgb(80, 250, 150),   // #50fa96 - cold green
-            warning: Color::Rgb(255, 215, 95),   // #ffd75f - warm yellow
-            error: Color::Rgb(255, 95, 135),     // #ff5f87 - bright red
+            success: Color::Rgb(80, 250, 150), // #50fa96 - cold green
+            warning: Color::Rgb(255, 215, 95), // #ffd75f - warm yellow
+            error: Color::Rgb(255, 95, 135),   // #ff5f87 - bright red
 
             // Borders
-            border: Color::Rgb(60, 90, 120),        // #3c5a78 - dark ice
+            border: Color::Rgb(60, 90, 120), // #3c5a78 - dark ice
             border_focused: Color::Rgb(100, 200, 255), // #64c8ff - bright ice blue
         }
     }
@@ -120,7 +120,12 @@ fn detect_light_theme() -> bool {
     if let Ok(home) = std::env::var("HOME") {
         let kitty_config = format!("{}/.config/kitty/kitty.conf", home);
         if let Ok(content) = fs::read_to_string(&kitty_config) {
-            let header: String = content.lines().take(10).collect::<Vec<_>>().join(" ").to_lowercase();
+            let header: String = content
+                .lines()
+                .take(10)
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase();
             if header.contains("frostglow") || header.contains("light") {
                 return true;
             }
@@ -134,7 +139,12 @@ fn detect_light_theme() -> bool {
     if let Ok(home) = std::env::var("HOME") {
         let alacritty_config = format!("{}/.config/alacritty/alacritty.toml", home);
         if let Ok(content) = fs::read_to_string(&alacritty_config) {
-            let header: String = content.lines().take(10).collect::<Vec<_>>().join(" ").to_lowercase();
+            let header: String = content
+                .lines()
+                .take(10)
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase();
             if header.contains("frostglow") || header.contains("light") {
                 return true;
             }

@@ -61,8 +61,8 @@ impl ProfileManager {
         if path.exists() {
             let data = fs::read_to_string(&path)
                 .with_context(|| format!("Failed to read {}", path.display()))?;
-            let manager: ProfileManager = toml::from_str(&data)
-                .with_context(|| "Failed to parse profiles.toml")?;
+            let manager: ProfileManager =
+                toml::from_str(&data).with_context(|| "Failed to parse profiles.toml")?;
             Ok(manager)
         } else {
             Ok(Self::default())
@@ -166,7 +166,10 @@ pub fn cmd_profile_create(name: &str) -> Result<()> {
 
     println!("✓ Created profile '{}'", name);
     println!("\nEdit ~/.config/frostwall/profiles.toml to configure it, or use:");
-    println!("  frostwall profile set {} directory ~/Pictures/wallpapers/work", name);
+    println!(
+        "  frostwall profile set {} directory ~/Pictures/wallpapers/work",
+        name
+    );
 
     Ok(())
 }
@@ -251,7 +254,9 @@ pub fn cmd_profile_set(name: &str, key: &str, value: &str) -> Result<()> {
             println!("✓ Set {}.transition = {}", name, value);
         }
         "recursive" => {
-            let recursive = value.parse::<bool>().unwrap_or(value == "1" || value == "yes");
+            let recursive = value
+                .parse::<bool>()
+                .unwrap_or(value == "1" || value == "yes");
             profile.recursive = Some(recursive);
             println!("✓ Set {}.recursive = {}", name, recursive);
         }

@@ -20,7 +20,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // Check if a popup is showing (need to skip image rendering)
     // ratatui-image renders directly to terminal, bypassing widget z-order
     // Note: show_pairing_preview renders thumbnails separately, so don't block carousel
-    let popup_active = app.show_help || app.show_color_picker || app.pairing_history.can_undo() || app.command_mode;
+    let popup_active = app.show_help
+        || app.show_color_picker
+        || app.pairing_history.can_undo()
+        || app.command_mode;
 
     // Main container with frost border
     let block = Block::default()
@@ -36,32 +39,32 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let constraints = if app.show_colors {
         if has_error {
             vec![
-                Constraint::Length(2),  // Header
-                Constraint::Length(1),  // Error
-                Constraint::Min(7),     // Carousel
-                Constraint::Length(3),  // Color palette
-                Constraint::Length(2),  // Footer
+                Constraint::Length(2), // Header
+                Constraint::Length(1), // Error
+                Constraint::Min(7),    // Carousel
+                Constraint::Length(3), // Color palette
+                Constraint::Length(2), // Footer
             ]
         } else {
             vec![
-                Constraint::Length(2),  // Header
-                Constraint::Min(8),     // Carousel
-                Constraint::Length(3),  // Color palette
-                Constraint::Length(2),  // Footer
+                Constraint::Length(2), // Header
+                Constraint::Min(8),    // Carousel
+                Constraint::Length(3), // Color palette
+                Constraint::Length(2), // Footer
             ]
         }
     } else if has_error {
         vec![
-            Constraint::Length(2),  // Header
-            Constraint::Length(1),  // Error
-            Constraint::Min(9),     // Carousel
-            Constraint::Length(2),  // Footer
+            Constraint::Length(2), // Header
+            Constraint::Length(1), // Error
+            Constraint::Min(9),    // Carousel
+            Constraint::Length(2), // Footer
         ]
     } else {
         vec![
-            Constraint::Length(2),  // Header
-            Constraint::Min(10),    // Carousel
-            Constraint::Length(2),  // Footer
+            Constraint::Length(2), // Header
+            Constraint::Min(10),   // Carousel
+            Constraint::Length(2), // Footer
         ]
     };
 
@@ -85,12 +88,19 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if popup_active {
         draw_carousel_placeholder(f, chunks[chunk_idx], &theme);
     } else if app.show_pairing_preview && !app.pairing_preview_matches.is_empty() {
-        // Split layout: 2/3 carousel, 1/3 pairing preview
+        // Split layout: adaptive width based on number of target preview screens.
+        let preview_targets = app.pairing_preview_matches.len();
+        let right_percent = match preview_targets {
+            0 | 1 => 45,
+            2 => 50,
+            _ => 55,
+        };
+        let left_percent = 100 - right_percent;
         let split = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(65),  // Carousel with selected wallpaper
-                Constraint::Percentage(35),  // Pairing preview
+                Constraint::Percentage(left_percent),  // Selected wallpaper
+                Constraint::Percentage(right_percent), // Pairing preview
             ])
             .split(chunks[chunk_idx]);
 
@@ -162,14 +172,12 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
     let resize_mode = app.config.display.resize_mode.display_name();
     let sort_mode = app.sort_mode.display_name();
 
-    let mut header_spans = vec![
-        Span::styled(
-            " FrostWall ",
-            Style::default()
-                .fg(theme.accent_highlight)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ];
+    let mut header_spans = vec![Span::styled(
+        " FrostWall ",
+        Style::default()
+            .fg(theme.accent_highlight)
+            .add_modifier(Modifier::BOLD),
+    )];
 
     header_spans.extend(vec![
         Span::styled("│ ", Style::default().fg(theme.fg_muted)),
@@ -177,11 +185,20 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
         Span::styled(" │ ", Style::default().fg(theme.fg_muted)),
         Span::styled(count_info, Style::default().fg(theme.accent_primary)),
         Span::styled(" │ ", Style::default().fg(theme.fg_muted)),
-        Span::styled(format!("[{}]", match_mode), Style::default().fg(theme.accent_primary)),
+        Span::styled(
+            format!("[{}]", match_mode),
+            Style::default().fg(theme.accent_primary),
+        ),
         Span::styled(" ", Style::default()),
-        Span::styled(format!("[{}]", resize_mode), Style::default().fg(theme.accent_secondary)),
+        Span::styled(
+            format!("[{}]", resize_mode),
+            Style::default().fg(theme.accent_secondary),
+        ),
         Span::styled(" ", Style::default()),
-        Span::styled(format!("[⇅{}]", sort_mode), Style::default().fg(theme.fg_secondary)),
+        Span::styled(
+            format!("[⇅{}]", sort_mode),
+            Style::default().fg(theme.fg_secondary),
+        ),
     ]);
 
     // Tag filter indicator
@@ -208,10 +225,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
     // Pywal indicator
     if app.pywal_export {
         header_spans.push(Span::styled(" ", Style::default()));
-        header_spans.push(Span::styled(
-            "[wal]",
-            Style::default().fg(theme.success),
-        ));
+        header_spans.push(Span::styled("[wal]", Style::default().fg(theme.success)));
     }
 
     // Pairing suggestions indicator
@@ -243,22 +257,45 @@ fn draw_carousel_single(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostT
     let cache_idx = app.filtered_wallpapers[app.selected_wallpaper_idx];
 
     // Get wallpaper info
-    let filename = app.cache.wallpapers
+    let filename = app
+        .cache
+        .wallpapers
         .get(cache_idx)
-        .map(|wp| wp.path.file_stem()
-            .and_then(|n| n.to_str())
-            .unwrap_or("?")
-            .to_string())
+        .map(|wp| {
+            wp.path
+                .file_stem()
+                .and_then(|n| n.to_str())
+                .unwrap_or("?")
+                .to_string()
+        })
         .unwrap_or("?".to_string());
 
     // Request thumbnail
     app.request_thumbnail(cache_idx);
 
-    // Calculate centered thumbnail area (larger than normal)
-    let thumb_w = (area.width - 4).min(THUMBNAIL_WIDTH + 20);
-    let thumb_h = (area.height - 3).min(THUMBNAIL_HEIGHT + 10);
-    let thumb_x = area.x + (area.width.saturating_sub(thumb_w)) / 2;
-    let thumb_y = area.y + (area.height.saturating_sub(thumb_h + 2)) / 2;
+    // Full selected panel so left/right sides have consistent visual structure.
+    let panel = Block::default()
+        .title(" Selected ")
+        .title_style(
+            Style::default()
+                .fg(theme.accent_highlight)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.accent_highlight))
+        .style(Style::default().bg(theme.bg_dark));
+    let panel_inner = panel.inner(area);
+    f.render_widget(panel, area);
+
+    // Dynamic thumbnail sizing: fit to inner panel and keep a cinematic aspect ratio.
+    let max_thumb_w = panel_inner.width.saturating_sub(4);
+    let max_thumb_h = panel_inner.height.saturating_sub(4);
+    let (thumb_w, thumb_h) = fit_aspect(max_thumb_w, max_thumb_h.saturating_sub(1), 16, 9);
+    if thumb_w == 0 || thumb_h == 0 {
+        return;
+    }
+    let thumb_x = panel_inner.x + (panel_inner.width.saturating_sub(thumb_w)) / 2;
+    let thumb_y = panel_inner.y + (panel_inner.height.saturating_sub(thumb_h + 1)) / 2;
     let thumb_area = Rect::new(thumb_x, thumb_y, thumb_w, thumb_h);
 
     // Draw frame
@@ -283,7 +320,7 @@ fn draw_carousel_single(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostT
     }
 
     // Selection indicator below
-    if thumb_area.bottom() < area.y + area.height {
+    if thumb_area.bottom() < panel_inner.y + panel_inner.height {
         let indicator_area = Rect::new(thumb_x, thumb_area.bottom(), thumb_w, 1);
         let indicator = Paragraph::new("▲ Selected")
             .style(Style::default().fg(theme.accent_highlight))
@@ -301,7 +338,11 @@ fn draw_pairing_panel(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostThe
     let title = format!(" Pair {}/{} ", preview_idx + 1, alternatives);
     let block = Block::default()
         .title(title)
-        .title_style(Style::default().fg(theme.accent_highlight).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(theme.accent_highlight)
+                .add_modifier(Modifier::BOLD),
+        )
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.success))
         .style(Style::default().bg(theme.bg_dark));
@@ -318,20 +359,26 @@ fn draw_pairing_panel(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostThe
     }
 
     // Collect preview data: (screen_name, cache_idx, filename, harmony)
-    let preview_data: Vec<(String, Option<usize>, String, ColorHarmony)> = app.pairing_preview_matches
+    let preview_data: Vec<(String, Option<usize>, String, ColorHarmony)> = app
+        .pairing_preview_matches
         .iter()
         .map(|(screen_name, matches)| {
             let idx = preview_idx.min(matches.len().saturating_sub(1));
             if let Some((path, _, harmony)) = matches.get(idx) {
-                let cache_idx = app.cache.wallpapers.iter()
-                    .position(|wp| &wp.path == path);
-                let filename = path.file_stem()
+                let cache_idx = app.cache.wallpapers.iter().position(|wp| &wp.path == path);
+                let filename = path
+                    .file_stem()
                     .and_then(|n| n.to_str())
                     .unwrap_or("?")
                     .to_string();
                 (screen_name.clone(), cache_idx, filename, *harmony)
             } else {
-                (screen_name.clone(), None, "?".to_string(), ColorHarmony::None)
+                (
+                    screen_name.clone(),
+                    None,
+                    "?".to_string(),
+                    ColorHarmony::None,
+                )
             }
         })
         .collect();
@@ -343,43 +390,63 @@ fn draw_pairing_panel(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostThe
         }
     }
 
-    // Calculate layout - vertical stack of thumbnails
+    // Calculate layout dynamically for current terminal size.
     let num_items = preview_data.len();
-    let available_height = inner.height.saturating_sub(1);
-    let item_height = (available_height / num_items as u16).clamp(8, 18);
-    let thumb_h = item_height.saturating_sub(2);
-    let thumb_w = (inner.width - 2).min(thumb_h * 2); // Maintain rough aspect ratio
-
-    let mut y_offset = inner.y;
+    let available_height = inner.height.max(1);
+    let slot_h = if num_items == 1 {
+        available_height
+    } else {
+        (available_height / num_items as u16).max(4)
+    };
+    let used_height = slot_h.saturating_mul(num_items as u16);
+    let mut y_offset = inner.y + available_height.saturating_sub(used_height) / 2;
 
     for (screen_name, cache_idx, filename, harmony) in preview_data {
-        if y_offset + item_height > inner.y + inner.height {
+        if y_offset + slot_h > inner.y + inner.height || slot_h < 2 {
             break;
         }
 
+        let header_h = if num_items > 1 { 1 } else { 0 };
+
         // Screen name header with harmony indicator
         let harmony_icon = match harmony {
-            ColorHarmony::Analogous => "~",        // Similar
-            ColorHarmony::Complementary => "◐",    // Opposite
-            ColorHarmony::Triadic => "△",          // Triangle
+            ColorHarmony::Analogous => "~",          // Similar
+            ColorHarmony::Complementary => "◐",      // Opposite
+            ColorHarmony::Triadic => "△",            // Triangle
             ColorHarmony::SplitComplementary => "⋈", // Split
             ColorHarmony::None => "",
         };
-        let screen_short: String = screen_name.chars().take(inner.width as usize - 4).collect();
+        let screen_short: String = screen_name
+            .chars()
+            .take(inner.width.saturating_sub(4) as usize)
+            .collect();
         let header_text = if harmony_icon.is_empty() {
             screen_short
         } else {
             format!("{} {}", harmony_icon, screen_short)
         };
-        let header = Paragraph::new(header_text)
-            .style(Style::default().fg(theme.accent_secondary).add_modifier(Modifier::BOLD))
-            .alignment(Alignment::Center);
-        f.render_widget(header, Rect::new(inner.x, y_offset, inner.width, 1));
-        y_offset += 1;
+        if header_h > 0 {
+            let header = Paragraph::new(header_text)
+                .style(
+                    Style::default()
+                        .fg(theme.accent_secondary)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .alignment(Alignment::Center);
+            f.render_widget(header, Rect::new(inner.x, y_offset, inner.width, 1));
+        }
 
-        // Thumbnail area (centered horizontally)
-        let thumb_x = inner.x + (inner.width.saturating_sub(thumb_w)) / 2;
-        let thumb_area = Rect::new(thumb_x, y_offset, thumb_w, thumb_h);
+        let content_area = Rect::new(
+            inner.x,
+            y_offset + header_h,
+            inner.width,
+            slot_h.saturating_sub(header_h),
+        );
+        if content_area.width < 3 || content_area.height < 3 {
+            y_offset += slot_h;
+            continue;
+        }
+        let thumb_area = content_area;
 
         let thumb_block = Block::default()
             .borders(Borders::ALL)
@@ -395,7 +462,8 @@ fn draw_pairing_panel(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostThe
                 f.render_stateful_widget(image, thumb_inner, protocol);
             } else {
                 // Fallback: filename
-                let name_short: String = filename.chars().take(thumb_inner.width as usize).collect();
+                let name_short: String =
+                    filename.chars().take(thumb_inner.width as usize).collect();
                 let label = Paragraph::new(name_short)
                     .style(Style::default().fg(theme.fg_secondary))
                     .alignment(Alignment::Center);
@@ -403,7 +471,7 @@ fn draw_pairing_panel(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostThe
             }
         }
 
-        y_offset += thumb_h + 1;
+        y_offset += slot_h;
     }
 }
 
@@ -502,10 +570,14 @@ fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme)
         let is_selected = idx == app.selected_wallpaper_idx;
 
         // Get wallpaper info before mutable borrow
-        let (filename, is_suggestion) = app.cache.wallpapers
+        let (filename, is_suggestion) = app
+            .cache
+            .wallpapers
             .get(cache_idx)
             .map(|wp| {
-                let name = wp.path.file_stem()
+                let name = wp
+                    .path
+                    .file_stem()
                     .and_then(|n| n.to_str())
                     .unwrap_or("?")
                     .to_string();
@@ -532,13 +604,15 @@ fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme)
         let border_color = if is_selected {
             theme.accent_highlight
         } else if is_suggestion {
-            theme.success  // Green for pairing suggestions
+            theme.success // Green for pairing suggestions
         } else {
             theme.border
         };
 
         let border_style = if is_suggestion && !is_selected {
-            Style::default().fg(border_color).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(border_color)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(border_color)
         };
@@ -574,7 +648,8 @@ fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme)
                 filename.clone()
             } else {
                 // Safe truncation using char boundaries
-                let truncated: String = filename.chars().take(max_chars.saturating_sub(1)).collect();
+                let truncated: String =
+                    filename.chars().take(max_chars.saturating_sub(1)).collect();
                 format!("{}…", truncated)
             };
 
@@ -611,7 +686,12 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
     // Command mode - show command input line
     if app.command_mode {
         let cmd_line = Line::from(vec![
-            Span::styled(":", Style::default().fg(theme.accent_primary).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                ":",
+                Style::default()
+                    .fg(theme.accent_primary)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(&app.command_buffer, Style::default().fg(theme.fg_primary)),
             Span::styled("█", Style::default().fg(theme.accent_primary)), // Cursor
         ]);
@@ -628,7 +708,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
             Span::styled("←/→", Style::default().fg(theme.success)),
             Span::styled(" cycle", Style::default().fg(theme.fg_muted)),
             sep.clone(),
-            Span::styled("1-3", Style::default().fg(theme.success)),
+            Span::styled("1-9,0", Style::default().fg(theme.success)),
             Span::styled(" select", Style::default().fg(theme.fg_muted)),
             sep.clone(),
             Span::styled("Enter", Style::default().fg(theme.success)),
@@ -677,9 +757,25 @@ fn center_vertically(area: Rect, height: u16) -> Rect {
     Rect::new(area.x, y, area.width, height)
 }
 
+fn fit_aspect(max_w: u16, max_h: u16, aspect_w: u32, aspect_h: u32) -> (u16, u16) {
+    if max_w == 0 || max_h == 0 || aspect_w == 0 || aspect_h == 0 {
+        return (0, 0);
+    }
+
+    let width_limited_h = ((max_w as u32) * aspect_h / aspect_w) as u16;
+    if width_limited_h <= max_h {
+        (max_w, width_limited_h.max(1))
+    } else {
+        let height = max_h;
+        let width = ((height as u32) * aspect_w / aspect_h) as u16;
+        (width.max(1), height)
+    }
+}
+
 fn draw_color_palette(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
     // Get colors from selected wallpaper
-    let colors = app.selected_wallpaper()
+    let colors = app
+        .selected_wallpaper()
         .map(|wp| wp.colors.clone())
         .unwrap_or_default();
 
@@ -692,22 +788,17 @@ fn draw_color_palette(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) 
     }
 
     // Build color swatches
-    let mut spans = vec![
-        Span::styled("Colors: ", Style::default().fg(theme.fg_secondary)),
-    ];
+    let mut spans = vec![Span::styled(
+        "Colors: ",
+        Style::default().fg(theme.fg_secondary),
+    )];
 
     for (i, color_hex) in colors.iter().enumerate() {
         // Parse hex color
         if let Some(color) = parse_hex_color(color_hex) {
             // Color block using background color
-            spans.push(Span::styled(
-                "  █████  ",
-                Style::default().fg(color),
-            ));
-            spans.push(Span::styled(
-                color_hex,
-                Style::default().fg(theme.fg_muted),
-            ));
+            spans.push(Span::styled("  █████  ", Style::default().fg(color)));
+            spans.push(Span::styled(color_hex, Style::default().fg(theme.fg_muted)));
 
             if i < colors.len() - 1 {
                 spans.push(Span::styled(" ", Style::default()));
@@ -716,12 +807,16 @@ fn draw_color_palette(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) 
     }
 
     // Get tags too
-    let tags = app.selected_wallpaper()
+    let tags = app
+        .selected_wallpaper()
         .map(|wp| wp.tags.clone())
         .unwrap_or_default();
 
     if !tags.is_empty() {
-        spans.push(Span::styled("  │  Tags: ", Style::default().fg(theme.fg_secondary)));
+        spans.push(Span::styled(
+            "  │  Tags: ",
+            Style::default().fg(theme.fg_secondary),
+        ));
         for (i, tag) in tags.iter().enumerate() {
             spans.push(Span::styled(
                 format!("#{}", tag),
@@ -778,7 +873,11 @@ fn draw_color_picker(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
 
     let block = Block::default()
         .title(title)
-        .title_style(Style::default().fg(theme.accent_highlight).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(theme.accent_highlight)
+                .add_modifier(Modifier::BOLD),
+        )
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.accent_primary))
         .style(Style::default().bg(theme.bg_dark));
@@ -810,12 +909,19 @@ fn draw_color_picker(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
         // Highlight selected
         let is_selected = i == app.color_picker_idx;
         let style = if is_selected {
-            Style::default().bg(color).fg(theme.bg_dark).add_modifier(Modifier::BOLD)
+            Style::default()
+                .bg(color)
+                .fg(theme.bg_dark)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().bg(color)
         };
 
-        let text = if is_selected { "▶▶▶▶" } else { "████" };
+        let text = if is_selected {
+            "▶▶▶▶"
+        } else {
+            "████"
+        };
         let swatch = Paragraph::new(text).style(style);
         f.render_widget(swatch, swatch_area);
     }
@@ -854,7 +960,11 @@ fn draw_help_popup(f: &mut Frame, area: Rect, theme: &FrostTheme) {
     // Popup border
     let block = Block::default()
         .title(" ❄️ FrostWall Help ")
-        .title_style(Style::default().fg(theme.accent_highlight).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(theme.accent_highlight)
+                .add_modifier(Modifier::BOLD),
+        )
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.accent_primary))
         .style(Style::default().bg(theme.bg_dark));
@@ -864,12 +974,18 @@ fn draw_help_popup(f: &mut Frame, area: Rect, theme: &FrostTheme) {
 
     // Help content
     let help_text = vec![
-        Line::from(vec![
-            Span::styled("Navigation", Style::default().fg(theme.accent_highlight).add_modifier(Modifier::BOLD)),
-        ]),
+        Line::from(vec![Span::styled(
+            "Navigation",
+            Style::default()
+                .fg(theme.accent_highlight)
+                .add_modifier(Modifier::BOLD),
+        )]),
         Line::from(vec![
             Span::styled("  h/←     ", Style::default().fg(theme.accent_primary)),
-            Span::styled("Previous wallpaper", Style::default().fg(theme.fg_secondary)),
+            Span::styled(
+                "Previous wallpaper",
+                Style::default().fg(theme.fg_secondary),
+            ),
         ]),
         Line::from(vec![
             Span::styled("  l/→     ", Style::default().fg(theme.accent_primary)),
@@ -884,9 +1000,12 @@ fn draw_help_popup(f: &mut Frame, area: Rect, theme: &FrostTheme) {
             Span::styled("Previous screen", Style::default().fg(theme.fg_secondary)),
         ]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("Actions", Style::default().fg(theme.accent_highlight).add_modifier(Modifier::BOLD)),
-        ]),
+        Line::from(vec![Span::styled(
+            "Actions",
+            Style::default()
+                .fg(theme.accent_highlight)
+                .add_modifier(Modifier::BOLD),
+        )]),
         Line::from(vec![
             Span::styled("  Enter   ", Style::default().fg(theme.accent_primary)),
             Span::styled("Apply wallpaper", Style::default().fg(theme.fg_secondary)),
@@ -897,19 +1016,28 @@ fn draw_help_popup(f: &mut Frame, area: Rect, theme: &FrostTheme) {
         ]),
         Line::from(vec![
             Span::styled("  :       ", Style::default().fg(theme.accent_primary)),
-            Span::styled("Command mode (vim-style)", Style::default().fg(theme.fg_secondary)),
+            Span::styled(
+                "Command mode (vim-style)",
+                Style::default().fg(theme.fg_secondary),
+            ),
         ]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("Commands (:)", Style::default().fg(theme.accent_highlight).add_modifier(Modifier::BOLD)),
-        ]),
+        Line::from(vec![Span::styled(
+            "Commands (:)",
+            Style::default()
+                .fg(theme.accent_highlight)
+                .add_modifier(Modifier::BOLD),
+        )]),
         Line::from(vec![
             Span::styled("  :t <tag>", Style::default().fg(theme.accent_primary)),
             Span::styled(" Filter by tag", Style::default().fg(theme.fg_secondary)),
         ]),
         Line::from(vec![
             Span::styled("  :clear  ", Style::default().fg(theme.accent_primary)),
-            Span::styled(" Clear all filters", Style::default().fg(theme.fg_secondary)),
+            Span::styled(
+                " Clear all filters",
+                Style::default().fg(theme.fg_secondary),
+            ),
         ]),
         Line::from(vec![
             Span::styled("  :sim    ", Style::default().fg(theme.accent_primary)),
@@ -917,19 +1045,28 @@ fn draw_help_popup(f: &mut Frame, area: Rect, theme: &FrostTheme) {
         ]),
         Line::from(vec![
             Span::styled("  :sort n ", Style::default().fg(theme.accent_primary)),
-            Span::styled(" Sort (name/date/size)", Style::default().fg(theme.fg_secondary)),
+            Span::styled(
+                " Sort (name/date/size)",
+                Style::default().fg(theme.fg_secondary),
+            ),
         ]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("Options", Style::default().fg(theme.accent_highlight).add_modifier(Modifier::BOLD)),
-        ]),
+        Line::from(vec![Span::styled(
+            "Options",
+            Style::default()
+                .fg(theme.accent_highlight)
+                .add_modifier(Modifier::BOLD),
+        )]),
         Line::from(vec![
             Span::styled("  m       ", Style::default().fg(theme.accent_primary)),
             Span::styled("Toggle match mode", Style::default().fg(theme.fg_secondary)),
         ]),
         Line::from(vec![
             Span::styled("  f       ", Style::default().fg(theme.accent_primary)),
-            Span::styled("Toggle resize mode", Style::default().fg(theme.fg_secondary)),
+            Span::styled(
+                "Toggle resize mode",
+                Style::default().fg(theme.fg_secondary),
+            ),
         ]),
         Line::from(vec![
             Span::styled("  s       ", Style::default().fg(theme.accent_primary)),
@@ -957,7 +1094,10 @@ fn draw_help_popup(f: &mut Frame, area: Rect, theme: &FrostTheme) {
         ]),
         Line::from(vec![
             Span::styled("  w       ", Style::default().fg(theme.accent_primary)),
-            Span::styled("Export pywal colors", Style::default().fg(theme.fg_secondary)),
+            Span::styled(
+                "Export pywal colors",
+                Style::default().fg(theme.fg_secondary),
+            ),
         ]),
         Line::from(vec![
             Span::styled("  W       ", Style::default().fg(theme.accent_primary)),
@@ -976,7 +1116,10 @@ fn draw_help_popup(f: &mut Frame, area: Rect, theme: &FrostTheme) {
 /// Draw undo popup at bottom of screen
 fn draw_undo_popup(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
     let remaining_secs = app.pairing_history.undo_remaining_secs().unwrap_or(0);
-    let message = app.pairing_history.undo_message().unwrap_or("Undo available");
+    let message = app
+        .pairing_history
+        .undo_message()
+        .unwrap_or("Undo available");
 
     // Position at bottom center
     let popup_width = 45.min(area.width.saturating_sub(4));
@@ -1005,7 +1148,9 @@ fn draw_undo_popup(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
         Span::styled(" | ", Style::default().fg(theme.fg_muted)),
         Span::styled(
             format!("Undo (u) {}s", remaining_secs),
-            Style::default().fg(theme.warning).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.warning)
+                .add_modifier(Modifier::BOLD),
         ),
     ]);
 

@@ -32,10 +32,16 @@ pub fn parse_interval(s: &str) -> Option<Duration> {
     let s = s.trim().to_lowercase();
 
     if let Some(mins) = s.strip_suffix('m') {
-        return mins.parse::<u64>().ok().map(|m| Duration::from_secs(m * 60));
+        return mins
+            .parse::<u64>()
+            .ok()
+            .map(|m| Duration::from_secs(m * 60));
     }
     if let Some(hours) = s.strip_suffix('h') {
-        return hours.parse::<u64>().ok().map(|h| Duration::from_secs(h * 3600));
+        return hours
+            .parse::<u64>()
+            .ok()
+            .map(|h| Duration::from_secs(h * 3600));
     }
     if let Some(secs) = s.strip_suffix('s') {
         return secs.parse::<u64>().ok().map(Duration::from_secs);
@@ -103,7 +109,7 @@ pub async fn run_watch(watch_config: WatchConfig) -> Result<()> {
     println!("✓ Found {} screen(s)", screens.len());
 
     // Set initial wallpaper
-    set_random_wallpapers(&cache, &screens, &config)?;
+    set_wallpapers(&mut cache, &screens, &config, watch_config.shuffle)?;
 
     let mut last_change = Instant::now();
     let mut cache_dirty = false;
@@ -140,9 +146,17 @@ pub async fn run_watch(watch_config: WatchConfig) -> Result<()> {
                     cache.save()?;
 
                     if new_count > old_count {
-                        println!("✓ Added {} new wallpaper(s) (total: {})", new_count - old_count, new_count);
+                        println!(
+                            "✓ Added {} new wallpaper(s) (total: {})",
+                            new_count - old_count,
+                            new_count
+                        );
                     } else if new_count < old_count {
-                        println!("✓ Removed {} wallpaper(s) (total: {})", old_count - new_count, new_count);
+                        println!(
+                            "✓ Removed {} wallpaper(s) (total: {})",
+                            old_count - new_count,
+                            new_count
+                        );
                     } else {
                         println!("✓ Cache updated ({} wallpapers)", new_count);
                     }
@@ -157,12 +171,12 @@ pub async fn run_watch(watch_config: WatchConfig) -> Result<()> {
         // Check if it's time to change wallpaper
         if last_change.elapsed() >= watch_config.interval {
             println!("⏰ Interval elapsed, changing wallpaper...");
-            set_random_wallpapers(&cache, &screens, &config)?;
+            set_wallpapers(&mut cache, &screens, &config, watch_config.shuffle)?;
             last_change = Instant::now();
         }
 
-        // Sleep a bit before next check
-        std::thread::sleep(Duration::from_millis(500));
+        // Sleep a bit before next check without blocking the async runtime
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
 
     // Graceful shutdown
@@ -184,11 +198,34 @@ fn ctrlc_handler(running: Arc<AtomicBool>) {
     });
 }
 
-fn set_random_wallpapers(
-    cache: &WallpaperCache,
+fn set_wallpapers(
+    cache: &mut WallpaperCache,
     screens: &[screen::Screen],
     config: &Config,
+    shuffle: bool,
 ) -> Result<()> {
+    if !shuffle {
+        for screen in screens {
+            if let Some(wp) = cache.next_for_screen(screen) {
+                swww::set_wallpaper_with_resize(
+                    &screen.name,
+                    &wp.path,
+                    &config.transition(),
+                    config.display.resize_mode,
+                    &config.display.fill_color,
+                )
+                .with_context(|| format!("Failed to set wallpaper on {}", screen.name))?;
+
+                println!(
+                    "  {} → {}",
+                    screen.name,
+                    wp.path.file_name().unwrap_or_default().to_string_lossy()
+                );
+            }
+        }
+        return Ok(());
+    }
+
     // Check if time profiles are enabled
     let use_time_profiles = config.time_profiles.enabled;
     let period = TimePeriod::current();
@@ -200,7 +237,9 @@ fn set_random_wallpapers(
     for screen in screens {
         let wp = if use_time_profiles {
             // Get wallpapers sorted by time profile score
-            let suitable: Vec<_> = cache.wallpapers.iter()
+            let suitable: Vec<_> = cache
+                .wallpapers
+                .iter()
                 .filter(|wp| !wp.colors.is_empty())
                 .filter(|wp| wp.matches_screen(screen))
                 .map(|wp| {
@@ -257,26 +296,11 @@ fn is_image_file(path: &Path) -> bool {
 pub async fn run_once(shuffle: bool) -> Result<()> {
     let config = Config::load()?;
     let wallpaper_dir = config.wallpaper_dir();
-    let cache = WallpaperCache::load_or_scan(&wallpaper_dir)?;
+    let mut cache = WallpaperCache::load_or_scan(&wallpaper_dir)?;
     let screens = screen::detect_screens().await?;
 
-    if shuffle {
-        set_random_wallpapers(&cache, &screens, &config)?;
-    } else {
-        // Sequential mode - use next_for_screen
-        let mut cache = cache;
-        for screen in &screens {
-            if let Some(wp) = cache.next_for_screen(screen) {
-                swww::set_wallpaper_with_resize(
-                    &screen.name,
-                    &wp.path,
-                    &config.transition(),
-                    config.display.resize_mode,
-                    &config.display.fill_color,
-                )?;
-                println!("{}: {}", screen.name, wp.path.display());
-            }
-        }
+    set_wallpapers(&mut cache, &screens, &config, shuffle)?;
+    if !shuffle {
         cache.save()?;
     }
 

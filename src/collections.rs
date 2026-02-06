@@ -43,10 +43,10 @@ impl CollectionStore {
         let path = Self::storage_path();
 
         if path.exists() {
-            let content = std::fs::read_to_string(&path)
-                .context("Failed to read collections file")?;
-            let store: Self = serde_json::from_str(&content)
-                .context("Failed to parse collections file")?;
+            let content =
+                std::fs::read_to_string(&path).context("Failed to read collections file")?;
+            let store: Self =
+                serde_json::from_str(&content).context("Failed to parse collections file")?;
             Ok(store)
         } else {
             Ok(Self::default())
@@ -68,7 +68,12 @@ impl CollectionStore {
     }
 
     /// Add a new collection
-    pub fn add(&mut self, name: String, wallpapers: HashMap<String, PathBuf>, description: Option<String>) -> Result<()> {
+    pub fn add(
+        &mut self,
+        name: String,
+        wallpapers: HashMap<String, PathBuf>,
+        description: Option<String>,
+    ) -> Result<()> {
         // Check for duplicate name
         if self.collections.iter().any(|c| c.name == name) {
             anyhow::bail!("Collection '{}' already exists", name);
@@ -160,7 +165,10 @@ pub fn cmd_collection_list() -> Result<()> {
             if desc.is_empty() {
                 println!("  {} ({} screens)", collection.name, screen_count);
             } else {
-                println!("  {} ({} screens) - {}", collection.name, screen_count, desc);
+                println!(
+                    "  {} ({} screens) - {}",
+                    collection.name, screen_count, desc
+                );
             }
         }
     }

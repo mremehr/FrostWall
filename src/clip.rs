@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 use crate::clip_embeddings::{CATEGORY_EMBEDDINGS, EMBEDDING_DIM};
 
 /// CLIP image input size (ViT-B/32)
+#[cfg(feature = "clip")]
 pub const CLIP_IMAGE_SIZE: u32 = 224;
 
 /// Auto-generated tag with confidence score
@@ -39,6 +40,105 @@ pub struct AutoTag {
 #[cfg(feature = "clip")]
 const VISUAL_MODEL_URL: &str =
     "https://huggingface.co/Qdrant/clip-ViT-B-32-vision/resolve/main/model.onnx";
+
+/// Extra categories tuned for this wallpaper library.
+/// These are blended from base CLIP categories to avoid regenerating embeddings.
+#[cfg(feature = "clip")]
+const LIBRARY_CATEGORY_MIXES: &[(&str, &[(&str, f32)])] = &[
+    (
+        "pixel_art",
+        &[
+            ("retro", 0.35),
+            ("vibrant", 0.25),
+            ("minimal", 0.20),
+            ("landscape_orientation", 0.20),
+        ],
+    ),
+    (
+        "anime_character",
+        &[
+            ("anime", 0.55),
+            ("portrait", 0.20),
+            ("pastel", 0.10),
+            ("vibrant", 0.15),
+        ],
+    ),
+    (
+        "fantasy_landscape",
+        &[
+            ("fantasy", 0.45),
+            ("nature", 0.25),
+            ("mountain", 0.15),
+            ("landscape_orientation", 0.15),
+        ],
+    ),
+    (
+        "epic_battle",
+        &[
+            ("fantasy", 0.35),
+            ("dark", 0.25),
+            ("vibrant", 0.20),
+            ("anime", 0.10),
+            ("urban", 0.10),
+        ],
+    ),
+    (
+        "sakura",
+        &[
+            ("pastel", 0.35),
+            ("anime", 0.30),
+            ("nature", 0.20),
+            ("bright", 0.15),
+        ],
+    ),
+    (
+        "nightscape",
+        &[
+            ("dark", 0.45),
+            ("space", 0.30),
+            ("city", 0.15),
+            ("landscape_orientation", 0.10),
+        ],
+    ),
+    (
+        "painterly",
+        &[
+            ("abstract", 0.30),
+            ("fantasy", 0.25),
+            ("nature", 0.20),
+            ("vibrant", 0.15),
+            ("vintage", 0.10),
+        ],
+    ),
+    (
+        "concept_art",
+        &[
+            ("abstract", 0.35),
+            ("fantasy", 0.30),
+            ("city", 0.15),
+            ("vibrant", 0.10),
+            ("dark", 0.10),
+        ],
+    ),
+    (
+        "ethereal",
+        &[
+            ("pastel", 0.35),
+            ("bright", 0.25),
+            ("fantasy", 0.25),
+            ("space", 0.15),
+        ],
+    ),
+    (
+        "moody_fantasy",
+        &[
+            ("dark", 0.40),
+            ("fantasy", 0.35),
+            ("forest", 0.15),
+            ("mountain", 0.10),
+        ],
+    ),
+];
 
 /// Model cache directory manager
 #[cfg(feature = "clip")]
@@ -115,6 +215,13 @@ impl ModelManager {
 #[cfg(feature = "clip")]
 pub struct ClipTagger {
     visual_session: Session,
+    category_embeddings: Vec<(&'static str, Vec<f32>)>,
+}
+
+#[cfg(feature = "clip")]
+pub struct ClipAnalysis {
+    pub tags: Vec<AutoTag>,
+    pub embedding: Vec<f32>,
 }
 
 #[cfg(feature = "clip")]
@@ -156,25 +263,56 @@ impl ClipTagger {
 
         eprintln!("CLIP model loaded successfully");
 
-        Ok(Self { visual_session })
+        Ok(Self {
+            visual_session,
+            category_embeddings: build_category_embeddings(),
+        })
     }
 
     /// Tag a single image using CLIP visual encoder
     ///
     /// Returns tags sorted by confidence (highest first)
+    #[allow(dead_code)]
     pub fn tag_image(&mut self, image_path: &Path, threshold: f32) -> Result<Vec<AutoTag>> {
         self.tag_image_verbose(image_path, threshold, false)
     }
 
     /// Tag with optional verbose output for debugging
-    pub fn tag_image_verbose(&mut self, image_path: &Path, threshold: f32, verbose: bool) -> Result<Vec<AutoTag>> {
+    pub fn tag_image_verbose(
+        &mut self,
+        image_path: &Path,
+        threshold: f32,
+        verbose: bool,
+    ) -> Result<Vec<AutoTag>> {
+        self.analyze_image_verbose(image_path, threshold, verbose)
+            .map(|analysis| analysis.tags)
+    }
+
+    /// Analyze image with CLIP and return both semantic tags and normalized embedding.
+    #[allow(dead_code)]
+    pub fn analyze_image(&mut self, image_path: &Path, threshold: f32) -> Result<ClipAnalysis> {
+        self.analyze_image_verbose(image_path, threshold, false)
+    }
+
+    /// Analyze image with optional verbose output for debugging.
+    pub fn analyze_image_verbose(
+        &mut self,
+        image_path: &Path,
+        threshold: f32,
+        verbose: bool,
+    ) -> Result<ClipAnalysis> {
         // 1. Preprocess image to CLIP format
         let input = preprocess_image(image_path)?;
 
         // 2. Create input tensor from ndarray
         let (input_data, _offset) = input.into_raw_vec_and_offset();
         let input_tensor = ort::value::Tensor::<f32>::from_array((
-            [1usize, 3, CLIP_IMAGE_SIZE as usize, CLIP_IMAGE_SIZE as usize],
+            [
+                1usize,
+                3,
+                CLIP_IMAGE_SIZE as usize,
+                CLIP_IMAGE_SIZE as usize,
+            ],
             input_data,
         ))?;
 
@@ -202,7 +340,10 @@ impl ClipTagger {
             // Shape: [batch, seq_len, hidden_dim] - take first token (CLS)
             let hidden_dim = shape[2];
             if verbose {
-                eprintln!("  3D tensor, taking first {} values (CLS token)", hidden_dim);
+                eprintln!(
+                    "  3D tensor, taking first {} values (CLS token)",
+                    hidden_dim
+                );
             }
             embedding_data[..hidden_dim].to_vec()
         } else if shape.len() == 2 {
@@ -222,7 +363,10 @@ impl ClipTagger {
         if verbose {
             eprintln!("  Embedding dimension: {}", embedding.len());
             eprintln!("  Expected dimension: {}", EMBEDDING_DIM);
-            eprintln!("  First 5 values: {:?}", &embedding[..5.min(embedding.len())]);
+            eprintln!(
+                "  First 5 values: {:?}",
+                &embedding[..5.min(embedding.len())]
+            );
         }
 
         // 4. Project to CLIP embedding space if needed (512 dim)
@@ -251,7 +395,7 @@ impl ClipTagger {
         let mut tags = Vec::new();
         let mut all_scores: Vec<(&str, f32, f32)> = Vec::new();
 
-        for (name, cat_embedding) in CATEGORY_EMBEDDINGS {
+        for (name, cat_embedding) in &self.category_embeddings {
             let similarity: f32 = if normalized.len() == cat_embedding.len() {
                 normalized
                     .iter()
@@ -270,7 +414,7 @@ impl ClipTagger {
 
             if confidence >= threshold {
                 tags.push(AutoTag {
-                    name: name.to_string(),
+                    name: (*name).to_string(),
                     confidence,
                 });
             }
@@ -279,7 +423,8 @@ impl ClipTagger {
         if verbose {
             eprintln!("  Raw similarities (top 5):");
             let mut sorted_scores = all_scores.clone();
-            sorted_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            sorted_scores
+                .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             for (name, sim, conf) in sorted_scores.iter().take(5) {
                 eprintln!("    {}: raw={:.4}, conf={:.4}", name, sim, conf);
             }
@@ -293,13 +438,81 @@ impl ClipTagger {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        Ok(tags)
+        Ok(ClipAnalysis {
+            tags,
+            embedding: normalized,
+        })
     }
 
     /// Get list of available tag categories
     pub fn available_tags() -> Vec<&'static str> {
-        CATEGORY_EMBEDDINGS.iter().map(|(name, _)| *name).collect()
+        let mut tags: Vec<&'static str> =
+            CATEGORY_EMBEDDINGS.iter().map(|(name, _)| *name).collect();
+        tags.extend(LIBRARY_CATEGORY_MIXES.iter().map(|(name, _)| *name));
+        tags.sort_unstable();
+        tags.dedup();
+        tags
     }
+}
+
+#[cfg(feature = "clip")]
+fn find_base_embedding(name: &str) -> Option<&'static [f32; EMBEDDING_DIM]> {
+    CATEGORY_EMBEDDINGS
+        .iter()
+        .find(|(base_name, _)| *base_name == name)
+        .map(|(_, embedding)| embedding)
+}
+
+#[cfg(feature = "clip")]
+fn normalize_embedding(mut embedding: Vec<f32>) -> Vec<f32> {
+    let norm = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for value in &mut embedding {
+            *value /= norm;
+        }
+    }
+    embedding
+}
+
+#[cfg(feature = "clip")]
+fn build_mixed_embedding(parts: &[(&str, f32)]) -> Option<Vec<f32>> {
+    let mut mixed = vec![0.0f32; EMBEDDING_DIM];
+    let mut total_weight = 0.0f32;
+
+    for (base_name, weight) in parts {
+        let Some(base) = find_base_embedding(base_name) else {
+            continue;
+        };
+        for (idx, value) in base.iter().enumerate() {
+            mixed[idx] += *value * *weight;
+        }
+        total_weight += *weight;
+    }
+
+    if total_weight <= 0.0 {
+        return None;
+    }
+
+    for value in &mut mixed {
+        *value /= total_weight;
+    }
+    Some(normalize_embedding(mixed))
+}
+
+#[cfg(feature = "clip")]
+fn build_category_embeddings() -> Vec<(&'static str, Vec<f32>)> {
+    let mut categories: Vec<(&'static str, Vec<f32>)> = CATEGORY_EMBEDDINGS
+        .iter()
+        .map(|(name, embedding)| (*name, embedding.to_vec()))
+        .collect();
+
+    for (name, parts) in LIBRARY_CATEGORY_MIXES {
+        if let Some(embedding) = build_mixed_embedding(parts) {
+            categories.push((name, embedding));
+        }
+    }
+
+    categories
 }
 
 /// Get cached thumbnail path if it exists
@@ -348,8 +561,8 @@ fn preprocess_image(path: &Path) -> Result<Array4<f32>> {
     let rgb = img.to_rgb8();
 
     // CLIP normalization constants (ImageNet stats used by CLIP)
-    let mean = [0.48145466, 0.4578275, 0.40821073];
-    let std = [0.26862954, 0.26130258, 0.27577711];
+    let mean = [0.481_454_66, 0.457_827_5, 0.408_210_73];
+    let std = [0.268_629_54, 0.261_302_6, 0.275_777_1];
 
     let mut data = Vec::with_capacity(3 * CLIP_IMAGE_SIZE as usize * CLIP_IMAGE_SIZE as usize);
 
@@ -371,4 +584,3 @@ fn preprocess_image(path: &Path) -> Result<Array4<f32>> {
 
     Ok(array)
 }
-

@@ -19,10 +19,10 @@ pub enum Orientation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AspectCategory {
-    Ultrawide,  // 21:9, 32:9, etc.
-    Landscape,  // 16:9, 16:10
-    Portrait,   // 9:16, 10:16
-    Square,     // ~1:1
+    Ultrawide, // 21:9, 32:9, etc.
+    Landscape, // 16:9, 16:10
+    Portrait,  // 9:16, 10:16
+    Square,    // ~1:1
 }
 
 impl Screen {

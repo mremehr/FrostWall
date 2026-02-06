@@ -158,7 +158,9 @@ impl WebImporter {
 
     /// Search Unsplash
     fn search_unsplash(&self, query: &str, page: u32, per_page: u32) -> Result<Vec<GalleryImage>> {
-        let api_key = self.unsplash_key.as_ref()
+        let api_key = self
+            .unsplash_key
+            .as_ref()
             .context("Unsplash API key required. Set UNSPLASH_ACCESS_KEY environment variable.")?;
 
         let url = format!(
@@ -168,7 +170,8 @@ impl WebImporter {
             per_page.min(30) // Unsplash max is 30
         );
 
-        let response: UnsplashSearchResponse = self.client
+        let response: UnsplashSearchResponse = self
+            .client
             .get(&url)
             .header("Authorization", format!("Client-ID {}", api_key))
             .send()
@@ -176,15 +179,19 @@ impl WebImporter {
             .json()
             .context("Failed to parse Unsplash response")?;
 
-        Ok(response.results.into_iter().map(|photo| GalleryImage {
-            id: photo.id,
-            url: format!("{}?w=3840&q=85", photo.urls.raw), // 4K quality
-            thumb_url: photo.urls.small,
-            width: photo.width,
-            height: photo.height,
-            author: Some(photo.user.name),
-            source: Gallery::Unsplash,
-        }).collect())
+        Ok(response
+            .results
+            .into_iter()
+            .map(|photo| GalleryImage {
+                id: photo.id,
+                url: format!("{}?w=3840&q=85", photo.urls.raw), // 4K quality
+                thumb_url: photo.urls.small,
+                width: photo.width,
+                height: photo.height,
+                author: Some(photo.user.name),
+                source: Gallery::Unsplash,
+            })
+            .collect())
     }
 
     /// Search Wallhaven
@@ -200,14 +207,17 @@ impl WebImporter {
             url.push_str(&format!("&apikey={}", key));
         }
 
-        let response: WallhavenResponse = self.client
+        let response: WallhavenResponse = self
+            .client
             .get(&url)
             .send()
             .context("Failed to connect to Wallhaven")?
             .json()
             .context("Failed to parse Wallhaven response")?;
 
-        Ok(response.data.into_iter()
+        Ok(response
+            .data
+            .into_iter()
             .take(per_page as usize)
             .map(|img| GalleryImage {
                 id: img.id,
@@ -217,13 +227,15 @@ impl WebImporter {
                 height: img.dimension_y,
                 author: None,
                 source: Gallery::Wallhaven,
-            }).collect())
+            })
+            .collect())
     }
 
     /// Download an image to the specified directory
     pub fn download(&self, image: &GalleryImage, dest_dir: &Path) -> Result<PathBuf> {
         // Create filename from ID and extension
-        let extension = image.url
+        let extension = image
+            .url
             .rsplit('.')
             .next()
             .and_then(|ext| ext.split('?').next())
@@ -243,7 +255,8 @@ impl WebImporter {
         }
 
         // Download the image
-        let response = self.client
+        let response = self
+            .client
             .get(&image.url)
             .send()
             .context("Failed to download image")?;
@@ -252,15 +265,13 @@ impl WebImporter {
             anyhow::bail!("Download failed with status: {}", response.status());
         }
 
-        let bytes = response.bytes()
-            .context("Failed to read image data")?;
+        let bytes = response.bytes().context("Failed to read image data")?;
 
         // Ensure directory exists
         std::fs::create_dir_all(dest_dir)?;
 
         // Write to file
-        std::fs::write(&dest_path, &bytes)
-            .context("Failed to save image")?;
+        std::fs::write(&dest_path, &bytes).context("Failed to save image")?;
 
         Ok(dest_path)
     }
@@ -269,14 +280,17 @@ impl WebImporter {
     pub fn featured_wallhaven(&self, count: u32) -> Result<Vec<GalleryImage>> {
         let url = "https://wallhaven.cc/api/v1/search?sorting=toplist&topRange=1M&categories=111&purity=100&atleast=1920x1080";
 
-        let response: WallhavenResponse = self.client
+        let response: WallhavenResponse = self
+            .client
             .get(url)
             .send()
             .context("Failed to connect to Wallhaven")?
             .json()
             .context("Failed to parse Wallhaven response")?;
 
-        Ok(response.data.into_iter()
+        Ok(response
+            .data
+            .into_iter()
             .take(count as usize)
             .map(|img| GalleryImage {
                 id: img.id,
@@ -286,7 +300,8 @@ impl WebImporter {
                 height: img.dimension_y,
                 author: None,
                 source: Gallery::Wallhaven,
-            }).collect())
+            })
+            .collect())
     }
 }
 

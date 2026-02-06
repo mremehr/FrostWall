@@ -5,7 +5,8 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -63,6 +64,21 @@ pub struct PairingHistory {
     max_records: usize,
 }
 
+pub struct MatchContext<'a> {
+    pub selected_wp: &'a Path,
+    pub target_screen: &'a str,
+    pub selected_colors: &'a [String],
+    pub selected_weights: &'a [f32],
+    pub selected_tags: &'a [String],
+    pub selected_embedding: Option<&'a [f32]>,
+    pub screen_context_weight: f32,
+    pub visual_weight: f32,
+    pub harmony_weight: f32,
+    pub tag_weight: f32,
+    pub semantic_weight: f32,
+    pub repetition_penalty_weight: f32,
+}
+
 impl PairingHistory {
     /// Create new pairing history manager
     pub fn new(max_records: usize) -> Self {
@@ -86,8 +102,8 @@ impl PairingHistory {
         if history.cache_path.exists() {
             let content = std::fs::read_to_string(&history.cache_path)
                 .context("Failed to read pairing history")?;
-            history.data = serde_json::from_str(&content)
-                .context("Failed to parse pairing history")?;
+            history.data =
+                serde_json::from_str(&content).context("Failed to parse pairing history")?;
         }
 
         Ok(history)
@@ -169,9 +185,11 @@ impl PairingHistory {
         let (a, b) = Self::ordered_pair(wp_a, wp_b);
 
         // Find or create affinity entry
-        let entry = self.data.affinity_scores.iter_mut().find(|s| {
-            s.wallpaper_a == a && s.wallpaper_b == b
-        });
+        let entry = self
+            .data
+            .affinity_scores
+            .iter_mut()
+            .find(|s| s.wallpaper_a == a && s.wallpaper_b == b);
 
         if let Some(score) = entry {
             score.pair_count += 1;
@@ -207,7 +225,11 @@ impl PairingHistory {
 
     /// Get ordered pair of paths (for consistent key)
     fn ordered_pair<'a>(a: &'a Path, b: &'a Path) -> (&'a Path, &'a Path) {
-        if a < b { (a, b) } else { (b, a) }
+        if a < b {
+            (a, b)
+        } else {
+            (b, a)
+        }
     }
 
     /// Get the best matching wallpaper for other screens
@@ -215,12 +237,10 @@ impl PairingHistory {
     /// a wallpaper with similar colors if no history exists.
     pub fn get_best_match(
         &self,
-        selected_wp: &Path,
-        _target_screen: &str,
+        context: &MatchContext<'_>,
         available_wallpapers: &[&crate::wallpaper::Wallpaper],
-        selected_colors: &[String],
     ) -> Option<PathBuf> {
-        self.get_top_matches(selected_wp, _target_screen, available_wallpapers, selected_colors, 1)
+        self.get_top_matches(context, available_wallpapers, 1)
             .into_iter()
             .next()
             .map(|(path, _)| path)
@@ -236,72 +256,112 @@ impl PairingHistory {
     /// - Tag matching: shared tags bonus (0-6 points, max 3 tags)
     pub fn get_top_matches(
         &self,
-        selected_wp: &Path,
-        _target_screen: &str,
+        context: &MatchContext<'_>,
         available_wallpapers: &[&crate::wallpaper::Wallpaper],
-        selected_colors: &[String],
         limit: usize,
     ) -> Vec<(PathBuf, f32)> {
-        // Find the selected wallpaper to get its weights and tags
-        let selected = available_wallpapers.iter().find(|wp| wp.path == selected_wp);
-        let selected_weights: Vec<f32> = selected
-            .map(|wp| wp.color_weights.clone())
-            .unwrap_or_default();
-        let selected_tags: Vec<String> = selected
-            .map(|wp| wp.all_tags())
-            .unwrap_or_default();
-
-        // Use equal weights if none available
-        let selected_weights = if selected_weights.is_empty() {
-            vec![1.0 / selected_colors.len().max(1) as f32; selected_colors.len()]
+        let selected_weights: Cow<'_, [f32]> = if context.selected_weights.is_empty() {
+            Cow::Owned(vec![
+                1.0 / context.selected_colors.len().max(1) as f32;
+                context.selected_colors.len()
+            ])
         } else {
-            selected_weights
+            Cow::Borrowed(context.selected_weights)
         };
+        let selected_tags: HashSet<&str> =
+            context.selected_tags.iter().map(String::as_str).collect();
 
         if available_wallpapers.is_empty() {
             return Vec::new();
         }
 
+        // Build one lookup table instead of scanning affinity_scores for each candidate.
+        let affinity_lookup: HashMap<&Path, f32> = self
+            .data
+            .affinity_scores
+            .iter()
+            .filter_map(|score| {
+                if score.wallpaper_a == context.selected_wp {
+                    Some((score.wallpaper_b.as_path(), score.score))
+                } else if score.wallpaper_b == context.selected_wp {
+                    Some((score.wallpaper_a.as_path(), score.score))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let screen_context_lookup =
+            self.screen_context_scores(context.selected_wp, context.target_screen);
+
         let mut scored: Vec<(PathBuf, f32)> = available_wallpapers
             .iter()
-            .filter(|wp| wp.path != selected_wp)
+            .filter(|wp| wp.path != context.selected_wp)
             .map(|wp| {
                 // Base score from pairing history
-                let mut score = self.get_affinity(selected_wp, &wp.path);
+                let mut score = affinity_lookup
+                    .get(wp.path.as_path())
+                    .copied()
+                    .unwrap_or(0.0);
+                // Screen-aware co-occurrence for this specific target output.
+                score += screen_context_lookup
+                    .get(wp.path.as_path())
+                    .copied()
+                    .unwrap_or(0.0)
+                    * context.screen_context_weight;
 
                 // Get candidate weights (or default to equal)
-                let wp_weights = if wp.color_weights.is_empty() {
-                    vec![1.0 / wp.colors.len().max(1) as f32; wp.colors.len()]
+                let wp_weights: Cow<'_, [f32]> = if wp.color_weights.is_empty() {
+                    Cow::Owned(vec![1.0 / wp.colors.len().max(1) as f32; wp.colors.len()])
                 } else {
-                    wp.color_weights.clone()
+                    Cow::Borrowed(wp.color_weights.as_slice())
                 };
 
-                // Color similarity with weights (0-5 points)
-                let color_similarity = crate::utils::palette_similarity_weighted(
-                    selected_colors,
-                    &selected_weights,
+                // Visual similarity with weighted palette, brightness and saturation (0-5 points)
+                let visual_similarity = crate::utils::image_similarity_weighted(
+                    context.selected_colors,
+                    selected_weights.as_ref(),
                     &wp.colors,
-                    &wp_weights,
+                    wp_weights.as_ref(),
                 );
-                score += color_similarity * 5.0;
+                score += visual_similarity * context.visual_weight;
 
                 // Color harmony bonus (0-3 points)
                 let (harmony, strength) = crate::utils::detect_harmony(
-                    selected_colors,
-                    &selected_weights,
+                    context.selected_colors,
+                    selected_weights.as_ref(),
                     &wp.colors,
-                    &wp_weights,
+                    wp_weights.as_ref(),
                 );
-                let harmony_bonus = harmony.bonus() * strength * 3.0;
+                let harmony_bonus = harmony.bonus() * strength * context.harmony_weight;
                 score += harmony_bonus;
 
                 // Tag matching bonus (0-6 points, 2 points per shared tag, max 3)
-                let wp_tags = wp.all_tags();
-                let shared_tags = selected_tags.iter()
-                    .filter(|t| wp_tags.contains(t))
+                let mut unique_tags = HashSet::new();
+                let shared_tags = wp
+                    .tags
+                    .iter()
+                    .map(String::as_str)
+                    .chain(wp.auto_tags.iter().map(|tag| tag.name.as_str()))
+                    .filter(|tag| unique_tags.insert(*tag))
+                    .filter(|tag| selected_tags.contains(tag))
                     .count();
-                let tag_bonus = (shared_tags as f32).min(3.0) * 2.0;
+                let tag_bonus = (shared_tags as f32).min(3.0) * context.tag_weight;
                 score += tag_bonus;
+
+                // Semantic similarity from CLIP embeddings (0-7 points)
+                if let (Some(selected_embedding), Some(candidate_embedding)) =
+                    (context.selected_embedding, wp.embedding.as_deref())
+                {
+                    let semantic_similarity =
+                        normalize_cosine_similarity(selected_embedding, candidate_embedding);
+                    score += semantic_similarity * context.semantic_weight;
+                }
+
+                score -= self.recent_repetition_penalty(
+                    context.target_screen,
+                    &wp.path,
+                    context.repetition_penalty_weight,
+                );
 
                 (wp.path.clone(), score)
             })
@@ -315,11 +375,86 @@ impl PairingHistory {
         scored
     }
 
+    /// Build a screen-specific affinity map for selected wallpaper -> candidate on target screen.
+    fn screen_context_scores(
+        &self,
+        selected_wp: &Path,
+        target_screen: &str,
+    ) -> HashMap<&Path, f32> {
+        // Recent pairings matter most; old pairings still contribute but decay smoothly.
+        const HALF_LIFE_SECS: f32 = 7.0 * 24.0 * 3600.0;
+        const LOOKBACK_RECORDS: usize = 600;
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let mut raw: HashMap<&Path, f32> = HashMap::new();
+        for record in self.data.records.iter().rev().take(LOOKBACK_RECORDS) {
+            let Some(target_path) = record.wallpapers.get(target_screen) else {
+                continue;
+            };
+            if target_path.as_path() == selected_wp {
+                continue;
+            }
+            if !record
+                .wallpapers
+                .values()
+                .any(|path| path.as_path() == selected_wp)
+            {
+                continue;
+            }
+
+            let age_secs = now.saturating_sub(record.timestamp) as f32;
+            let recency = 1.0 / (1.0 + age_secs / HALF_LIFE_SECS);
+            let duration_factor = (record.duration.unwrap_or(90) as f32 / 900.0).clamp(0.35, 1.6);
+            let manual_factor = if record.manual { 1.1 } else { 1.0 };
+            let contribution = recency * duration_factor * manual_factor;
+            *raw.entry(target_path.as_path()).or_insert(0.0) += contribution;
+        }
+
+        // Normalize to 0..1 for stable weighting in final score.
+        let max_score = raw.values().copied().fold(0.0, f32::max);
+        if max_score > 0.0 {
+            raw.values_mut().for_each(|score| *score /= max_score);
+        }
+        raw
+    }
+
+    /// Penalize exact repetition on same target output to encourage variety.
+    fn recent_repetition_penalty(&self, target_screen: &str, candidate: &Path, weight: f32) -> f32 {
+        if weight <= 0.0 {
+            return 0.0;
+        }
+
+        const LOOKBACK_RECORDS: usize = 12;
+
+        let raw_penalty = self
+            .data
+            .records
+            .iter()
+            .rev()
+            .take(LOOKBACK_RECORDS)
+            .enumerate()
+            .filter_map(|(idx, record)| {
+                record
+                    .wallpapers
+                    .get(target_screen)
+                    .filter(|path| path.as_path() == candidate)
+                    .map(|_| 1.0 / (idx as f32 + 1.0))
+            })
+            .sum::<f32>();
+
+        (raw_penalty * 0.35 * weight).min(1.5 * weight)
+    }
+
     /// Get affinity score between two wallpapers
     pub fn get_affinity(&self, wp_a: &Path, wp_b: &Path) -> f32 {
         let (a, b) = Self::ordered_pair(wp_a, wp_b);
 
-        self.data.affinity_scores
+        self.data
+            .affinity_scores
             .iter()
             .find(|s| s.wallpaper_a == a && s.wallpaper_b == b)
             .map(|s| s.score)
@@ -336,7 +471,12 @@ impl PairingHistory {
 
     /// Begin undo window
     #[allow(dead_code)]
-    pub fn begin_undo(&mut self, previous: HashMap<String, PathBuf>, message: String, duration_secs: u64) {
+    pub fn begin_undo(
+        &mut self,
+        previous: HashMap<String, PathBuf>,
+        message: String,
+        duration_secs: u64,
+    ) {
         self.undo_state = Some(UndoState {
             previous_wallpapers: previous,
             started_at: Instant::now(),
@@ -356,7 +496,9 @@ impl PairingHistory {
 
     /// Get undo state for display
     pub fn undo_state(&self) -> Option<&UndoState> {
-        self.undo_state.as_ref().filter(|s| s.started_at.elapsed() < s.duration)
+        self.undo_state
+            .as_ref()
+            .filter(|s| s.started_at.elapsed() < s.duration)
     }
 
     /// Execute undo, returns the wallpapers to restore
@@ -379,9 +521,8 @@ impl PairingHistory {
 
     /// Get remaining undo time in seconds
     pub fn undo_remaining_secs(&self) -> Option<u64> {
-        self.undo_state().map(|s| {
-            s.duration.saturating_sub(s.started_at.elapsed()).as_secs()
-        })
+        self.undo_state()
+            .map(|s| s.duration.saturating_sub(s.started_at.elapsed()).as_secs())
     }
 
     /// Get undo message
@@ -396,7 +537,8 @@ impl PairingHistory {
 
     /// Get the most recent pairing with multiple screens
     pub fn get_last_multi_screen_pairing(&self) -> Option<HashMap<String, PathBuf>> {
-        self.data.records
+        self.data
+            .records
             .iter()
             .rev()
             .find(|r| r.wallpapers.len() > 1)
@@ -407,4 +549,27 @@ impl PairingHistory {
     pub fn affinity_count(&self) -> usize {
         self.data.affinity_scores.len()
     }
+}
+
+fn normalize_cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    let len = a.len().min(b.len());
+    if len == 0 {
+        return 0.0;
+    }
+
+    let mut dot = 0.0f32;
+    let mut norm_a = 0.0f32;
+    let mut norm_b = 0.0f32;
+    for i in 0..len {
+        dot += a[i] * b[i];
+        norm_a += a[i] * a[i];
+        norm_b += b[i] * b[i];
+    }
+
+    if norm_a <= 0.0 || norm_b <= 0.0 {
+        return 0.0;
+    }
+
+    let cosine = dot / (norm_a.sqrt() * norm_b.sqrt());
+    ((cosine + 1.0) / 2.0).clamp(0.0, 1.0)
 }

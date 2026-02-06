@@ -75,14 +75,24 @@ pub struct FillColor {
 impl Default for FillColor {
     fn default() -> Self {
         // Black
-        Self { r: 0, g: 0, b: 0, a: 255 }
+        Self {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 255,
+        }
     }
 }
 
 #[allow(dead_code)]
 impl FillColor {
     pub fn black() -> Self {
-        Self { r: 0, g: 0, b: 0, a: 255 }
+        Self {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 255,
+        }
     }
 
     pub fn from_hex(hex: &str) -> Option<Self> {
@@ -152,7 +162,13 @@ pub fn ensure_daemon() -> Result<()> {
 
 /// Set wallpaper on a specific output with resize options
 pub fn set_wallpaper(output: &str, path: &Path, transition: &Transition) -> Result<()> {
-    set_wallpaper_with_resize(output, path, transition, ResizeMode::Crop, &FillColor::black())
+    set_wallpaper_with_resize(
+        output,
+        path,
+        transition,
+        ResizeMode::Crop,
+        &FillColor::black(),
+    )
 }
 
 /// Set wallpaper on a specific output with full control over resize behavior

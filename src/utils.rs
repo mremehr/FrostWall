@@ -1,5 +1,5 @@
-use std::path::Path;
 use palette::{IntoColor, Lab, Srgb};
+use std::path::Path;
 
 /// Supported image file extensions
 pub const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "bmp", "gif"];
@@ -35,9 +35,9 @@ impl ColorHarmony {
     /// Get the bonus multiplier for this harmony type
     pub fn bonus(&self) -> f32 {
         match self {
-            ColorHarmony::Analogous => 1.0,      // Similar colors always work
-            ColorHarmony::Complementary => 0.9,  // Strong contrast, usually works
-            ColorHarmony::Triadic => 0.7,        // Balanced but can be busy
+            ColorHarmony::Analogous => 1.0,     // Similar colors always work
+            ColorHarmony::Complementary => 0.9, // Strong contrast, usually works
+            ColorHarmony::Triadic => 0.7,       // Balanced but can be busy
             ColorHarmony::SplitComplementary => 0.8,
             ColorHarmony::None => 0.0,
         }
@@ -104,7 +104,11 @@ pub fn hex_to_hsl(hex: &str) -> Option<(f32, f32, f32)> {
 /// Calculate the angular difference between two hue values (0-180)
 fn hue_difference(h1: f32, h2: f32) -> f32 {
     let diff = (h1 - h2).abs();
-    if diff > 180.0 { 360.0 - diff } else { diff }
+    if diff > 180.0 {
+        360.0 - diff
+    } else {
+        diff
+    }
 }
 
 /// Detect the color harmony between two palettes
@@ -121,8 +125,13 @@ pub fn detect_harmony(
 
     // Get the dominant (highest weight) saturated color from each palette
     let get_dominant_hue = |colors: &[String], weights: &[f32]| -> Option<(f32, f32)> {
-        colors.iter()
-            .zip(weights.iter().chain(std::iter::repeat(&(1.0 / colors.len() as f32))))
+        colors
+            .iter()
+            .zip(
+                weights
+                    .iter()
+                    .chain(std::iter::repeat(&(1.0 / colors.len() as f32))),
+            )
             .filter_map(|(c, w)| {
                 hex_to_hsl(c).and_then(|(h, s, l)| {
                     // Only consider colors with enough saturation
@@ -233,14 +242,22 @@ pub fn delta_e_2000(lab1: &Lab, lab2: &Lab) -> f32 {
         0.0
     } else {
         let h = b1.atan2(a1_prime);
-        if h < 0.0 { h + 2.0 * PI } else { h }
+        if h < 0.0 {
+            h + 2.0 * PI
+        } else {
+            h
+        }
     };
 
     let h2_prime = if a2_prime == 0.0 && b2 == 0.0 {
         0.0
     } else {
         let h = b2.atan2(a2_prime);
-        if h < 0.0 { h + 2.0 * PI } else { h }
+        if h < 0.0 {
+            h + 2.0 * PI
+        } else {
+            h
+        }
     };
 
     // Calculate differences
@@ -284,8 +301,7 @@ pub fn delta_e_2000(lab1: &Lab, lab2: &Lab) -> f32 {
     };
 
     // Calculate T
-    let t = 1.0
-        - 0.17 * (h_avg_prime - PI / 6.0).cos()
+    let t = 1.0 - 0.17 * (h_avg_prime - PI / 6.0).cos()
         + 0.24 * (2.0 * h_avg_prime).cos()
         + 0.32 * (3.0 * h_avg_prime + PI / 30.0).cos()
         - 0.20 * (4.0 * h_avg_prime - 63.0 * PI / 180.0).cos();
@@ -417,10 +433,7 @@ pub fn color_saturation(hex: &str) -> f32 {
 
 /// Calculate overall image similarity based on color profile
 /// Returns a score from 0.0 (very different) to 1.0 (very similar)
-pub fn image_similarity(
-    colors1: &[String],
-    colors2: &[String],
-) -> f32 {
+pub fn image_similarity(colors1: &[String], colors2: &[String]) -> f32 {
     // Use equal weights for backward compatibility
     let weights1: Vec<f32> = vec![1.0 / colors1.len().max(1) as f32; colors1.len()];
     let weights2: Vec<f32> = vec![1.0 / colors2.len().max(1) as f32; colors2.len()];
@@ -445,25 +458,33 @@ pub fn image_similarity_weighted(
     // Component 2: Weighted brightness similarity
     let sum1: f32 = weights1.iter().sum();
     let sum2: f32 = weights2.iter().sum();
-    let bright1: f32 = colors1.iter()
+    let bright1: f32 = colors1
+        .iter()
         .zip(weights1.iter())
         .map(|(c, w)| color_brightness(c) * w)
-        .sum::<f32>() / sum1.max(0.001);
-    let bright2: f32 = colors2.iter()
+        .sum::<f32>()
+        / sum1.max(0.001);
+    let bright2: f32 = colors2
+        .iter()
         .zip(weights2.iter())
         .map(|(c, w)| color_brightness(c) * w)
-        .sum::<f32>() / sum2.max(0.001);
+        .sum::<f32>()
+        / sum2.max(0.001);
     let bright_sim = 1.0 - (bright1 - bright2).abs();
 
     // Component 3: Weighted saturation similarity
-    let sat1: f32 = colors1.iter()
+    let sat1: f32 = colors1
+        .iter()
         .zip(weights1.iter())
         .map(|(c, w)| color_saturation(c) * w)
-        .sum::<f32>() / sum1.max(0.001);
-    let sat2: f32 = colors2.iter()
+        .sum::<f32>()
+        / sum1.max(0.001);
+    let sat2: f32 = colors2
+        .iter()
         .zip(weights2.iter())
         .map(|(c, w)| color_saturation(c) * w)
-        .sum::<f32>() / sum2.max(0.001);
+        .sum::<f32>()
+        / sum2.max(0.001);
     let sat_sim = 1.0 - (sat1 - sat2).abs();
 
     // Weighted combination

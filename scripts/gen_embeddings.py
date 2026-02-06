@@ -41,6 +41,17 @@ CATEGORIES = {
     "cozy": ["cozy warm comfortable interior", "homey relaxing atmosphere"],
     "portrait": ["portrait orientation vertical image", "tall vertical composition"],
     "landscape_orientation": ["landscape orientation horizontal wide image", "panoramic wide view"],
+    # Library-tuned semantic categories
+    "pixel_art": ["pixel art landscape wallpaper", "retro pixel-style digital art scene"],
+    "anime_character": ["anime character portrait artwork", "manga style character illustration"],
+    "fantasy_landscape": ["epic fantasy landscape painting", "magical fantasy environment concept art"],
+    "epic_battle": ["epic fantasy battle scene", "dramatic warriors and battlefield illustration"],
+    "sakura": ["cherry blossom sakura anime art", "pink petals spring japanese illustration"],
+    "nightscape": ["dark night landscape wallpaper", "moonlit night scene with stars"],
+    "painterly": ["painterly digital painting style", "brushstroke concept art illustration"],
+    "concept_art": ["game concept art environment", "cinematic concept painting"],
+    "ethereal": ["ethereal dreamy fantasy art", "soft luminous surreal scene"],
+    "moody_fantasy": ["dark moody fantasy forest", "atmospheric fantasy scene with dramatic lighting"],
 }
 
 def main():

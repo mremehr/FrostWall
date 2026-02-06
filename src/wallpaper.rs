@@ -121,8 +121,8 @@ impl Wallpaper {
     /// Fast path: only read dimensions from image header (no full decode)
     pub fn from_path_fast(path: &Path) -> Result<Self> {
         // Only read image header - much faster than full decode!
-        let (width, height) = image::image_dimensions(path)
-            .context("Failed to read image dimensions")?;
+        let (width, height) =
+            image::image_dimensions(path).context("Failed to read image dimensions")?;
         let aspect_category = Self::categorize_aspect(width, height);
 
         // Get file metadata for sorting
@@ -156,9 +156,9 @@ impl Wallpaper {
         }
 
         const K: usize = 5;
-        const CONVERGENCE_THRESHOLD: f32 = 5.0;  // Looser convergence (was 2.0)
-        const MAX_ITERATIONS: u32 = 30;          // Faster (was 100)
-        const THUMBNAIL_SIZE: u32 = 128;         // Smaller (was 256)
+        const CONVERGENCE_THRESHOLD: f32 = 5.0; // Looser convergence (was 2.0)
+        const MAX_ITERATIONS: u32 = 30; // Faster (was 100)
+        const THUMBNAIL_SIZE: u32 = 128; // Smaller (was 256)
 
         let img = image::open(&self.path).context("Failed to open image")?;
         let thumb = img.resize(THUMBNAIL_SIZE, THUMBNAIL_SIZE, FilterType::Triangle);
@@ -209,7 +209,8 @@ impl Wallpaper {
             .collect();
 
         // Sort by weight descending (most dominant color first)
-        color_weight_pairs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        color_weight_pairs
+            .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Unzip into separate vectors
         self.colors = color_weight_pairs.iter().map(|(c, _)| c.clone()).collect();
@@ -230,9 +231,12 @@ impl Wallpaper {
 
     /// Create from path, reusing existing colors if available
     #[allow(dead_code)]
-    pub fn from_path_with_existing(path: &Path, existing_colors: Option<Vec<String>>) -> Result<Self> {
-        let (width, height) = image::image_dimensions(path)
-            .context("Failed to read image dimensions")?;
+    pub fn from_path_with_existing(
+        path: &Path,
+        existing_colors: Option<Vec<String>>,
+    ) -> Result<Self> {
+        let (width, height) =
+            image::image_dimensions(path).context("Failed to read image dimensions")?;
         let aspect_category = Self::categorize_aspect(width, height);
 
         let metadata = std::fs::metadata(path).ok();
@@ -370,7 +374,10 @@ impl Wallpaper {
     /// Get auto tags above a confidence threshold
     #[allow(dead_code)]
     pub fn auto_tags_above(&self, threshold: f32) -> Vec<&AutoTag> {
-        self.auto_tags.iter().filter(|t| t.confidence >= threshold).collect()
+        self.auto_tags
+            .iter()
+            .filter(|t| t.confidence >= threshold)
+            .collect()
     }
 
     /// Set auto tags (replaces existing)
@@ -404,6 +411,12 @@ impl WallpaperCache {
         Self::load_or_scan_recursive(source_dir, false)
     }
 
+    /// Load cache for AI operations without forcing color extraction.
+    /// Falls back to metadata-only scan when no valid cache exists.
+    pub fn load_or_scan_for_ai(source_dir: &Path) -> Result<Self> {
+        Self::load_or_scan_for_ai_recursive(source_dir, false)
+    }
+
     pub fn load_or_scan_recursive(source_dir: &Path, recursive: bool) -> Result<Self> {
         let cache_path = Self::cache_path();
 
@@ -419,6 +432,22 @@ impl WallpaperCache {
 
         // Scan fresh
         Self::scan_recursive(source_dir, recursive)
+    }
+
+    pub fn load_or_scan_for_ai_recursive(source_dir: &Path, recursive: bool) -> Result<Self> {
+        let cache_path = Self::cache_path();
+
+        if cache_path.exists() {
+            let data = fs::read_to_string(&cache_path)?;
+            if let Ok(cache) = serde_json::from_str::<WallpaperCache>(&data) {
+                // For AI tagging we only need metadata/path validity, not extracted color palettes.
+                if cache.source_dir == source_dir && cache.validate_for_ai() {
+                    return Ok(cache);
+                }
+            }
+        }
+
+        Self::scan_metadata_only_recursive(source_dir, recursive)
     }
 
     pub fn scan(source_dir: &Path) -> Result<Self> {
@@ -479,17 +508,75 @@ impl WallpaperCache {
 
             chunk.par_iter_mut().for_each(|wp| {
                 if let Err(e) = wp.extract_colors() {
-                    eprintln!("\nWarning: Failed to extract colors for {}: {}", wp.path.display(), e);
+                    eprintln!(
+                        "\nWarning: Failed to extract colors for {}: {}",
+                        wp.path.display(),
+                        e
+                    );
                 }
             });
 
             let progress = (batch_start + chunk.len()).min(color_total);
-            eprint!("\rPhase 2/2: Extracting colors... {}/{}", progress, color_total);
+            eprint!(
+                "\rPhase 2/2: Extracting colors... {}/{}",
+                progress, color_total
+            );
         }
 
         eprintln!(" done!");
 
         // Sort by filename for consistent ordering
+        wallpapers.sort_by(|a, b| a.path.cmp(&b.path));
+
+        Ok(Self {
+            wallpapers,
+            source_dir: source_dir.to_path_buf(),
+            screen_indices: HashMap::new(),
+        })
+    }
+
+    /// Fast scan for AI operations (dimensions + metadata only, no color extraction).
+    pub fn scan_metadata_only_recursive(source_dir: &Path, recursive: bool) -> Result<Self> {
+        let entries: Vec<PathBuf> = if recursive {
+            WalkDir::new(source_dir)
+                .follow_links(true)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .map(|e| e.path().to_path_buf())
+                .filter(|p| p.is_file() && crate::utils::is_image_file(p))
+                .collect()
+        } else {
+            fs::read_dir(source_dir)
+                .with_context(|| format!("Failed to read directory: {}", source_dir.display()))?
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_file() && crate::utils::is_image_file(p))
+                .collect()
+        };
+
+        let total = entries.len();
+        let processed = AtomicUsize::new(0);
+
+        eprint!("Phase 1/1: Reading metadata...");
+        let mut wallpapers: Vec<Wallpaper> = entries
+            .par_iter()
+            .filter_map(|path| {
+                let count = processed.fetch_add(1, Ordering::Relaxed) + 1;
+                if count.is_multiple_of(50) || count == total {
+                    eprint!("\rPhase 1/1: Reading metadata... {}/{}", count, total);
+                }
+
+                match Wallpaper::from_path_fast(path) {
+                    Ok(wp) => Some(wp),
+                    Err(e) => {
+                        eprintln!("\nWarning: Failed to read {}: {}", path.display(), e);
+                        None
+                    }
+                }
+            })
+            .collect();
+        eprintln!(" done!");
+
         wallpapers.sort_by(|a, b| a.path.cmp(&b.path));
 
         Ok(Self {
@@ -513,6 +600,14 @@ impl WallpaperCache {
     }
 
     fn validate(&self) -> bool {
+        self.validate_impl(true)
+    }
+
+    fn validate_for_ai(&self) -> bool {
+        self.validate_impl(false)
+    }
+
+    fn validate_impl(&self, require_color_data: bool) -> bool {
         // Check if source directory still exists
         if !self.source_dir.exists() {
             return false;
@@ -537,8 +632,8 @@ impl WallpaperCache {
                 return false;
             }
 
-            // Must have color data (invalidate old cache format)
-            if wp.colors.is_empty() {
+            // Full runtime needs color data; AI tagging path does not.
+            if require_color_data && wp.colors.is_empty() {
                 return false;
             }
 
@@ -692,7 +787,10 @@ impl WallpaperCache {
 
     /// Get wallpapers with specific tag
     pub fn with_tag(&self, tag: &str) -> Vec<&Wallpaper> {
-        self.wallpapers.iter().filter(|wp| wp.has_tag(tag)).collect()
+        self.wallpapers
+            .iter()
+            .filter(|wp| wp.has_tag(tag))
+            .collect()
     }
 
     /// Get wallpapers by dominant color (hex string like "#1a2b3c")

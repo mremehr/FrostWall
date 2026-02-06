@@ -72,10 +72,7 @@ pub fn generate_palette(dominant_colors: &[String], wallpaper_path: &Path) -> Wa
         .collect();
 
     // Sort by luminance to find darkest/lightest
-    let mut sorted_colors: Vec<(f32, &str)> = colors
-        .iter()
-        .map(|&c| (luminance(c), c))
-        .collect();
+    let mut sorted_colors: Vec<(f32, &str)> = colors.iter().map(|&c| (luminance(c), c)).collect();
     sorted_colors.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
     let darkest = sorted_colors[0].1;
@@ -83,22 +80,22 @@ pub fn generate_palette(dominant_colors: &[String], wallpaper_path: &Path) -> Wa
 
     // Build 16-color palette
     let color_map = WalColorMap {
-        color0: darken(darkest, 0.2),           // Background (darkened)
-        color1: colors[0].to_string(),          // Red-ish
-        color2: colors[1].to_string(),          // Green-ish
-        color3: colors[2].to_string(),          // Yellow-ish
-        color4: colors[3].to_string(),          // Blue-ish
-        color5: colors[4].to_string(),          // Magenta-ish
-        color6: blend(colors[1], colors[3]),    // Cyan-ish (blend)
-        color7: lighten(lightest, 0.1),         // Light gray
-        color8: lighten(darkest, 0.3),          // Bright black
-        color9: lighten(colors[0], 0.2),        // Bright red
-        color10: lighten(colors[1], 0.2),       // Bright green
-        color11: lighten(colors[2], 0.2),       // Bright yellow
-        color12: lighten(colors[3], 0.2),       // Bright blue
-        color13: lighten(colors[4], 0.2),       // Bright magenta
+        color0: darken(darkest, 0.2),        // Background (darkened)
+        color1: colors[0].to_string(),       // Red-ish
+        color2: colors[1].to_string(),       // Green-ish
+        color3: colors[2].to_string(),       // Yellow-ish
+        color4: colors[3].to_string(),       // Blue-ish
+        color5: colors[4].to_string(),       // Magenta-ish
+        color6: blend(colors[1], colors[3]), // Cyan-ish (blend)
+        color7: lighten(lightest, 0.1),      // Light gray
+        color8: lighten(darkest, 0.3),       // Bright black
+        color9: lighten(colors[0], 0.2),     // Bright red
+        color10: lighten(colors[1], 0.2),    // Bright green
+        color11: lighten(colors[2], 0.2),    // Bright yellow
+        color12: lighten(colors[3], 0.2),    // Bright blue
+        color13: lighten(colors[4], 0.2),    // Bright magenta
         color14: lighten(&blend(colors[1], colors[3]), 0.2), // Bright cyan
-        color15: lighten(lightest, 0.3),        // White
+        color15: lighten(lightest, 0.3),     // White
     };
 
     WalColors {
@@ -116,8 +113,7 @@ pub fn generate_palette(dominant_colors: &[String], wallpaper_path: &Path) -> Wa
 /// Export colors to pywal cache directory
 pub fn export_colors(colors: &WalColors) -> Result<PathBuf> {
     let cache_dir = wal_cache_dir();
-    fs::create_dir_all(&cache_dir)
-        .context("Failed to create wal cache directory")?;
+    fs::create_dir_all(&cache_dir).context("Failed to create wal cache directory")?;
 
     // Export colors.json
     let json_path = cache_dir.join("colors.json");
@@ -128,10 +124,22 @@ pub fn export_colors(colors: &WalColors) -> Result<PathBuf> {
     let plain_path = cache_dir.join("colors");
     let plain = format!(
         "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
-        colors.colors.color0, colors.colors.color1, colors.colors.color2, colors.colors.color3,
-        colors.colors.color4, colors.colors.color5, colors.colors.color6, colors.colors.color7,
-        colors.colors.color8, colors.colors.color9, colors.colors.color10, colors.colors.color11,
-        colors.colors.color12, colors.colors.color13, colors.colors.color14, colors.colors.color15,
+        colors.colors.color0,
+        colors.colors.color1,
+        colors.colors.color2,
+        colors.colors.color3,
+        colors.colors.color4,
+        colors.colors.color5,
+        colors.colors.color6,
+        colors.colors.color7,
+        colors.colors.color8,
+        colors.colors.color9,
+        colors.colors.color10,
+        colors.colors.color11,
+        colors.colors.color12,
+        colors.colors.color13,
+        colors.colors.color14,
+        colors.colors.color15,
     );
     fs::write(&plain_path, &plain)?;
 
@@ -162,11 +170,25 @@ color14='{}'
 color15='{}'
 "#,
         colors.wallpaper,
-        colors.special.background, colors.special.foreground, colors.special.cursor,
-        colors.colors.color0, colors.colors.color1, colors.colors.color2, colors.colors.color3,
-        colors.colors.color4, colors.colors.color5, colors.colors.color6, colors.colors.color7,
-        colors.colors.color8, colors.colors.color9, colors.colors.color10, colors.colors.color11,
-        colors.colors.color12, colors.colors.color13, colors.colors.color14, colors.colors.color15,
+        colors.special.background,
+        colors.special.foreground,
+        colors.special.cursor,
+        colors.colors.color0,
+        colors.colors.color1,
+        colors.colors.color2,
+        colors.colors.color3,
+        colors.colors.color4,
+        colors.colors.color5,
+        colors.colors.color6,
+        colors.colors.color7,
+        colors.colors.color8,
+        colors.colors.color9,
+        colors.colors.color10,
+        colors.colors.color11,
+        colors.colors.color12,
+        colors.colors.color13,
+        colors.colors.color14,
+        colors.colors.color15,
     );
     fs::write(&sh_path, &sh)?;
 
@@ -195,11 +217,25 @@ color15='{}'
 *color14: {}
 *color15: {}
 "#,
-        colors.special.background, colors.special.foreground, colors.special.cursor,
-        colors.colors.color0, colors.colors.color1, colors.colors.color2, colors.colors.color3,
-        colors.colors.color4, colors.colors.color5, colors.colors.color6, colors.colors.color7,
-        colors.colors.color8, colors.colors.color9, colors.colors.color10, colors.colors.color11,
-        colors.colors.color12, colors.colors.color13, colors.colors.color14, colors.colors.color15,
+        colors.special.background,
+        colors.special.foreground,
+        colors.special.cursor,
+        colors.colors.color0,
+        colors.colors.color1,
+        colors.colors.color2,
+        colors.colors.color3,
+        colors.colors.color4,
+        colors.colors.color5,
+        colors.colors.color6,
+        colors.colors.color7,
+        colors.colors.color8,
+        colors.colors.color9,
+        colors.colors.color10,
+        colors.colors.color11,
+        colors.colors.color12,
+        colors.colors.color13,
+        colors.colors.color14,
+        colors.colors.color15,
     );
     fs::write(&xres_path, &xres)?;
 
@@ -214,10 +250,7 @@ pub fn apply_colors() -> Result<()> {
     // xrdb for X11 applications
     let xres_path = wal_cache_dir().join("colors.Xresources");
     if xres_path.exists() {
-        let _ = Command::new("xrdb")
-            .arg("-merge")
-            .arg(&xres_path)
-            .output();
+        let _ = Command::new("xrdb").arg("-merge").arg(&xres_path).output();
     }
 
     // Send escape sequences to reload terminal colors
@@ -303,7 +336,9 @@ pub fn cmd_pywal(wallpaper_path: &Path, apply: bool) -> Result<()> {
     let cache = WallpaperCache::load_or_scan(cache_dir)?;
 
     // Find the wallpaper in cache or scan it fresh
-    let colors = cache.wallpapers.iter()
+    let colors = cache
+        .wallpapers
+        .iter()
         .find(|w| w.path == wallpaper_path)
         .map(|wp| wp.colors.clone())
         .unwrap_or_else(|| {

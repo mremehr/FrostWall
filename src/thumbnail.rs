@@ -75,12 +75,8 @@ impl ThumbnailCache {
         let (src_width, src_height) = (src_rgba.width(), src_rgba.height());
 
         // Calculate target dimensions maintaining aspect ratio
-        let (dst_width, dst_height) = Self::fit_dimensions(
-            src_width,
-            src_height,
-            THUMB_WIDTH,
-            THUMB_HEIGHT,
-        );
+        let (dst_width, dst_height) =
+            Self::fit_dimensions(src_width, src_height, THUMB_WIDTH, THUMB_HEIGHT);
 
         // Create fast_image_resize source image
         let src_fir = Image::from_vec_u8(
@@ -91,11 +87,7 @@ impl ThumbnailCache {
         )?;
 
         // Create destination image
-        let mut dst_fir = Image::new(
-            dst_width,
-            dst_height,
-            fast_image_resize::PixelType::U8x4,
-        );
+        let mut dst_fir = Image::new(dst_width, dst_height, fast_image_resize::PixelType::U8x4);
 
         // Resize using SIMD-accelerated Lanczos3 (high quality)
         let mut resizer = Resizer::new();
@@ -125,8 +117,9 @@ impl ThumbnailCache {
     pub fn load(&self, source_path: &Path) -> Result<DynamicImage> {
         // Try cached first
         if let Some(thumb_path) = self.get_cached(source_path) {
-            return image::open(&thumb_path)
-                .with_context(|| format!("Failed to load cached thumbnail: {}", thumb_path.display()));
+            return image::open(&thumb_path).with_context(|| {
+                format!("Failed to load cached thumbnail: {}", thumb_path.display())
+            });
         }
 
         // Generate and load
@@ -266,15 +259,16 @@ fn save_as_jpeg(img: &RgbaImage, path: &Path, quality: u8) -> Result<()> {
         rgb_data.push(pixel[2]); // B
     }
 
-    let rgb_img = image::RgbImage::from_raw(width, height, rgb_data)
-        .context("Failed to create RGB image")?;
+    let rgb_img =
+        image::RgbImage::from_raw(width, height, rgb_data).context("Failed to create RGB image")?;
 
-    let file = File::create(path)
-        .with_context(|| format!("Failed to create file: {}", path.display()))?;
+    let file =
+        File::create(path).with_context(|| format!("Failed to create file: {}", path.display()))?;
     let writer = BufWriter::new(file);
 
     let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(writer, quality);
-    encoder.encode_image(&rgb_img)
+    encoder
+        .encode_image(&rgb_img)
         .with_context(|| format!("Failed to encode JPEG: {}", path.display()))?;
 
     Ok(())
