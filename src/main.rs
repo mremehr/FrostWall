@@ -33,10 +33,6 @@ struct Cli {
     /// Wallpaper directory
     #[arg(short, long)]
     dir: Option<PathBuf>,
-
-    /// Use a specific profile
-    #[arg(short, long)]
-    profile: Option<String>,
 }
 
 #[derive(Subcommand)]

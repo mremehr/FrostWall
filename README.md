@@ -105,13 +105,14 @@ frostwall auto-tag --verbose          # Show per-image results
 frostwall --dir ~/pictures/wallpapers auto-tag --incremental --threshold 0.55
 ```
 
-36 semantic categories detected by CLIP:
-`abstract`, `anime`, `anime_character`, `architecture`, `bright`, `city`, `concept_art`, `cozy`, `cyberpunk`, `dark`, `desert`, `epic_battle`, `ethereal`, `fantasy`, `fantasy_landscape`, `forest`, `geometric`, `landscape_orientation`, `minimal`, `moody_fantasy`, `mountain`, `nature`, `nightscape`, `ocean`, `painterly`, `pastel`, `pixel_art`, `portrait`, `retro`, `sakura`, `space`, `sunset`, `tropical`, `urban`, `vibrant`, `vintage`
+67 semantic categories detected by CLIP:
+`3d_render`, `abstract`, `anime`, `anime_character`, `architecture`, `art_nouveau`, `autumn`, `bright`, `castle`, `chibi`, `city`, `concept_art`, `cozy`, `cyberpunk`, `dark`, `desert`, `digital_art`, `dragon`, `dramatic`, `epic_battle`, `ethereal`, `fantasy`, `fantasy_landscape`, `flowers`, `forest`, `geometric`, `gothic`, `horror`, `illustration`, `landscape_orientation`, `line_art`, `magic`, `mecha`, `minimal`, `moody_fantasy`, `mountain`, `nature`, `neon`, `nightscape`, `ocean`, `oil_painting`, `painterly`, `pastel`, `photography`, `pixel_art`, `portrait`, `rain`, `retro`, `ruins`, `sakura`, `samurai`, `sci_fi`, `serene`, `shoujo`, `sky`, `snow`, `space`, `steampunk`, `sunset`, `tropical`, `underwater`, `urban`, `vaporwave`, `vibrant`, `vintage`, `watercolor`, `waterfall`
 
 Features:
 - Uses CLIP ViT-B/32 visual encoder via ONNX Runtime
-- Pre-computed text embeddings for fast inference
-- Auto-downloads model from HuggingFace (~350MB, cached locally)
+- 57 base embeddings stored as compact binary (114 KB)
+- Auto-downloads visual model from HuggingFace (~350MB, cached locally)
+- SHA256 model verification for integrity
 - Understands image content semantically, not just colors
 
 ### Time-Based Profiles
@@ -197,6 +198,9 @@ Press `:` in TUI for vim-style commands:
 | `:sort name/date/size` | Change sort mode |
 | `:screen <n>` | Switch to screen n |
 | `:go <n>` | Go to wallpaper n |
+| `:rescan` / `:scan` | Incremental rescan (preserves tags & data) |
+| `:pair-reset` | Reset pairing history |
+| `:pair-rebuild` | Rebuild affinity scores |
 | `:help` / `:h` | Show help |
 | `:q` / `:quit` | Quit |
 
@@ -379,6 +383,7 @@ preferred_tags = ["dark", "space", "minimal"]
 | `Enter` | Apply selected wallpaper |
 | `p` | **Pairing preview** - split-view with suggestions |
 | `r` | Random wallpaper (apply immediately) |
+| `R` | Incremental rescan (preserves tags & pairing) |
 | `:` | **Command mode** (vim-style) |
 | `m` | Toggle match mode (Strict/Flexible/All) |
 | `f` | Toggle resize mode (Crop/Fit/Center/Stretch) |
@@ -428,8 +433,8 @@ src/
   utils.rs       # Color utilities, LAB matching, auto-tagging
   watch.rs       # Watch daemon with inotify
   init.rs        # Interactive setup wizard
-  clip.rs        # CLIP auto-tagging (optional feature)
-  clip_embeddings.rs  # Pre-computed CLIP text embeddings
+  clip.rs              # CLIP auto-tagging (optional feature)
+  clip_embeddings_bin.rs  # Binary CLIP text embedding loader
   ui/
     mod.rs       # UI module exports
     theme.rs     # Frost theme (light/dark auto-detection)
@@ -522,16 +527,23 @@ Each wallpaper stores metadata including colors, tags, and optional CLIP embeddi
 ### v0.5.0
 
 - **CLIP AI auto-tagging** - Semantic image tagging using CLIP ViT-B/32 (optional `--features clip`)
-  - 36 semantic categories including library-tuned tags like `pixel_art`, `anime_character`, `fantasy_landscape`, `sakura`, and `concept_art`
-  - Pre-computed text embeddings for fast inference
-  - Auto-downloads model from HuggingFace on first use
+  - 67 semantic categories (57 base + 10 library mixes) covering nature, urban, abstract, style, mood, anime, fantasy, and composition
+  - Binary embeddings format (114 KB) replaces 13K lines of inlined Rust source
+  - SHA256 model verification for integrity
+  - Auto-downloads visual model from HuggingFace on first use
   - **CUDA GPU acceleration** - Optional `--features clip-cuda` for 10-50x faster tagging
 - **Visual pairing preview** - 50/50 split-view with larger, dynamic thumbnails for multi-monitor pairing
 - **Manual pairing control** - Press `p` to preview and select matching wallpapers
-- **Improved pairing** - More options for pairing, better color and semantic matching
-- **Strict style filtering** - Pairing `Strict` mode now enforces style overlap without silently falling back to `Soft`
+- **Pairing overhaul** - Fixed double-counting, normalized scoring, strengthened repetition penalty, affinity auto-rebuild
+- **Strict style filtering** - Pairing `Strict` mode enforces style overlap (anime with anime, pixel art with pixel art, etc.)
 - **Strict semantic priority** - In `Strict`, semantic/content similarity is weighted higher than pairing history
 - **Configurable pairing scoring** - Tune history/visual/harmony/tag/semantic/repetition weights in config
+- **Incremental rescan** - `R` key / `:rescan` reloads wallpaper directory while preserving all tags, embeddings, and pairing data
+- **Terminal resize handling** - Thumbnail cache resets cleanly on terminal resize
+- **Dynamic thumbnail cache** - LRU cache scales with grid size instead of a hardcoded limit
+- **Cache versioning** - Automatic cache invalidation when format changes
+- **`:pair-reset`** - Reset pairing history from command mode
+- **109 unit tests + 5 integration tests** - Comprehensive test coverage across all modules
 
 ### v0.4.0
 

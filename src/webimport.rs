@@ -126,7 +126,7 @@ impl WebImporter {
     pub fn new() -> Self {
         Self {
             client: reqwest::blocking::Client::builder()
-                .user_agent("FrostWall/0.4.0")
+                .user_agent(format!("FrostWall/{}", env!("CARGO_PKG_VERSION")))
                 .build()
                 .unwrap_or_else(|_| reqwest::blocking::Client::new()),
             unsplash_key: std::env::var("UNSPLASH_ACCESS_KEY").ok(),
@@ -204,7 +204,7 @@ impl WebImporter {
 
         // Add API key if available (allows access to NSFW if enabled in account)
         if let Some(key) = &self.wallhaven_key {
-            url.push_str(&format!("&apikey={}", key));
+            url.push_str(&format!("&apikey={}", urlencoding::encode(key)));
         }
 
         let response: WallhavenResponse = self

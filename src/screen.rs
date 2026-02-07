@@ -39,6 +39,9 @@ impl Screen {
     }
 
     fn analyze_aspect(width: u32, height: u32) -> (Orientation, AspectCategory) {
+        if width == 0 || height == 0 {
+            return (Orientation::Landscape, AspectCategory::Square);
+        }
         let ratio = width as f32 / height as f32;
 
         let orientation = if ratio >= 1.0 {
@@ -315,8 +318,14 @@ mod tests {
 
     #[test]
     fn test_apply_transform_flipped() {
-        assert_eq!(apply_transform(1920, 1080, Some("flipped-90")), (1080, 1920));
-        assert_eq!(apply_transform(1920, 1080, Some("flipped-270")), (1080, 1920));
+        assert_eq!(
+            apply_transform(1920, 1080, Some("flipped-90")),
+            (1080, 1920)
+        );
+        assert_eq!(
+            apply_transform(1920, 1080, Some("flipped-270")),
+            (1080, 1920)
+        );
     }
 
     // --- parse_niri_output ---

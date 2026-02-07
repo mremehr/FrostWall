@@ -34,21 +34,33 @@ cargo build --release
 
 ```
 src/
-├── main.rs        # CLI entry point, command routing
-├── app.rs         # TUI state management, event loop
-├── screen.rs      # Screen detection (niri/wlr-randr)
-├── wallpaper.rs   # Wallpaper scanning, caching, filtering
-├── swww.rs        # swww daemon interface
-├── thumbnail.rs   # Thumbnail generation with SIMD
-├── pywal.rs       # pywal color export
-├── profile.rs     # Profile management
-├── watch.rs       # Watch daemon
-├── init.rs        # Interactive setup wizard
-├── utils.rs       # Shared utilities
+├── main.rs              # CLI entry point, command routing
+├── app.rs               # TUI state management, event loop
+├── screen.rs            # Screen detection (niri/wlr-randr)
+├── wallpaper.rs         # Wallpaper scanning, caching, filtering
+├── swww.rs              # swww daemon interface
+├── thumbnail.rs         # Thumbnail generation with SIMD
+├── pywal.rs             # pywal color export
+├── profile.rs           # Profile management
+├── pairing.rs           # Multi-monitor wallpaper pairing & history
+├── collections.rs       # Wallpaper collections/presets
+├── timeprofile.rs       # Time-based wallpaper profiles
+├── webimport.rs         # Web gallery import (Unsplash/Wallhaven)
+├── watch.rs             # Watch daemon with inotify
+├── init.rs              # Interactive setup wizard
+├── clip.rs              # CLIP auto-tagging (optional feature)
+├── clip_embeddings_bin.rs # Binary CLIP text embedding loader
+├── utils.rs             # Color utilities, LAB matching
 └── ui/
-    ├── mod.rs     # UI module exports
-    ├── theme.rs   # Frost theme colors
-    └── layout.rs  # TUI rendering
+    ├── mod.rs           # UI module exports
+    ├── theme.rs         # Frost theme colors (auto-detect light/dark)
+    └── layout.rs        # TUI rendering & pairing preview
+data/
+└── embeddings.bin       # Pre-computed CLIP text embeddings (57 categories)
+scripts/
+└── gen_embeddings.py    # Generate CLIP text embeddings (requires uv + torch)
+benches/
+└── color_ops.rs         # Criterion benchmarks for color operations
 ```
 
 ## Key Dependencies
@@ -68,11 +80,27 @@ src/
 # Run all tests
 cargo test
 
+# Run tests with CLIP features
+cargo test --features clip
+
 # Run specific test
 cargo test test_aspect_categories
 
 # Run with output
 cargo test -- --nocapture
+
+# Run benchmarks
+cargo bench
+```
+
+## Regenerating CLIP Embeddings
+
+If you add or modify tag categories in `scripts/gen_embeddings.py`:
+
+```bash
+uv run --with torch --with transformers scripts/gen_embeddings.py
+cargo build --features clip  # Verify the new binary loads
+cargo test --features clip   # Verify embedding tests pass
 ```
 
 ## Pull Request Process

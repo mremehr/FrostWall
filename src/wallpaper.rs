@@ -116,6 +116,9 @@ pub struct WallpaperCache {
     /// Track current index per screen for next/prev
     #[serde(default)]
     pub screen_indices: HashMap<String, usize>,
+    /// Whether the cache was built with recursive scanning
+    #[serde(default)]
+    pub recursive: bool,
 }
 
 #[derive(Debug, Default)]
@@ -240,6 +243,9 @@ impl Wallpaper {
     }
 
     pub(crate) fn categorize_aspect(width: u32, height: u32) -> AspectCategory {
+        if width == 0 || height == 0 {
+            return AspectCategory::Square;
+        }
         let ratio = width as f32 / height as f32;
         let normalized_ratio = if ratio >= 1.0 { ratio } else { 1.0 / ratio };
 
@@ -518,6 +524,7 @@ impl WallpaperCache {
             wallpapers,
             source_dir: source_dir.to_path_buf(),
             screen_indices: HashMap::new(),
+            recursive,
         })
     }
 
@@ -570,6 +577,7 @@ impl WallpaperCache {
             wallpapers,
             source_dir: source_dir.to_path_buf(),
             screen_indices: HashMap::new(),
+            recursive,
         })
     }
 
@@ -734,16 +742,24 @@ impl WallpaperCache {
         }
 
         // Quick check: count files in directory to detect additions/removals
-        if let Ok(entries) = std::fs::read_dir(&self.source_dir) {
-            let current_count = entries
+        let current_count = if self.recursive {
+            WalkDir::new(&self.source_dir)
+                .follow_links(true)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_file() && crate::utils::is_image_file(e.path()))
+                .count()
+        } else if let Ok(entries) = std::fs::read_dir(&self.source_dir) {
+            entries
                 .filter_map(|e| e.ok())
                 .filter(|e| e.path().is_file() && crate::utils::is_image_file(&e.path()))
-                .count();
+                .count()
+        } else {
+            return false;
+        };
 
-            // If file count differs significantly, invalidate
-            if current_count != self.wallpapers.len() {
-                return false;
-            }
+        if current_count != self.wallpapers.len() {
+            return false;
         }
 
         true
@@ -909,44 +925,86 @@ mod tests {
 
     #[test]
     fn test_categorize_aspect_ultrawide() {
-        assert_eq!(Wallpaper::categorize_aspect(3840, 1080), AspectCategory::Ultrawide); // 3.56
-        assert_eq!(Wallpaper::categorize_aspect(5120, 1440), AspectCategory::Ultrawide); // 3.56
-        assert_eq!(Wallpaper::categorize_aspect(2560, 1080), AspectCategory::Ultrawide); // 2.37
+        assert_eq!(
+            Wallpaper::categorize_aspect(3840, 1080),
+            AspectCategory::Ultrawide
+        ); // 3.56
+        assert_eq!(
+            Wallpaper::categorize_aspect(5120, 1440),
+            AspectCategory::Ultrawide
+        ); // 3.56
+        assert_eq!(
+            Wallpaper::categorize_aspect(2560, 1080),
+            AspectCategory::Ultrawide
+        ); // 2.37
     }
 
     #[test]
     fn test_categorize_aspect_landscape() {
-        assert_eq!(Wallpaper::categorize_aspect(1920, 1080), AspectCategory::Landscape); // 1.78
-        assert_eq!(Wallpaper::categorize_aspect(1920, 1200), AspectCategory::Landscape); // 1.6
-        assert_eq!(Wallpaper::categorize_aspect(2560, 1440), AspectCategory::Landscape); // 1.78
+        assert_eq!(
+            Wallpaper::categorize_aspect(1920, 1080),
+            AspectCategory::Landscape
+        ); // 1.78
+        assert_eq!(
+            Wallpaper::categorize_aspect(1920, 1200),
+            AspectCategory::Landscape
+        ); // 1.6
+        assert_eq!(
+            Wallpaper::categorize_aspect(2560, 1440),
+            AspectCategory::Landscape
+        ); // 1.78
     }
 
     #[test]
     fn test_categorize_aspect_portrait() {
-        assert_eq!(Wallpaper::categorize_aspect(1080, 1920), AspectCategory::Portrait);
-        assert_eq!(Wallpaper::categorize_aspect(1440, 2560), AspectCategory::Portrait);
+        assert_eq!(
+            Wallpaper::categorize_aspect(1080, 1920),
+            AspectCategory::Portrait
+        );
+        assert_eq!(
+            Wallpaper::categorize_aspect(1440, 2560),
+            AspectCategory::Portrait
+        );
     }
 
     #[test]
     fn test_categorize_aspect_square() {
-        assert_eq!(Wallpaper::categorize_aspect(1000, 1000), AspectCategory::Square);
-        assert_eq!(Wallpaper::categorize_aspect(1100, 1000), AspectCategory::Square); // 1.1 < 1.2
+        assert_eq!(
+            Wallpaper::categorize_aspect(1000, 1000),
+            AspectCategory::Square
+        );
+        assert_eq!(
+            Wallpaper::categorize_aspect(1100, 1000),
+            AspectCategory::Square
+        ); // 1.1 < 1.2
     }
 
     #[test]
     fn test_categorize_aspect_boundary_landscape_square() {
         // Exactly 1.2 ratio should be Landscape
-        assert_eq!(Wallpaper::categorize_aspect(1200, 1000), AspectCategory::Landscape);
+        assert_eq!(
+            Wallpaper::categorize_aspect(1200, 1000),
+            AspectCategory::Landscape
+        );
         // Just below 1.2 should be Square
-        assert_eq!(Wallpaper::categorize_aspect(1199, 1000), AspectCategory::Square);
+        assert_eq!(
+            Wallpaper::categorize_aspect(1199, 1000),
+            AspectCategory::Square
+        );
     }
 
     #[test]
     fn test_categorize_aspect_boundary_ultrawide() {
         // Exactly 2.0 ratio should be Ultrawide
-        assert_eq!(Wallpaper::categorize_aspect(2000, 1000), AspectCategory::Ultrawide);
+        assert_eq!(
+            Wallpaper::categorize_aspect(2000, 1000),
+            AspectCategory::Ultrawide
+        );
         // Just below 2.0 should be Landscape
-        assert_eq!(Wallpaper::categorize_aspect(1999, 1000), AspectCategory::Landscape);
+        assert_eq!(
+            Wallpaper::categorize_aspect(1999, 1000),
+            AspectCategory::Landscape
+        );
     }
 
     // --- matches_screen ---
@@ -1039,7 +1097,11 @@ mod tests {
         let mut wp = test_wallpaper(1920, 1080);
         wp.add_tag("");
         wp.add_tag("   ");
-        assert_eq!(wp.tags.len(), 0, "Empty/whitespace tags should not be added");
+        assert_eq!(
+            wp.tags.len(),
+            0,
+            "Empty/whitespace tags should not be added"
+        );
     }
 
     #[test]
@@ -1131,9 +1193,18 @@ mod tests {
     #[test]
     fn test_auto_tags_above_threshold() {
         let mut wp = test_wallpaper(1920, 1080);
-        wp.auto_tags.push(AutoTag { name: "nature".into(), confidence: 0.9 });
-        wp.auto_tags.push(AutoTag { name: "dark".into(), confidence: 0.3 });
-        wp.auto_tags.push(AutoTag { name: "forest".into(), confidence: 0.7 });
+        wp.auto_tags.push(AutoTag {
+            name: "nature".into(),
+            confidence: 0.9,
+        });
+        wp.auto_tags.push(AutoTag {
+            name: "dark".into(),
+            confidence: 0.3,
+        });
+        wp.auto_tags.push(AutoTag {
+            name: "forest".into(),
+            confidence: 0.7,
+        });
 
         let above = wp.auto_tags_above(0.5);
         assert_eq!(above.len(), 2);

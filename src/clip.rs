@@ -140,10 +140,10 @@ const LIBRARY_CATEGORY_MIXES: &[(&str, &[(&str, f32)])] = &[
     (
         "moody_fantasy",
         &[
-            ("dark", 0.35),
+            ("dark", 0.30),
             ("fantasy", 0.30),
             ("gothic", 0.20),
-            ("forest", 0.15),
+            ("forest", 0.10),
             ("mountain", 0.10),
         ],
     ),
@@ -481,7 +481,11 @@ impl ClipTagger {
             .iter()
             .map(|(name, _)| name.clone())
             .collect();
-        tags.extend(LIBRARY_CATEGORY_MIXES.iter().map(|(name, _)| name.to_string()));
+        tags.extend(
+            LIBRARY_CATEGORY_MIXES
+                .iter()
+                .map(|(name, _)| name.to_string()),
+        );
         tags.sort_unstable();
         tags.dedup();
         tags
@@ -580,7 +584,9 @@ fn get_cached_thumbnail(source_path: &Path) -> Option<PathBuf> {
 fn preprocess_image(path: &Path) -> Result<Array4<f32>> {
     // Try to use cached thumbnail first (800x600 vs 4K original = much faster)
     let img = if let Some(thumb_path) = get_cached_thumbnail(path) {
-        image::open(&thumb_path).unwrap_or_else(|_| image::open(path).unwrap())
+        image::open(&thumb_path)
+            .or_else(|_| image::open(path))
+            .context("Failed to open image")?
     } else {
         image::open(path).context("Failed to open image")?
     };

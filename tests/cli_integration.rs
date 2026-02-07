@@ -21,10 +21,7 @@ fn test_version_exits_zero() {
         .arg("--version")
         .output()
         .expect("failed to run");
-    assert!(
-        output.status.success(),
-        "frostwall --version should exit 0"
-    );
+    assert!(output.status.success(), "frostwall --version should exit 0");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("frostwall"),

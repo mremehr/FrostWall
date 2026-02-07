@@ -3,6 +3,7 @@ use std::fs;
 
 /// Frost theme colors - inspired by Nord/Catppuccin ice palette
 #[allow(dead_code)]
+#[derive(Clone)]
 pub struct FrostTheme {
     // Backgrounds
     pub bg_dark: Color,

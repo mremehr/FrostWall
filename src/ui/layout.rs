@@ -1,5 +1,5 @@
 use crate::app::App;
-use crate::ui::theme::{frost_theme, FrostTheme};
+use crate::ui::theme::FrostTheme;
 use crate::utils::ColorHarmony;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -14,7 +14,7 @@ const THUMBNAIL_WIDTH: u16 = 48;
 const THUMBNAIL_HEIGHT: u16 = 28;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
-    let theme = frost_theme();
+    let theme = app.ui.theme.clone();
     let area = f.area();
 
     // Check if a popup is showing (need to skip image rendering)
@@ -35,7 +35,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     f.render_widget(block, area);
 
     // Vertical layout: header, carousel, (optional error), (optional colors), footer
-    let has_error = app.ui.last_error.is_some();
+    let has_error = app.ui.status_message.is_some();
     let constraints = if app.ui.show_colors {
         if has_error {
             vec![
@@ -132,7 +132,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 }
 
 fn draw_error(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
-    if let Some(error) = &app.ui.last_error {
+    if let Some(error) = &app.ui.status_message {
         let error_line = Line::from(vec![
             Span::styled("⚠ ", Style::default().fg(theme.warning)),
             Span::styled(error, Style::default().fg(theme.warning)),
@@ -161,14 +161,16 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
         "No screens".to_string()
     };
 
-    let clamped = app.selection.wallpaper_idx.min(
-        app.selection.filtered_wallpapers.len().saturating_sub(1),
-    );
-    let count_info = format!(
-        "{}/{}",
-        clamped + 1,
-        app.selection.filtered_wallpapers.len()
-    );
+    let clamped = app
+        .selection
+        .wallpaper_idx
+        .min(app.selection.filtered_wallpapers.len().saturating_sub(1));
+    let total = app.selection.filtered_wallpapers.len();
+    let count_info = if total == 0 {
+        "0/0".to_string()
+    } else {
+        format!("{}/{}", clamped + 1, total)
+    };
 
     // Show current modes
     let match_mode = app.config.display.match_mode.display_name();
@@ -257,9 +259,10 @@ fn draw_carousel_single(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostT
         return;
     }
 
-    let wallpaper_idx = app.selection.wallpaper_idx.min(
-        app.selection.filtered_wallpapers.len().saturating_sub(1),
-    );
+    let wallpaper_idx = app
+        .selection
+        .wallpaper_idx
+        .min(app.selection.filtered_wallpapers.len().saturating_sub(1));
     let cache_idx = app.selection.filtered_wallpapers[wallpaper_idx];
 
     // Get wallpaper info
@@ -371,7 +374,8 @@ fn draw_pairing_panel(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostThe
 
     // Collect preview data: (screen_name, cache_idx, filename, harmony)
     let preview_data: Vec<(String, Option<usize>, String, ColorHarmony)> = app
-        .pairing.preview_matches
+        .pairing
+        .preview_matches
         .iter()
         .map(|(screen_name, matches)| {
             let idx = preview_idx.min(matches.len().saturating_sub(1));
@@ -515,7 +519,8 @@ fn draw_carousel(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme) {
     f.render_widget(left_arrow, left_area);
 
     // Right arrow
-    let can_go_right = app.selection.wallpaper_idx < app.selection.filtered_wallpapers.len().saturating_sub(1);
+    let can_go_right =
+        app.selection.wallpaper_idx < app.selection.filtered_wallpapers.len().saturating_sub(1);
     let right_arrow = Paragraph::new(if can_go_right { "❯" } else { " " })
         .style(Style::default().fg(if can_go_right {
             theme.accent_primary
@@ -706,7 +711,10 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
                     .fg(theme.accent_primary)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(&app.ui.command_buffer, Style::default().fg(theme.fg_primary)),
+            Span::styled(
+                &app.ui.command_buffer,
+                Style::default().fg(theme.fg_primary),
+            ),
             Span::styled("█", Style::default().fg(theme.accent_primary)), // Cursor
         ]);
         let paragraph = Paragraph::new(cmd_line);
@@ -1155,7 +1163,8 @@ fn draw_help_popup(f: &mut Frame, area: Rect, theme: &FrostTheme) {
 fn draw_undo_popup(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
     let remaining_secs = app.pairing.history.undo_remaining_secs().unwrap_or(0);
     let message = app
-        .pairing.history
+        .pairing
+        .history
         .undo_message()
         .unwrap_or("Undo available");
 

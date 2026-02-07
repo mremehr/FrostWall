@@ -2,6 +2,45 @@
 
 All notable changes to FrostWall will be documented in this file.
 
+## [0.5.0] - 2026-02-07
+
+### Added
+- **CLIP AI auto-tagging** - Semantic image tagging using CLIP ViT-B/32
+  - 67 semantic categories (57 base + 10 library mixes)
+  - Categories span nature, urban, abstract, style/era, mood, anime, fantasy/sci-fi, and composition
+  - CUDA GPU acceleration via `--features clip-cuda`
+  - SHA256 model verification after download
+- **Visual pairing preview** - 50/50 split-view with real thumbnails for multi-monitor pairing
+  - `p` key toggles pairing mode
+  - `y` key cycles style mode (Off / Soft / Strict)
+  - `1`-`0` keys jump to alternative index
+- **Incremental rescan** - `R` key / `:rescan` command reloads wallpaper directory
+  - Preserves all tags, auto-tags, CLIP embeddings, and pairing data
+  - Only re-extracts colors for modified files
+  - Reports added/removed/untagged counts
+- **Terminal resize handling** - Thumbnail cache resets cleanly on resize
+- **Dynamic thumbnail cache** - LRU cache scales with grid columns × 4
+- **Cache versioning** - Automatic invalidation when cache format changes
+- **Pairing commands** - `:pair-reset` and `:pair-rebuild` in command mode
+- **Affinity auto-rebuild** - Pairing affinity scores rebuilt from history on startup
+- **App struct refactoring** - 28-field App split into sub-structs (ThumbnailState, UiState, FilterState, PairingState, SelectionState)
+- **109 unit tests** - Comprehensive coverage for utils, wallpaper, screen, pairing, timeprofile, clip_embeddings_bin
+- **5 integration tests** - CLI smoke tests (help, version, random, scan)
+- **Benchmark suite** - Criterion benchmarks for color operations
+
+### Changed
+- **Binary embeddings** - Replaced 13K lines of inlined Rust source with 114 KB binary format
+- **Pairing scoring overhaul** - Fixed double-counting bug, normalized base scores to 0-1 range
+- **Repetition penalty** - Increased from max 1.5 to max 8.0, lookback from 5 to 20
+- **Strict mode** - Style bonus ×4.0, mismatch penalty ×6.0, history weight reduced to 0.15
+- **Style tags expanded** - 29 style tags with canonical aliases for pairing
+- **Affinity cleanup** - `prune_old_records()` now removes orphaned affinity entries
+
+### Removed
+- `clip_embeddings.rs` - Replaced by compact `clip_embeddings_bin.rs` + `data/embeddings.bin`
+- `delta_e()` in utils.rs - Superseded by `delta_e_2000()`
+- `from_path_with_existing()` in wallpaper.rs - Unused
+
 ## [0.4.0] - 2026-01-28
 
 ### Added

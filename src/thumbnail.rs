@@ -130,6 +130,9 @@ impl ThumbnailCache {
 
     /// Calculate dimensions that fit within bounds while maintaining aspect ratio
     fn fit_dimensions(src_w: u32, src_h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
+        if src_w == 0 || src_h == 0 {
+            return (max_w.max(1), max_h.max(1));
+        }
         let ratio_w = max_w as f32 / src_w as f32;
         let ratio_h = max_h as f32 / src_h as f32;
         let ratio = ratio_w.min(ratio_h);

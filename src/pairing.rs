@@ -130,7 +130,6 @@ const STYLE_TAGS: &[&str] = &[
     "moody_fantasy",
     "oil_painting",
     "painting",
-    "painterly",
     "photography",
     "pixel_art",
     "retro",
@@ -201,13 +200,7 @@ fn is_content_tag(tag: &str) -> bool {
     }
     !matches!(
         tag,
-        "bright"
-            | "dark"
-            | "pastel"
-            | "vibrant"
-            | "minimal"
-            | "landscape_orientation"
-            | "portrait"
+        "bright" | "dark" | "pastel" | "vibrant" | "minimal" | "landscape_orientation" | "portrait"
     )
 }
 
@@ -506,9 +499,9 @@ impl PairingHistory {
                     .get(wp.path.as_path())
                     .copied()
                     .unwrap_or(0.0);
-                let mut score =
-                    (affinity * screen_context_weight + screen_ctx * screen_context_weight)
-                        * history_scale;
+                let mut score = (affinity * screen_context_weight
+                    + screen_ctx * screen_context_weight)
+                    * history_scale;
 
                 // Tag matching bonus (0-6 points, 2 points per shared tag, max 3)
                 let mut unique_tags = HashSet::new();
@@ -532,31 +525,36 @@ impl PairingHistory {
                         .count()
                 };
 
-                let (style_overlap, specific_style_overlap) =
-                    if context.style_mode == PairingStyleMode::Off || selected_style_tags.is_empty()
-                    {
-                        (0, 0)
-                    } else {
-                        let candidate_style_tags = collect_style_tags(candidate_tags.iter().copied());
-                        let style_overlap = candidate_style_tags
-                            .iter()
-                            .filter(|tag| selected_style_tags.contains(**tag))
-                            .count();
-                        let specific_style_overlap = candidate_style_tags
-                            .iter()
-                            .filter(|tag| selected_specific_style_tags.contains(**tag))
-                            .count();
-                        (style_overlap, specific_style_overlap)
-                    };
+                let (style_overlap, specific_style_overlap) = if context.style_mode
+                    == PairingStyleMode::Off
+                    || selected_style_tags.is_empty()
+                {
+                    (0, 0)
+                } else {
+                    let candidate_style_tags = collect_style_tags(candidate_tags.iter().copied());
+                    let style_overlap = candidate_style_tags
+                        .iter()
+                        .filter(|tag| selected_style_tags.contains(**tag))
+                        .count();
+                    let specific_style_overlap = candidate_style_tags
+                        .iter()
+                        .filter(|tag| selected_specific_style_tags.contains(**tag))
+                        .count();
+                    (style_overlap, specific_style_overlap)
+                };
 
                 // Semantic similarity from CLIP embeddings (0-1 normalized)
-                let semantic_similarity = if let (Some(selected_embedding), Some(candidate_embedding)) =
-                    (context.selected_embedding, wp.embedding.as_deref())
-                {
-                    Some(normalize_cosine_similarity(selected_embedding, candidate_embedding))
-                } else {
-                    None
-                };
+                let semantic_similarity =
+                    if let (Some(selected_embedding), Some(candidate_embedding)) =
+                        (context.selected_embedding, wp.embedding.as_deref())
+                    {
+                        Some(normalize_cosine_similarity(
+                            selected_embedding,
+                            candidate_embedding,
+                        ))
+                    } else {
+                        None
+                    };
 
                 // Strict mode can reject weak candidates early before running color/harmony scoring.
                 if context.style_mode == PairingStyleMode::Strict {
@@ -585,8 +583,7 @@ impl PairingHistory {
                             return None;
                         }
                         if selected_content_tags.len() >= 3
-                            && (content_overlap as f32 / selected_content_tags.len() as f32)
-                                < 0.34
+                            && (content_overlap as f32 / selected_content_tags.len() as f32) < 0.34
                         {
                             return None;
                         }
@@ -1083,7 +1080,11 @@ mod tests {
     fn test_normalize_cosine_similarity_identical() {
         let v = vec![1.0, 0.0, 0.0];
         let result = normalize_cosine_similarity(&v, &v);
-        assert!((result - 1.0).abs() < 0.001, "Identical vectors should have similarity ~1.0, got {}", result);
+        assert!(
+            (result - 1.0).abs() < 0.001,
+            "Identical vectors should have similarity ~1.0, got {}",
+            result
+        );
     }
 
     #[test]
@@ -1091,7 +1092,11 @@ mod tests {
         let a = vec![1.0, 0.0, 0.0];
         let b = vec![-1.0, 0.0, 0.0];
         let result = normalize_cosine_similarity(&a, &b);
-        assert!(result.abs() < 0.001, "Opposite vectors should have similarity ~0.0, got {}", result);
+        assert!(
+            result.abs() < 0.001,
+            "Opposite vectors should have similarity ~0.0, got {}",
+            result
+        );
     }
 
     #[test]
@@ -1099,7 +1104,11 @@ mod tests {
         let a = vec![1.0, 0.0, 0.0];
         let b = vec![0.0, 1.0, 0.0];
         let result = normalize_cosine_similarity(&a, &b);
-        assert!((result - 0.5).abs() < 0.001, "Orthogonal vectors should have similarity ~0.5, got {}", result);
+        assert!(
+            (result - 0.5).abs() < 0.001,
+            "Orthogonal vectors should have similarity ~0.5, got {}",
+            result
+        );
     }
 
     #[test]

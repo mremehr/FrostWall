@@ -513,7 +513,6 @@ pub enum AppEvent {
 const THUMBNAIL_CACHE_MULTIPLIER: usize = 4;
 
 /// UI-related transient state (popups, command mode, errors).
-#[derive(Default)]
 pub struct UiState {
     pub should_quit: bool,
     pub show_help: bool,
@@ -521,11 +520,27 @@ pub struct UiState {
     pub show_color_picker: bool,
     pub command_mode: bool,
     pub command_buffer: String,
-    pub last_error: Option<String>,
+    pub status_message: Option<String>,
     pub pywal_export: bool,
+    /// Cached theme (updated on theme-change detection, not every frame)
+    pub theme: crate::ui::theme::FrostTheme,
 }
 
-
+impl Default for UiState {
+    fn default() -> Self {
+        Self {
+            should_quit: false,
+            show_help: false,
+            show_colors: false,
+            show_color_picker: false,
+            command_mode: false,
+            command_buffer: String::new(),
+            status_message: None,
+            pywal_export: false,
+            theme: crate::ui::theme::frost_theme(),
+        }
+    }
+}
 
 /// Filter and sort state.
 pub struct FilterState {
@@ -556,8 +571,6 @@ pub struct SelectionState {
     pub filtered_wallpapers: Vec<usize>,
     pub screen_positions: HashMap<usize, usize>,
 }
-
-
 
 /// Multi-screen wallpaper pairing state.
 pub struct PairingState {
@@ -717,7 +730,8 @@ impl App {
 
     /// Return the currently selected wallpaper, if any.
     pub fn selected_wallpaper(&self) -> Option<&Wallpaper> {
-        self.selection.filtered_wallpapers
+        self.selection
+            .filtered_wallpapers
             .get(self.selection.wallpaper_idx)
             .and_then(|&i| self.cache.wallpapers.get(i))
     }
@@ -752,14 +766,19 @@ impl App {
     pub fn next_screen(&mut self) {
         if !self.screens.is_empty() {
             // Save current position
-            self.selection.screen_positions
+            self.selection
+                .screen_positions
                 .insert(self.selection.screen_idx, self.selection.wallpaper_idx);
 
             self.selection.screen_idx = (self.selection.screen_idx + 1) % self.screens.len();
             self.update_filtered_wallpapers();
 
             // Restore position for new screen (if saved)
-            if let Some(&pos) = self.selection.screen_positions.get(&self.selection.screen_idx) {
+            if let Some(&pos) = self
+                .selection
+                .screen_positions
+                .get(&self.selection.screen_idx)
+            {
                 if pos < self.selection.filtered_wallpapers.len() {
                     self.selection.wallpaper_idx = pos;
                 }
@@ -773,7 +792,8 @@ impl App {
     pub fn prev_screen(&mut self) {
         if !self.screens.is_empty() {
             // Save current position
-            self.selection.screen_positions
+            self.selection
+                .screen_positions
                 .insert(self.selection.screen_idx, self.selection.wallpaper_idx);
 
             self.selection.screen_idx = if self.selection.screen_idx == 0 {
@@ -784,7 +804,11 @@ impl App {
             self.update_filtered_wallpapers();
 
             // Restore position for new screen (if saved)
-            if let Some(&pos) = self.selection.screen_positions.get(&self.selection.screen_idx) {
+            if let Some(&pos) = self
+                .selection
+                .screen_positions
+                .get(&self.selection.screen_idx)
+            {
                 if pos < self.selection.filtered_wallpapers.len() {
                     self.selection.wallpaper_idx = pos;
                 }
@@ -802,7 +826,8 @@ impl App {
             let wp_colors = wp.colors.clone();
 
             // Update current wallpaper for this screen
-            self.pairing.current_wallpapers
+            self.pairing
+                .current_wallpapers
                 .insert(screen_name.clone(), wp_path.clone());
 
             swww::set_wallpaper_with_resize(
@@ -816,7 +841,7 @@ impl App {
             // Export pywal colors if enabled
             if self.ui.pywal_export {
                 if let Err(e) = crate::pywal::generate_from_wallpaper(&wp_colors, &wp_path) {
-                    self.ui.last_error = Some(format!("pywal: {}", e));
+                    self.ui.status_message = Some(format!("pywal: {}", e));
                 }
             }
         }
@@ -851,7 +876,8 @@ impl App {
         if !self.selection.filtered_wallpapers.is_empty() {
             use rand::Rng;
             let mut rng = rand::thread_rng();
-            self.selection.wallpaper_idx = rng.gen_range(0..self.selection.filtered_wallpapers.len());
+            self.selection.wallpaper_idx =
+                rng.gen_range(0..self.selection.filtered_wallpapers.len());
 
             // Apply immediately
             self.apply_wallpaper()?;
@@ -924,7 +950,8 @@ impl App {
         if self.thumbnails.cache.contains_key(&cache_idx) {
             // Move to end of LRU order (most recently used)
             if let Some(pos) = self
-                .thumbnails.cache_order
+                .thumbnails
+                .cache_order
                 .iter()
                 .position(|&i| i == cache_idx)
             {
@@ -1041,7 +1068,7 @@ impl App {
 
         if all_tags.is_empty() {
             self.filters.active_tag = None;
-            self.ui.last_error = Some(
+            self.ui.status_message = Some(
                 "No tags defined. Use 'frostwall tag add <path> <tag>' to add tags.".to_string(),
             );
             return;
@@ -1064,7 +1091,7 @@ impl App {
         };
 
         // Clear any previous error
-        self.ui.last_error = None;
+        self.ui.status_message = None;
         self.update_filtered_wallpapers();
     }
 
@@ -1131,9 +1158,9 @@ impl App {
                     // List available tags
                     let tags = self.cache.all_tags();
                     if tags.is_empty() {
-                        self.ui.last_error = Some("No tags available".to_string());
+                        self.ui.status_message = Some("No tags available".to_string());
                     } else {
-                        self.ui.last_error = Some(format!("Tags: {}", tags.join(", ")));
+                        self.ui.status_message = Some(format!("Tags: {}", tags.join(", ")));
                     }
                 } else {
                     // Filter by tag
@@ -1147,7 +1174,7 @@ impl App {
                         self.filters.active_tag = Some(matched.clone());
                         self.update_filtered_wallpapers();
                     } else {
-                        self.ui.last_error = Some(format!("Tag not found: {}", tag));
+                        self.ui.status_message = Some(format!("Tag not found: {}", tag));
                     }
                 }
             }
@@ -1184,7 +1211,7 @@ impl App {
                     self.update_filtered_wallpapers();
                 }
                 _ => {
-                    self.ui.last_error = Some("Sort modes: name, date, size".to_string());
+                    self.ui.status_message = Some("Sort modes: name, date, size".to_string());
                 }
             },
 
@@ -1198,16 +1225,14 @@ impl App {
             }
 
             // Rescan wallpaper directory
-            "rescan" | "scan" => {
-                match self.rescan() {
-                    Ok(msg) => {
-                        self.ui.last_error = Some(format!("Rescan: {}", msg));
-                    }
-                    Err(e) => {
-                        self.ui.last_error = Some(format!("Rescan: {}", e));
-                    }
+            "rescan" | "scan" => match self.rescan() {
+                Ok(msg) => {
+                    self.ui.status_message = Some(format!("Rescan: {}", msg));
                 }
-            }
+                Err(e) => {
+                    self.ui.status_message = Some(format!("Rescan: {}", e));
+                }
+            },
 
             // Help
             "h" | "help" => {
@@ -1219,18 +1244,23 @@ impl App {
                 if let Ok(n) = args.parse::<usize>() {
                     if n > 0 && n <= self.screens.len() {
                         // Save current position
-                        self.selection.screen_positions
+                        self.selection
+                            .screen_positions
                             .insert(self.selection.screen_idx, self.selection.wallpaper_idx);
                         self.selection.screen_idx = n - 1;
                         self.update_filtered_wallpapers();
                         // Restore position for new screen
-                        if let Some(&pos) = self.selection.screen_positions.get(&self.selection.screen_idx) {
+                        if let Some(&pos) = self
+                            .selection
+                            .screen_positions
+                            .get(&self.selection.screen_idx)
+                        {
                             if pos < self.selection.filtered_wallpapers.len() {
                                 self.selection.wallpaper_idx = pos;
                             }
                         }
                     } else {
-                        self.ui.last_error = Some(format!("Screen {} not found", n));
+                        self.ui.status_message = Some(format!("Screen {} not found", n));
                     }
                 }
             }
@@ -1248,7 +1278,7 @@ impl App {
             "pair-reset" | "pair-rebuild" => {
                 let records = self.pairing.history.record_count();
                 self.pairing.history.rebuild_affinity();
-                self.ui.last_error = Some(format!(
+                self.ui.status_message = Some(format!(
                     "Rebuilt affinity from {} records ({} pairs)",
                     records,
                     self.pairing.history.affinity_count()
@@ -1256,7 +1286,7 @@ impl App {
             }
 
             _ => {
-                self.ui.last_error = Some(format!("Unknown command: {}", command));
+                self.ui.status_message = Some(format!("Unknown command: {}", command));
             }
         }
     }
@@ -1275,7 +1305,12 @@ impl App {
         let similar = crate::utils::find_similar_wallpapers(colors, &wallpaper_colors, 1);
         if let Some((_, idx)) = similar.first() {
             // Find this index in filtered wallpapers
-            if let Some(pos) = self.selection.filtered_wallpapers.iter().position(|&i| i == *idx) {
+            if let Some(pos) = self
+                .selection
+                .filtered_wallpapers
+                .iter()
+                .position(|&i| i == *idx)
+            {
                 self.selection.wallpaper_idx = pos;
             }
         }
@@ -1309,7 +1344,8 @@ impl App {
     /// Navigate color picker
     pub fn color_picker_next(&mut self) {
         if !self.filters.available_colors.is_empty() {
-            self.filters.color_picker_idx = (self.filters.color_picker_idx + 1) % self.filters.available_colors.len();
+            self.filters.color_picker_idx =
+                (self.filters.color_picker_idx + 1) % self.filters.available_colors.len();
         }
     }
 
@@ -1325,7 +1361,11 @@ impl App {
 
     /// Apply selected color filter
     pub fn apply_color_filter(&mut self) {
-        if let Some(color) = self.filters.available_colors.get(self.filters.color_picker_idx) {
+        if let Some(color) = self
+            .filters
+            .available_colors
+            .get(self.filters.color_picker_idx)
+        {
             self.filters.active_color = Some(color.clone());
             self.ui.show_color_picker = false;
             self.update_filtered_wallpapers();
@@ -1408,7 +1448,8 @@ impl App {
                 selected_style_tags: &selected_style_tags,
             };
             if let Some(suggested_path) = self
-                .pairing.history
+                .pairing
+                .history
                 .get_best_match(&match_context, &matching)
             {
                 if !self.pairing.suggestions.contains(&suggested_path) {
@@ -1508,9 +1549,10 @@ impl App {
                 style_mode: self.pairing.style_mode,
                 selected_style_tags: &selected_style_tags,
             };
-            let top_matches = self
-                .pairing.history
-                .get_top_matches(&match_context, &matching, preview_limit);
+            let top_matches =
+                self.pairing
+                    .history
+                    .get_top_matches(&match_context, &matching, preview_limit);
 
             // Calculate harmony for each match
             let matches_with_harmony: Vec<(PathBuf, f32, ColorHarmony)> = top_matches
@@ -1539,7 +1581,8 @@ impl App {
                 .collect();
 
             if !matches_with_harmony.is_empty() {
-                self.pairing.preview_matches
+                self.pairing
+                    .preview_matches
                     .insert(screen.name.clone(), matches_with_harmony);
             }
         }
@@ -1548,7 +1591,8 @@ impl App {
     /// Cycle through pairing preview alternatives
     pub fn pairing_preview_next(&mut self) {
         let max_alternatives = self
-            .pairing.preview_matches
+            .pairing
+            .preview_matches
             .values()
             .map(|v| v.len())
             .max()
@@ -1561,7 +1605,8 @@ impl App {
 
     pub fn pairing_preview_prev(&mut self) {
         let max_alternatives = self
-            .pairing.preview_matches
+            .pairing
+            .preview_matches
             .values()
             .map(|v| v.len())
             .max()
@@ -1588,7 +1633,8 @@ impl App {
         // Then apply the preview selections to other screens
         for (screen_name, matches) in &self.pairing.preview_matches {
             let idx = self
-                .pairing.preview_idx
+                .pairing
+                .preview_idx
                 .min(matches.len().saturating_sub(1));
             if let Some((wp_path, _, _)) = matches.get(idx) {
                 if let Err(e) = swww::set_wallpaper_with_resize(
@@ -1598,9 +1644,10 @@ impl App {
                     self.config.display.resize_mode,
                     &self.config.display.fill_color,
                 ) {
-                    self.ui.last_error = Some(format!("Pairing {}: {}", screen_name, e));
+                    self.ui.status_message = Some(format!("Pairing {}: {}", screen_name, e));
                 } else {
-                    self.pairing.current_wallpapers
+                    self.pairing
+                        .current_wallpapers
                         .insert(screen_name.clone(), wp_path.clone());
                 }
             }
@@ -1608,7 +1655,8 @@ impl App {
 
         // Record the pairing
         if self.pairing.current_wallpapers.len() > 1 {
-            self.pairing.history
+            self.pairing
+                .history
                 .record_pairing(self.pairing.current_wallpapers.clone(), true);
         }
 
@@ -1618,7 +1666,8 @@ impl App {
 
     /// Get the number of alternatives available in pairing preview
     pub fn pairing_preview_alternatives(&self) -> usize {
-        self.pairing.preview_matches
+        self.pairing
+            .preview_matches
             .values()
             .map(|v| v.len())
             .max()
@@ -1748,6 +1797,7 @@ fn run_app<B: ratatui::backend::Backend>(
             let new_is_light = crate::ui::theme::is_light_theme();
             if new_is_light != current_theme_is_light {
                 current_theme_is_light = new_is_light;
+                app.ui.theme = crate::ui::theme::frost_theme();
                 terminal.clear()?; // Force full terminal redraw
                 needs_redraw = true;
             }
@@ -1830,7 +1880,7 @@ fn run_app<B: ratatui::backend::Backend>(
                             }
                             KeyCode::Enter => {
                                 if let Err(e) = app.apply_pairing_preview() {
-                                    app.ui.last_error = Some(format!("{}", e));
+                                    app.ui.status_message = Some(format!("{}", e));
                                 }
                             }
                             KeyCode::Char('y') => {
@@ -1895,13 +1945,13 @@ fn run_app<B: ratatui::backend::Backend>(
                     // Apply wallpaper (configurable)
                     else if kb.matches(code, &kb.apply) {
                         if let Err(e) = app.apply_wallpaper() {
-                            app.ui.last_error = Some(format!("{}", e));
+                            app.ui.status_message = Some(format!("{}", e));
                         }
                     }
                     // Random wallpaper (configurable)
                     else if kb.matches(code, &kb.random) {
                         if let Err(e) = app.random_wallpaper() {
-                            app.ui.last_error = Some(format!("{}", e));
+                            app.ui.status_message = Some(format!("{}", e));
                         }
                     }
                     // Toggle match mode (configurable)
@@ -1925,24 +1975,24 @@ fn run_app<B: ratatui::backend::Backend>(
                             KeyCode::Char('T') => app.clear_tag_filter(),
                             KeyCode::Char('w') => {
                                 if let Err(e) = app.export_pywal() {
-                                    app.ui.last_error = Some(format!("pywal: {}", e));
+                                    app.ui.status_message = Some(format!("pywal: {}", e));
                                 }
                             }
                             KeyCode::Char('W') => app.toggle_pywal_export(),
                             KeyCode::Char('u') => {
                                 // Undo pairing
                                 if let Err(e) = app.do_undo() {
-                                    app.ui.last_error = Some(format!("Undo: {}", e));
+                                    app.ui.status_message = Some(format!("Undo: {}", e));
                                 }
                             }
                             KeyCode::Char('R') => {
                                 // Rescan wallpaper directory
                                 match app.rescan() {
                                     Ok(msg) => {
-                                        app.ui.last_error = Some(format!("Rescan: {}", msg));
+                                        app.ui.status_message = Some(format!("Rescan: {}", msg));
                                     }
                                     Err(e) => {
-                                        app.ui.last_error = Some(format!("Rescan: {}", e));
+                                        app.ui.status_message = Some(format!("Rescan: {}", e));
                                     }
                                 }
                             }

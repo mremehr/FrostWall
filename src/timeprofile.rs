@@ -279,7 +279,11 @@ mod tests {
             ..Default::default()
         };
         let score = profiles.score_wallpaper(&["#FF0000".into()], &["nature".into()]);
-        assert!((score - 1.0).abs() < 0.001, "Disabled profiles should return 1.0, got {}", score);
+        assert!(
+            (score - 1.0).abs() < 0.001,
+            "Disabled profiles should return 1.0, got {}",
+            score
+        );
     }
 
     #[test]
@@ -296,7 +300,11 @@ mod tests {
             &["nature".into()],  // Matching tag
             &settings,
         );
-        assert!(score > 0.8, "In-range brightness + matching tag should score high, got {}", score);
+        assert!(
+            score > 0.8,
+            "In-range brightness + matching tag should score high, got {}",
+            score
+        );
     }
 
     #[test]
@@ -305,6 +313,10 @@ mod tests {
         let settings = TimeProfileSettings::default();
         let score = profiles.score_wallpaper_with_settings(&[], &[], &settings);
         // Empty colors → 0.5 * brightness_weight, empty tags → 0.5 * tag_weight
-        assert!((score - 0.5).abs() < 0.01, "Empty inputs should score ~0.5, got {}", score);
+        assert!(
+            (score - 0.5).abs() < 0.01,
+            "Empty inputs should score ~0.5, got {}",
+            score
+        );
     }
 }
