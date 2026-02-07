@@ -26,6 +26,7 @@ pub enum AspectCategory {
 }
 
 impl Screen {
+    /// Create a new screen and classify its aspect ratio.
     pub fn new(name: String, width: u32, height: u32) -> Self {
         let (orientation, aspect_category) = Self::analyze_aspect(width, height);
         Self {
@@ -243,5 +244,130 @@ mod tests {
         // Super ultrawide 32:9
         let screen = Screen::new("test".into(), 5120, 1440);
         assert_eq!(screen.aspect_category, AspectCategory::Ultrawide);
+    }
+
+    #[test]
+    fn test_aspect_category_boundaries() {
+        // 1.2 ratio = Landscape boundary
+        let screen = Screen::new("test".into(), 1200, 1000);
+        assert_eq!(screen.aspect_category, AspectCategory::Landscape);
+
+        // Just below 1.2 = Square
+        let screen = Screen::new("test".into(), 1199, 1000);
+        assert_eq!(screen.aspect_category, AspectCategory::Square);
+
+        // 2.0 ratio = Ultrawide boundary
+        let screen = Screen::new("test".into(), 2000, 1000);
+        assert_eq!(screen.aspect_category, AspectCategory::Ultrawide);
+
+        // Just below 2.0 = Landscape
+        let screen = Screen::new("test".into(), 1999, 1000);
+        assert_eq!(screen.aspect_category, AspectCategory::Landscape);
+
+        // Perfect square
+        let screen = Screen::new("test".into(), 1024, 1024);
+        assert_eq!(screen.aspect_category, AspectCategory::Square);
+    }
+
+    #[test]
+    fn test_aspect_16_10() {
+        // 16:10 = 1.6 ratio = Landscape
+        let screen = Screen::new("test".into(), 1920, 1200);
+        assert_eq!(screen.aspect_category, AspectCategory::Landscape);
+    }
+
+    #[test]
+    fn test_orientation() {
+        let landscape = Screen::new("test".into(), 1920, 1080);
+        assert_eq!(landscape.orientation, Orientation::Landscape);
+
+        let portrait = Screen::new("test".into(), 1080, 1920);
+        assert_eq!(portrait.orientation, Orientation::Portrait);
+
+        // Square counts as Landscape orientation (ratio >= 1.0)
+        let square = Screen::new("test".into(), 1000, 1000);
+        assert_eq!(square.orientation, Orientation::Landscape);
+    }
+
+    // --- apply_transform ---
+
+    #[test]
+    fn test_apply_transform_normal() {
+        assert_eq!(apply_transform(1920, 1080, Some("normal")), (1920, 1080));
+        assert_eq!(apply_transform(1920, 1080, None), (1920, 1080));
+    }
+
+    #[test]
+    fn test_apply_transform_90() {
+        assert_eq!(apply_transform(1920, 1080, Some("90")), (1080, 1920));
+    }
+
+    #[test]
+    fn test_apply_transform_270() {
+        assert_eq!(apply_transform(1920, 1080, Some("270")), (1080, 1920));
+    }
+
+    #[test]
+    fn test_apply_transform_180() {
+        // 180 degrees does NOT swap dimensions
+        assert_eq!(apply_transform(1920, 1080, Some("180")), (1920, 1080));
+    }
+
+    #[test]
+    fn test_apply_transform_flipped() {
+        assert_eq!(apply_transform(1920, 1080, Some("flipped-90")), (1080, 1920));
+        assert_eq!(apply_transform(1920, 1080, Some("flipped-270")), (1080, 1920));
+    }
+
+    // --- parse_niri_output ---
+
+    #[test]
+    fn test_parse_niri_output_single_screen() {
+        let output = r#"Output "Samsung Electric Company" (DP-1)
+  Current mode: 1920x1080 @ 144.000 Hz
+  Logical size: 1920x1080
+"#;
+        let screens = parse_niri_output(output).unwrap();
+        assert_eq!(screens.len(), 1);
+        assert_eq!(screens[0].name, "DP-1");
+        assert_eq!(screens[0].width, 1920);
+        assert_eq!(screens[0].height, 1080);
+    }
+
+    #[test]
+    fn test_parse_niri_output_multi_screen() {
+        let output = r#"Output "Samsung" (DP-1)
+  Current mode: 1920x1080 @ 144.000 Hz
+  Logical size: 1920x1080
+
+Output "LG Display" (DP-2)
+  Current mode: 2560x1440 @ 60.000 Hz
+  Logical size: 2560x1440
+"#;
+        let screens = parse_niri_output(output).unwrap();
+        assert_eq!(screens.len(), 2);
+        assert_eq!(screens[0].name, "DP-1");
+        assert_eq!(screens[1].name, "DP-2");
+        assert_eq!(screens[1].width, 2560);
+    }
+
+    // --- parse_wlr_randr_output ---
+
+    #[test]
+    fn test_parse_wlr_randr_output_with_transform() {
+        let output = r#"DP-1 "Samsung Electric Company" (connected)
+  1920x1080 px, 144.000000 Hz (current)
+  Transform: normal
+DP-2 "LG Display" (connected)
+  2560x1440 px, 60.000000 Hz (current)
+  Transform: 90
+"#;
+        let screens = parse_wlr_randr_output(output).unwrap();
+        assert_eq!(screens.len(), 2);
+        assert_eq!(screens[0].width, 1920);
+        assert_eq!(screens[0].height, 1080);
+        // DP-2 is rotated 90 degrees, dimensions should be swapped
+        assert_eq!(screens[1].width, 1440);
+        assert_eq!(screens[1].height, 2560);
     }
 }

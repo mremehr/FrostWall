@@ -20,10 +20,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // Check if a popup is showing (need to skip image rendering)
     // ratatui-image renders directly to terminal, bypassing widget z-order
     // Note: show_pairing_preview renders thumbnails separately, so don't block carousel
-    let popup_active = app.show_help
-        || app.show_color_picker
-        || app.pairing_history.can_undo()
-        || app.command_mode;
+    let popup_active = app.ui.show_help
+        || app.ui.show_color_picker
+        || app.pairing.history.can_undo()
+        || app.ui.command_mode;
 
     // Main container with frost border
     let block = Block::default()
@@ -35,8 +35,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     f.render_widget(block, area);
 
     // Vertical layout: header, carousel, (optional error), (optional colors), footer
-    let has_error = app.last_error.is_some();
-    let constraints = if app.show_colors {
+    let has_error = app.ui.last_error.is_some();
+    let constraints = if app.ui.show_colors {
         if has_error {
             vec![
                 Constraint::Length(2), // Header
@@ -87,9 +87,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // (ratatui-image renders directly to terminal, bypassing widget z-order)
     if popup_active {
         draw_carousel_placeholder(f, chunks[chunk_idx], &theme);
-    } else if app.show_pairing_preview && !app.pairing_preview_matches.is_empty() {
+    } else if app.pairing.show_preview && !app.pairing.preview_matches.is_empty() {
         // Split layout: adaptive width based on number of target preview screens.
-        let preview_targets = app.pairing_preview_matches.len();
+        let preview_targets = app.pairing.preview_matches.len();
         let right_percent = match preview_targets {
             0 | 1 => 45,
             2 => 50,
@@ -111,7 +111,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
     chunk_idx += 1;
 
-    if app.show_colors {
+    if app.ui.show_colors {
         draw_color_palette(f, app, chunks[chunk_idx], &theme);
         chunk_idx += 1;
     }
@@ -119,20 +119,20 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_footer(f, app, chunks[chunk_idx], &theme);
 
     // Draw popups on top
-    if app.show_color_picker {
+    if app.ui.show_color_picker {
         draw_color_picker(f, app, area, &theme);
-    } else if app.show_help {
+    } else if app.ui.show_help {
         draw_help_popup(f, area, &theme);
     }
 
     // Draw undo popup (always on top if active)
-    if app.pairing_history.can_undo() {
+    if app.pairing.history.can_undo() {
         draw_undo_popup(f, app, area, &theme);
     }
 }
 
 fn draw_error(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
-    if let Some(error) = &app.last_error {
+    if let Some(error) = &app.ui.last_error {
         let error_line = Line::from(vec![
             Span::styled("⚠ ", Style::default().fg(theme.warning)),
             Span::styled(error, Style::default().fg(theme.warning)),
@@ -163,14 +163,14 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
 
     let count_info = format!(
         "{}/{}",
-        app.selected_wallpaper_idx + 1,
-        app.filtered_wallpapers.len()
+        app.selection.wallpaper_idx + 1,
+        app.selection.filtered_wallpapers.len()
     );
 
     // Show current modes
     let match_mode = app.config.display.match_mode.display_name();
     let resize_mode = app.config.display.resize_mode.display_name();
-    let sort_mode = app.sort_mode.display_name();
+    let sort_mode = app.filters.sort_mode.display_name();
 
     let mut header_spans = vec![Span::styled(
         " FrostWall ",
@@ -202,7 +202,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
     ]);
 
     // Tag filter indicator
-    if let Some(tag) = &app.active_tag_filter {
+    if let Some(tag) = &app.filters.active_tag {
         header_spans.push(Span::styled(" ", Style::default()));
         header_spans.push(Span::styled(
             format!("[#{}]", tag),
@@ -211,7 +211,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
     }
 
     // Color filter indicator
-    if let Some(color) = &app.active_color_filter {
+    if let Some(color) = &app.filters.active_color {
         header_spans.push(Span::styled(" ", Style::default()));
         if let Some(c) = parse_hex_color(color) {
             header_spans.push(Span::styled("█", Style::default().fg(c)));
@@ -223,16 +223,16 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
     }
 
     // Pywal indicator
-    if app.pywal_export {
+    if app.ui.pywal_export {
         header_spans.push(Span::styled(" ", Style::default()));
         header_spans.push(Span::styled("[wal]", Style::default().fg(theme.success)));
     }
 
     // Pairing suggestions indicator
-    if !app.pairing_suggestions.is_empty() {
+    if !app.pairing.suggestions.is_empty() {
         header_spans.push(Span::styled(" ", Style::default()));
         header_spans.push(Span::styled(
-            format!("[⚡{}]", app.pairing_suggestions.len()),
+            format!("[⚡{}]", app.pairing.suggestions.len()),
             Style::default().fg(theme.success),
         ));
     }
@@ -245,7 +245,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
 
 /// Draw single selected wallpaper (for pairing split view)
 fn draw_carousel_single(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme) {
-    if app.filtered_wallpapers.is_empty() {
+    if app.selection.filtered_wallpapers.is_empty() {
         let empty = Paragraph::new("No matching wallpapers")
             .style(Style::default().fg(theme.fg_muted))
             .alignment(Alignment::Center);
@@ -254,7 +254,7 @@ fn draw_carousel_single(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostT
         return;
     }
 
-    let cache_idx = app.filtered_wallpapers[app.selected_wallpaper_idx];
+    let cache_idx = app.selection.filtered_wallpapers[app.selection.wallpaper_idx];
 
     // Get wallpaper info
     let filename = app
@@ -332,14 +332,14 @@ fn draw_carousel_single(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostT
 /// Draw pairing preview panel (right side in split view)
 fn draw_pairing_panel(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme) {
     let alternatives = app.pairing_preview_alternatives();
-    let preview_idx = app.pairing_preview_idx;
+    let preview_idx = app.pairing.preview_idx;
 
     // Panel border
     let title = format!(
         " Pair {}/{} · Style {} ",
         preview_idx + 1,
         alternatives,
-        app.pairing_style_mode.display_name()
+        app.pairing.style_mode.display_name()
     );
     let block = Block::default()
         .title(title)
@@ -355,7 +355,7 @@ fn draw_pairing_panel(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostThe
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if app.pairing_preview_matches.is_empty() {
+    if app.pairing.preview_matches.is_empty() {
         let text = Paragraph::new("No suggestions")
             .style(Style::default().fg(theme.fg_muted))
             .alignment(Alignment::Center);
@@ -365,7 +365,7 @@ fn draw_pairing_panel(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostThe
 
     // Collect preview data: (screen_name, cache_idx, filename, harmony)
     let preview_data: Vec<(String, Option<usize>, String, ColorHarmony)> = app
-        .pairing_preview_matches
+        .pairing.preview_matches
         .iter()
         .map(|(screen_name, matches)| {
             let idx = preview_idx.min(matches.len().saturating_sub(1));
@@ -495,7 +495,7 @@ fn draw_carousel(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme) {
         .split(area);
 
     // Left arrow
-    let can_go_left = app.selected_wallpaper_idx > 0;
+    let can_go_left = app.selection.wallpaper_idx > 0;
     let left_arrow = Paragraph::new(if can_go_left { "❮" } else { " " })
         .style(Style::default().fg(if can_go_left {
             theme.accent_primary
@@ -509,7 +509,7 @@ fn draw_carousel(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme) {
     f.render_widget(left_arrow, left_area);
 
     // Right arrow
-    let can_go_right = app.selected_wallpaper_idx < app.filtered_wallpapers.len().saturating_sub(1);
+    let can_go_right = app.selection.wallpaper_idx < app.selection.filtered_wallpapers.len().saturating_sub(1);
     let right_arrow = Paragraph::new(if can_go_right { "❯" } else { " " })
         .style(Style::default().fg(if can_go_right {
             theme.accent_primary
@@ -526,7 +526,7 @@ fn draw_carousel(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme) {
 }
 
 fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme) {
-    if app.filtered_wallpapers.is_empty() {
+    if app.selection.filtered_wallpapers.is_empty() {
         let empty = Paragraph::new("No matching wallpapers")
             .style(Style::default().fg(theme.fg_muted))
             .alignment(Alignment::Center);
@@ -536,17 +536,17 @@ fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme)
     }
 
     // Calculate visible range centered on selection
-    let total = app.filtered_wallpapers.len();
+    let total = app.selection.filtered_wallpapers.len();
     let grid_columns = app.config.thumbnails.grid_columns;
     let visible = grid_columns.min(total);
     let half = visible / 2;
 
-    let start = if app.selected_wallpaper_idx <= half {
+    let start = if app.selection.wallpaper_idx <= half {
         0
-    } else if app.selected_wallpaper_idx >= total.saturating_sub(half + 1) {
+    } else if app.selection.wallpaper_idx >= total.saturating_sub(half + 1) {
         total.saturating_sub(visible)
     } else {
-        app.selected_wallpaper_idx - half
+        app.selection.wallpaper_idx - half
     };
 
     let end = (start + visible).min(total);
@@ -566,13 +566,13 @@ fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme)
 
     // Request thumbnails for visible + preload range (non-blocking)
     for idx in preload_start..preload_end {
-        let cache_idx = app.filtered_wallpapers[idx];
+        let cache_idx = app.selection.filtered_wallpapers[idx];
         app.request_thumbnail(cache_idx);
     }
 
     for (i, idx) in (start..end).enumerate() {
-        let cache_idx = app.filtered_wallpapers[idx];
-        let is_selected = idx == app.selected_wallpaper_idx;
+        let cache_idx = app.selection.filtered_wallpapers[idx];
+        let is_selected = idx == app.selection.wallpaper_idx;
 
         // Get wallpaper info before mutable borrow
         let (filename, is_suggestion) = app
@@ -689,7 +689,7 @@ fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme)
 
 fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
     // Command mode - show command input line
-    if app.command_mode {
+    if app.ui.command_mode {
         let cmd_line = Line::from(vec![
             Span::styled(
                 ":",
@@ -697,7 +697,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
                     .fg(theme.accent_primary)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(&app.command_buffer, Style::default().fg(theme.fg_primary)),
+            Span::styled(&app.ui.command_buffer, Style::default().fg(theme.fg_primary)),
             Span::styled("█", Style::default().fg(theme.accent_primary)), // Cursor
         ]);
         let paragraph = Paragraph::new(cmd_line);
@@ -706,7 +706,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
     }
 
     // Pairing preview mode - show pairing-specific help
-    if app.show_pairing_preview {
+    if app.pairing.show_preview {
         let sep = Span::styled(" │ ", Style::default().fg(theme.fg_muted));
 
         let help = Line::from(vec![
@@ -854,7 +854,7 @@ fn parse_hex_color(hex: &str) -> Option<ratatui::style::Color> {
 }
 
 fn draw_color_picker(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
-    let colors = &app.available_colors;
+    let colors = &app.filters.available_colors;
     if colors.is_empty() {
         return;
     }
@@ -873,7 +873,7 @@ fn draw_color_picker(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
     f.render_widget(clear, popup_area);
 
     // Popup border
-    let title = if let Some(ref color) = app.active_color_filter {
+    let title = if let Some(ref color) = app.filters.active_color {
         format!(" Color Filter [{}] ", color)
     } else {
         " Color Filter ".to_string()
@@ -915,7 +915,7 @@ fn draw_color_picker(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
         let color = parse_hex_color(color_hex).unwrap_or(theme.fg_muted);
 
         // Highlight selected
-        let is_selected = i == app.color_picker_idx;
+        let is_selected = i == app.filters.color_picker_idx;
         let style = if is_selected {
             Style::default()
                 .bg(color)
@@ -1123,9 +1123,9 @@ fn draw_help_popup(f: &mut Frame, area: Rect, theme: &FrostTheme) {
 
 /// Draw undo popup at bottom of screen
 fn draw_undo_popup(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
-    let remaining_secs = app.pairing_history.undo_remaining_secs().unwrap_or(0);
+    let remaining_secs = app.pairing.history.undo_remaining_secs().unwrap_or(0);
     let message = app
-        .pairing_history
+        .pairing.history
         .undo_message()
         .unwrap_or("Undo available");
 

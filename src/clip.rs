@@ -17,12 +17,14 @@ use ndarray::Array4;
 #[cfg(feature = "clip")]
 use ort::session::Session;
 #[cfg(feature = "clip")]
+use sha2::{Digest, Sha256};
+#[cfg(feature = "clip")]
 use std::io::Write;
 #[cfg(feature = "clip")]
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "clip")]
-use crate::clip_embeddings::{CATEGORY_EMBEDDINGS, EMBEDDING_DIM};
+use crate::clip_embeddings_bin::{category_embeddings, EMBEDDING_DIM};
 
 /// CLIP image input size (ViT-B/32)
 #[cfg(feature = "clip")]
@@ -40,6 +42,11 @@ pub struct AutoTag {
 #[cfg(feature = "clip")]
 const VISUAL_MODEL_URL: &str =
     "https://huggingface.co/Qdrant/clip-ViT-B-32-vision/resolve/main/model.onnx";
+
+/// SHA256 checksum for the visual model (Qdrant/clip-ViT-B-32-vision)
+#[cfg(feature = "clip")]
+const VISUAL_MODEL_SHA256: &str =
+    "c68d3d9a200ddd2a8c8a5510b576d4c94d1ae383bf8b36dd8c084f94e1fb4d63";
 
 /// Extra categories tuned for this wallpaper library.
 /// These are blended from base CLIP categories to avoid regenerating embeddings.
@@ -165,12 +172,34 @@ impl ModelManager {
 
         let visual_path = self.visual_model_path();
 
-        if !visual_path.exists() {
+        if visual_path.exists() {
+            if !Self::verify_checksum(&visual_path, VISUAL_MODEL_SHA256)? {
+                eprintln!("WARNING: Model checksum mismatch — re-downloading...");
+                std::fs::remove_file(&visual_path)?;
+                self.download_model(VISUAL_MODEL_URL, &visual_path, "visual encoder")
+                    .await?;
+                if !Self::verify_checksum(&visual_path, VISUAL_MODEL_SHA256)? {
+                    anyhow::bail!("Downloaded model failed checksum verification");
+                }
+            }
+        } else {
             self.download_model(VISUAL_MODEL_URL, &visual_path, "visual encoder")
                 .await?;
+            if !Self::verify_checksum(&visual_path, VISUAL_MODEL_SHA256)? {
+                std::fs::remove_file(&visual_path)?;
+                anyhow::bail!("Downloaded model failed checksum verification");
+            }
         }
 
         Ok(visual_path)
+    }
+
+    fn verify_checksum(path: &Path, expected_hex: &str) -> Result<bool> {
+        let mut file = std::fs::File::open(path)?;
+        let mut hasher = Sha256::new();
+        std::io::copy(&mut file, &mut hasher)?;
+        let hash = format!("{:x}", hasher.finalize());
+        Ok(hash == expected_hex)
     }
 
     async fn download_model(&self, url: &str, dest: &Path, name: &str) -> Result<()> {
@@ -215,7 +244,7 @@ impl ModelManager {
 #[cfg(feature = "clip")]
 pub struct ClipTagger {
     visual_session: Session,
-    category_embeddings: Vec<(&'static str, Vec<f32>)>,
+    category_embeddings: Vec<(String, Vec<f32>)>,
 }
 
 #[cfg(feature = "clip")]
@@ -414,7 +443,7 @@ impl ClipTagger {
 
             if confidence >= threshold {
                 tags.push(AutoTag {
-                    name: (*name).to_string(),
+                    name: name.clone(),
                     confidence,
                 });
             }
@@ -445,10 +474,12 @@ impl ClipTagger {
     }
 
     /// Get list of available tag categories
-    pub fn available_tags() -> Vec<&'static str> {
-        let mut tags: Vec<&'static str> =
-            CATEGORY_EMBEDDINGS.iter().map(|(name, _)| *name).collect();
-        tags.extend(LIBRARY_CATEGORY_MIXES.iter().map(|(name, _)| *name));
+    pub fn available_tags() -> Vec<String> {
+        let mut tags: Vec<String> = category_embeddings()
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
+        tags.extend(LIBRARY_CATEGORY_MIXES.iter().map(|(name, _)| name.to_string()));
         tags.sort_unstable();
         tags.dedup();
         tags
@@ -457,9 +488,9 @@ impl ClipTagger {
 
 #[cfg(feature = "clip")]
 fn find_base_embedding(name: &str) -> Option<&'static [f32; EMBEDDING_DIM]> {
-    CATEGORY_EMBEDDINGS
+    category_embeddings()
         .iter()
-        .find(|(base_name, _)| *base_name == name)
+        .find(|(base_name, _)| base_name == name)
         .map(|(_, embedding)| embedding)
 }
 
@@ -500,15 +531,15 @@ fn build_mixed_embedding(parts: &[(&str, f32)]) -> Option<Vec<f32>> {
 }
 
 #[cfg(feature = "clip")]
-fn build_category_embeddings() -> Vec<(&'static str, Vec<f32>)> {
-    let mut categories: Vec<(&'static str, Vec<f32>)> = CATEGORY_EMBEDDINGS
+fn build_category_embeddings() -> Vec<(String, Vec<f32>)> {
+    let mut categories: Vec<(String, Vec<f32>)> = category_embeddings()
         .iter()
-        .map(|(name, embedding)| (*name, embedding.to_vec()))
+        .map(|(name, embedding)| (name.clone(), embedding.to_vec()))
         .collect();
 
     for (name, parts) in LIBRARY_CATEGORY_MIXES {
         if let Some(embedding) = build_mixed_embedding(parts) {
-            categories.push((name, embedding));
+            categories.push((name.to_string(), embedding));
         }
     }
 

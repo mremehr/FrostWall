@@ -74,6 +74,7 @@ pub enum PairingStyleMode {
 }
 
 impl PairingStyleMode {
+    /// Cycle to the next pairing style mode.
     pub fn next(self) -> Self {
         match self {
             PairingStyleMode::Off => PairingStyleMode::Soft,
@@ -82,6 +83,7 @@ impl PairingStyleMode {
         }
     }
 
+    /// Return human-readable display name for this style mode.
     pub fn display_name(self) -> &'static str {
         match self {
             PairingStyleMode::Off => "Off",
@@ -127,7 +129,7 @@ const STYLE_TAGS: &[&str] = &[
     "vintage",
 ];
 
-fn canonical_style_tag(tag: &str) -> Option<&'static str> {
+pub(crate) fn canonical_style_tag(tag: &str) -> Option<&'static str> {
     let normalized = tag
         .trim()
         .to_lowercase()
@@ -150,6 +152,7 @@ fn canonical_style_tag(tag: &str) -> Option<&'static str> {
     }
 }
 
+/// Extract and canonicalize style tags from a list of tags.
 pub fn extract_style_tags(tags: &[String]) -> Vec<String> {
     let mut styles: Vec<String> = tags
         .iter()
@@ -865,4 +868,194 @@ fn normalize_cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 
     let cosine = dot / (norm_a.sqrt() * norm_b.sqrt());
     ((cosine + 1.0) / 2.0).clamp(0.0, 1.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- PairingStyleMode ---
+
+    #[test]
+    fn test_pairing_style_mode_cycle() {
+        assert_eq!(PairingStyleMode::Off.next(), PairingStyleMode::Soft);
+        assert_eq!(PairingStyleMode::Soft.next(), PairingStyleMode::Strict);
+        assert_eq!(PairingStyleMode::Strict.next(), PairingStyleMode::Off);
+    }
+
+    #[test]
+    fn test_pairing_style_mode_display_name() {
+        assert_eq!(PairingStyleMode::Off.display_name(), "Off");
+        assert_eq!(PairingStyleMode::Soft.display_name(), "Soft");
+        assert_eq!(PairingStyleMode::Strict.display_name(), "Strict");
+    }
+
+    #[test]
+    fn test_pairing_style_mode_default() {
+        assert_eq!(PairingStyleMode::default(), PairingStyleMode::Soft);
+    }
+
+    // --- canonical_style_tag ---
+
+    #[test]
+    fn test_canonical_style_tag_pixel_art_variants() {
+        assert_eq!(canonical_style_tag("8bit"), Some("pixel_art"));
+        assert_eq!(canonical_style_tag("8_bit"), Some("pixel_art"));
+        assert_eq!(canonical_style_tag("pixelart"), Some("pixel_art"));
+        assert_eq!(canonical_style_tag("pixel_art"), Some("pixel_art"));
+    }
+
+    #[test]
+    fn test_canonical_style_tag_digital_art_variants() {
+        assert_eq!(canonical_style_tag("digital_painting"), Some("digital_art"));
+        assert_eq!(canonical_style_tag("digitalpainting"), Some("digital_art"));
+        assert_eq!(canonical_style_tag("digital_art"), Some("digital_art"));
+        assert_eq!(canonical_style_tag("digitalart"), Some("digital_art"));
+    }
+
+    #[test]
+    fn test_canonical_style_tag_painting_variants() {
+        assert_eq!(canonical_style_tag("painted"), Some("painting"));
+        assert_eq!(canonical_style_tag("painting"), Some("painting"));
+        assert_eq!(canonical_style_tag("painterly"), Some("painting"));
+    }
+
+    #[test]
+    fn test_canonical_style_tag_illustration_variants() {
+        assert_eq!(canonical_style_tag("illustrated"), Some("illustration"));
+        assert_eq!(canonical_style_tag("illustration"), Some("illustration"));
+    }
+
+    #[test]
+    fn test_canonical_style_tag_direct_matches() {
+        assert_eq!(canonical_style_tag("anime"), Some("anime"));
+        assert_eq!(canonical_style_tag("retro"), Some("retro"));
+        assert_eq!(canonical_style_tag("vintage"), Some("vintage"));
+        assert_eq!(canonical_style_tag("abstract"), Some("abstract"));
+        assert_eq!(canonical_style_tag("geometric"), Some("geometric"));
+    }
+
+    #[test]
+    fn test_canonical_style_tag_not_style() {
+        assert_eq!(canonical_style_tag("nature"), None);
+        assert_eq!(canonical_style_tag("ocean"), None);
+        assert_eq!(canonical_style_tag("dark"), None);
+        assert_eq!(canonical_style_tag("bright"), None);
+    }
+
+    #[test]
+    fn test_canonical_style_tag_normalization() {
+        // Hyphens and spaces should be normalized to underscores
+        assert_eq!(canonical_style_tag("pixel-art"), Some("pixel_art"));
+        assert_eq!(canonical_style_tag("pixel art"), Some("pixel_art"));
+        // Trimming
+        assert_eq!(canonical_style_tag("  anime  "), Some("anime"));
+        // Case insensitivity
+        assert_eq!(canonical_style_tag("ANIME"), Some("anime"));
+        assert_eq!(canonical_style_tag("Retro"), Some("retro"));
+    }
+
+    // --- extract_style_tags ---
+
+    #[test]
+    fn test_extract_style_tags_filters() {
+        let tags: Vec<String> = vec![
+            "anime".into(),
+            "nature".into(),
+            "dark".into(),
+            "pixel_art".into(),
+        ];
+        let styles = extract_style_tags(&tags);
+        assert!(styles.contains(&"anime".to_string()));
+        assert!(styles.contains(&"pixel_art".to_string()));
+        assert!(!styles.contains(&"nature".to_string()));
+        assert!(!styles.contains(&"dark".to_string()));
+    }
+
+    #[test]
+    fn test_extract_style_tags_deduplicates() {
+        let tags: Vec<String> = vec!["8bit".into(), "pixel_art".into(), "pixelart".into()];
+        let styles = extract_style_tags(&tags);
+        assert_eq!(styles.len(), 1, "All variants should map to pixel_art");
+        assert_eq!(styles[0], "pixel_art");
+    }
+
+    #[test]
+    fn test_extract_style_tags_empty() {
+        let tags: Vec<String> = vec![];
+        let styles = extract_style_tags(&tags);
+        assert!(styles.is_empty());
+    }
+
+    // --- PairingHistory ---
+
+    #[test]
+    fn test_pairing_history_new_empty() {
+        let history = PairingHistory::new(100);
+        assert_eq!(history.record_count(), 0);
+        assert_eq!(history.affinity_count(), 0);
+        assert!(!history.can_undo());
+    }
+
+    // --- normalize_cosine_similarity ---
+
+    #[test]
+    fn test_normalize_cosine_similarity_identical() {
+        let v = vec![1.0, 0.0, 0.0];
+        let result = normalize_cosine_similarity(&v, &v);
+        assert!((result - 1.0).abs() < 0.001, "Identical vectors should have similarity ~1.0, got {}", result);
+    }
+
+    #[test]
+    fn test_normalize_cosine_similarity_opposite() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![-1.0, 0.0, 0.0];
+        let result = normalize_cosine_similarity(&a, &b);
+        assert!(result.abs() < 0.001, "Opposite vectors should have similarity ~0.0, got {}", result);
+    }
+
+    #[test]
+    fn test_normalize_cosine_similarity_orthogonal() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![0.0, 1.0, 0.0];
+        let result = normalize_cosine_similarity(&a, &b);
+        assert!((result - 0.5).abs() < 0.001, "Orthogonal vectors should have similarity ~0.5, got {}", result);
+    }
+
+    #[test]
+    fn test_normalize_cosine_similarity_empty() {
+        assert_eq!(normalize_cosine_similarity(&[], &[]), 0.0);
+    }
+
+    // --- is_content_tag ---
+
+    #[test]
+    fn test_is_content_tag() {
+        assert!(is_content_tag("nature"));
+        assert!(is_content_tag("ocean"));
+        assert!(is_content_tag("forest"));
+        assert!(!is_content_tag("bright")); // mood, not content
+        assert!(!is_content_tag("dark"));
+        assert!(!is_content_tag("anime")); // style tag
+        assert!(!is_content_tag("pixel_art")); // style tag
+    }
+
+    // --- compare_scored_match ---
+
+    #[test]
+    fn test_compare_scored_match_by_score() {
+        let a = (PathBuf::from("a.jpg"), 0.8);
+        let b = (PathBuf::from("b.jpg"), 0.9);
+        // Higher score should come first (b before a)
+        assert_eq!(compare_scored_match(&a, &b), std::cmp::Ordering::Greater);
+        assert_eq!(compare_scored_match(&b, &a), std::cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn test_compare_scored_match_tiebreak_by_path() {
+        let a = (PathBuf::from("a.jpg"), 0.8);
+        let b = (PathBuf::from("b.jpg"), 0.8);
+        // Equal scores should sort by path
+        assert_eq!(compare_scored_match(&a, &b), std::cmp::Ordering::Less);
+    }
 }

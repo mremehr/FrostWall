@@ -37,6 +37,7 @@ pub enum SortMode {
 }
 
 impl SortMode {
+    /// Return human-readable display name for this sort mode.
     pub fn display_name(&self) -> &'static str {
         match self {
             SortMode::Name => "Name",
@@ -45,6 +46,7 @@ impl SortMode {
         }
     }
 
+    /// Cycle to the next sort mode.
     pub fn next(&self) -> Self {
         match self {
             SortMode::Name => SortMode::Size,
@@ -55,6 +57,7 @@ impl SortMode {
 }
 
 impl MatchMode {
+    /// Return human-readable display name for this match mode.
     pub fn display_name(&self) -> &'static str {
         match self {
             MatchMode::Strict => "Strict",
@@ -63,6 +66,7 @@ impl MatchMode {
         }
     }
 
+    /// Cycle to the next match mode.
     pub fn next(&self) -> Self {
         match self {
             MatchMode::Strict => MatchMode::Flexible,
@@ -99,8 +103,14 @@ pub struct Wallpaper {
     pub modified_at: u64,
 }
 
+/// Current cache format version — bump when the serialized shape changes
+const CACHE_VERSION: u32 = 1;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WallpaperCache {
+    /// Cache format version for forward-compatible migration
+    #[serde(default)]
+    pub version: u32,
     pub wallpapers: Vec<Wallpaper>,
     pub source_dir: PathBuf,
     /// Track current index per screen for next/prev
@@ -229,47 +239,7 @@ impl Wallpaper {
         Ok(wp)
     }
 
-    /// Create from path, reusing existing colors if available
-    #[allow(dead_code)]
-    pub fn from_path_with_existing(
-        path: &Path,
-        existing_colors: Option<Vec<String>>,
-    ) -> Result<Self> {
-        let (width, height) =
-            image::image_dimensions(path).context("Failed to read image dimensions")?;
-        let aspect_category = Self::categorize_aspect(width, height);
-
-        let metadata = std::fs::metadata(path).ok();
-        let file_size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
-        let modified_at = metadata
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        let mut wp = Self {
-            path: path.to_path_buf(),
-            width,
-            height,
-            aspect_category,
-            colors: existing_colors.unwrap_or_default(),
-            color_weights: Vec::new(), // Will be populated on extract_colors()
-            tags: Vec::new(),
-            auto_tags: Vec::new(),
-            embedding: None,
-            file_size,
-            modified_at,
-        };
-
-        // Extract colors if not provided
-        if wp.colors.is_empty() {
-            wp.extract_colors()?;
-        }
-
-        Ok(wp)
-    }
-
-    fn categorize_aspect(width: u32, height: u32) -> AspectCategory {
+    pub(crate) fn categorize_aspect(width: u32, height: u32) -> AspectCategory {
         let ratio = width as f32 / height as f32;
         let normalized_ratio = if ratio >= 1.0 { ratio } else { 1.0 / ratio };
 
@@ -407,6 +377,7 @@ impl WallpaperCache {
             .join("wallpaper_cache.json")
     }
 
+    /// Load cached wallpapers or scan the directory if cache is invalid.
     pub fn load_or_scan(source_dir: &Path) -> Result<Self> {
         Self::load_or_scan_recursive(source_dir, false)
     }
@@ -423,6 +394,13 @@ impl WallpaperCache {
         if cache_path.exists() {
             let data = fs::read_to_string(&cache_path)?;
             if let Ok(cache) = serde_json::from_str::<WallpaperCache>(&data) {
+                if cache.version != CACHE_VERSION {
+                    eprintln!(
+                        "Cache format changed (v{} -> v{}), rescanning...",
+                        cache.version, CACHE_VERSION
+                    );
+                    return Self::scan_recursive(source_dir, recursive);
+                }
                 // Verify source dir matches and files still exist
                 if cache.source_dir == source_dir && cache.validate() {
                     return Ok(cache);
@@ -440,6 +418,13 @@ impl WallpaperCache {
         if cache_path.exists() {
             let data = fs::read_to_string(&cache_path)?;
             if let Ok(cache) = serde_json::from_str::<WallpaperCache>(&data) {
+                if cache.version != CACHE_VERSION {
+                    eprintln!(
+                        "Cache format changed (v{} -> v{}), rescanning...",
+                        cache.version, CACHE_VERSION
+                    );
+                    return Self::scan_metadata_only_recursive(source_dir, recursive);
+                }
                 // For AI tagging we only need metadata/path validity, not extracted color palettes.
                 if cache.source_dir == source_dir && cache.validate_for_ai() {
                     return Ok(cache);
@@ -529,6 +514,7 @@ impl WallpaperCache {
         wallpapers.sort_by(|a, b| a.path.cmp(&b.path));
 
         Ok(Self {
+            version: CACHE_VERSION,
             wallpapers,
             source_dir: source_dir.to_path_buf(),
             screen_indices: HashMap::new(),
@@ -580,6 +566,7 @@ impl WallpaperCache {
         wallpapers.sort_by(|a, b| a.path.cmp(&b.path));
 
         Ok(Self {
+            version: CACHE_VERSION,
             wallpapers,
             source_dir: source_dir.to_path_buf(),
             screen_indices: HashMap::new(),
@@ -801,5 +788,272 @@ impl WallpaperCache {
             .iter()
             .filter(|wp| wp.colors.iter().any(|c| c.to_lowercase() == color))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Create a minimal Wallpaper for testing without filesystem access
+    fn test_wallpaper(width: u32, height: u32) -> Wallpaper {
+        Wallpaper {
+            path: PathBuf::from("/test/fake.jpg"),
+            width,
+            height,
+            aspect_category: Wallpaper::categorize_aspect(width, height),
+            colors: vec![],
+            color_weights: vec![],
+            tags: vec![],
+            auto_tags: vec![],
+            embedding: None,
+            file_size: 0,
+            modified_at: 0,
+        }
+    }
+
+    // --- categorize_aspect ---
+
+    #[test]
+    fn test_categorize_aspect_ultrawide() {
+        assert_eq!(Wallpaper::categorize_aspect(3840, 1080), AspectCategory::Ultrawide); // 3.56
+        assert_eq!(Wallpaper::categorize_aspect(5120, 1440), AspectCategory::Ultrawide); // 3.56
+        assert_eq!(Wallpaper::categorize_aspect(2560, 1080), AspectCategory::Ultrawide); // 2.37
+    }
+
+    #[test]
+    fn test_categorize_aspect_landscape() {
+        assert_eq!(Wallpaper::categorize_aspect(1920, 1080), AspectCategory::Landscape); // 1.78
+        assert_eq!(Wallpaper::categorize_aspect(1920, 1200), AspectCategory::Landscape); // 1.6
+        assert_eq!(Wallpaper::categorize_aspect(2560, 1440), AspectCategory::Landscape); // 1.78
+    }
+
+    #[test]
+    fn test_categorize_aspect_portrait() {
+        assert_eq!(Wallpaper::categorize_aspect(1080, 1920), AspectCategory::Portrait);
+        assert_eq!(Wallpaper::categorize_aspect(1440, 2560), AspectCategory::Portrait);
+    }
+
+    #[test]
+    fn test_categorize_aspect_square() {
+        assert_eq!(Wallpaper::categorize_aspect(1000, 1000), AspectCategory::Square);
+        assert_eq!(Wallpaper::categorize_aspect(1100, 1000), AspectCategory::Square); // 1.1 < 1.2
+    }
+
+    #[test]
+    fn test_categorize_aspect_boundary_landscape_square() {
+        // Exactly 1.2 ratio should be Landscape
+        assert_eq!(Wallpaper::categorize_aspect(1200, 1000), AspectCategory::Landscape);
+        // Just below 1.2 should be Square
+        assert_eq!(Wallpaper::categorize_aspect(1199, 1000), AspectCategory::Square);
+    }
+
+    #[test]
+    fn test_categorize_aspect_boundary_ultrawide() {
+        // Exactly 2.0 ratio should be Ultrawide
+        assert_eq!(Wallpaper::categorize_aspect(2000, 1000), AspectCategory::Ultrawide);
+        // Just below 2.0 should be Landscape
+        assert_eq!(Wallpaper::categorize_aspect(1999, 1000), AspectCategory::Landscape);
+    }
+
+    // --- matches_screen ---
+
+    #[test]
+    fn test_matches_screen_exact() {
+        let wp = test_wallpaper(1920, 1080); // Landscape
+        let screen = Screen::new("DP-1".into(), 1920, 1080);
+        assert!(wp.matches_screen(&screen));
+    }
+
+    #[test]
+    fn test_matches_screen_different_category() {
+        let wp = test_wallpaper(1920, 1080); // Landscape
+        let screen = Screen::new("DP-1".into(), 1080, 1920); // Portrait
+        assert!(!wp.matches_screen(&screen));
+    }
+
+    // --- matches_screen_flexible ---
+
+    #[test]
+    fn test_matches_screen_flexible_landscape_on_ultrawide() {
+        let wp = test_wallpaper(1920, 1080); // Landscape
+        let screen = Screen::new("DP-1".into(), 5120, 1440); // Ultrawide
+        assert!(wp.matches_screen_flexible(&screen));
+    }
+
+    #[test]
+    fn test_matches_screen_flexible_ultrawide_on_landscape() {
+        let wp = test_wallpaper(5120, 1440); // Ultrawide
+        let screen = Screen::new("DP-1".into(), 1920, 1080); // Landscape
+        assert!(wp.matches_screen_flexible(&screen));
+    }
+
+    #[test]
+    fn test_matches_screen_flexible_square_versatile() {
+        let wp = test_wallpaper(1000, 1000); // Square
+        let landscape = Screen::new("DP-1".into(), 1920, 1080);
+        let portrait = Screen::new("DP-2".into(), 1080, 1920);
+        let ultrawide = Screen::new("DP-3".into(), 5120, 1440);
+        assert!(wp.matches_screen_flexible(&landscape));
+        assert!(wp.matches_screen_flexible(&portrait));
+        assert!(wp.matches_screen_flexible(&ultrawide));
+    }
+
+    #[test]
+    fn test_matches_screen_flexible_portrait_not_landscape() {
+        let wp = test_wallpaper(1080, 1920); // Portrait
+        let screen = Screen::new("DP-1".into(), 1920, 1080); // Landscape
+        assert!(!wp.matches_screen_flexible(&screen));
+    }
+
+    // --- matches_screen_with_mode ---
+
+    #[test]
+    fn test_matches_screen_with_mode_all() {
+        let wp = test_wallpaper(1080, 1920); // Portrait
+        let screen = Screen::new("DP-1".into(), 1920, 1080); // Landscape
+        assert!(wp.matches_screen_with_mode(&screen, MatchMode::All));
+    }
+
+    // --- add_tag / remove_tag / has_tag ---
+
+    #[test]
+    fn test_add_tag() {
+        let mut wp = test_wallpaper(1920, 1080);
+        wp.add_tag("nature");
+        assert!(wp.has_tag("nature"));
+        assert_eq!(wp.tags.len(), 1);
+    }
+
+    #[test]
+    fn test_add_tag_duplicate() {
+        let mut wp = test_wallpaper(1920, 1080);
+        wp.add_tag("nature");
+        wp.add_tag("nature");
+        assert_eq!(wp.tags.len(), 1, "Duplicate tag should not be added");
+    }
+
+    #[test]
+    fn test_add_tag_case_insensitive() {
+        let mut wp = test_wallpaper(1920, 1080);
+        wp.add_tag("Nature");
+        assert!(wp.has_tag("nature"));
+        assert!(wp.has_tag("NATURE"));
+    }
+
+    #[test]
+    fn test_add_tag_empty() {
+        let mut wp = test_wallpaper(1920, 1080);
+        wp.add_tag("");
+        wp.add_tag("   ");
+        assert_eq!(wp.tags.len(), 0, "Empty/whitespace tags should not be added");
+    }
+
+    #[test]
+    fn test_remove_tag() {
+        let mut wp = test_wallpaper(1920, 1080);
+        wp.add_tag("nature");
+        wp.add_tag("forest");
+        wp.remove_tag("nature");
+        assert!(!wp.has_tag("nature"));
+        assert!(wp.has_tag("forest"));
+    }
+
+    #[test]
+    fn test_has_tag_includes_auto_tags() {
+        let mut wp = test_wallpaper(1920, 1080);
+        wp.auto_tags.push(AutoTag {
+            name: "sunset".into(),
+            confidence: 0.9,
+        });
+        assert!(wp.has_tag("sunset"));
+        assert!(wp.has_tag("SUNSET"));
+    }
+
+    // --- has_any_tag / has_all_tags ---
+
+    #[test]
+    fn test_has_any_tag() {
+        let mut wp = test_wallpaper(1920, 1080);
+        wp.add_tag("nature");
+        wp.add_tag("landscape");
+        assert!(wp.has_any_tag(&["nature".into(), "ocean".into()]));
+        assert!(!wp.has_any_tag(&["space".into(), "cyberpunk".into()]));
+    }
+
+    #[test]
+    fn test_has_all_tags() {
+        let mut wp = test_wallpaper(1920, 1080);
+        wp.add_tag("nature");
+        wp.add_tag("landscape");
+        assert!(wp.has_all_tags(&["nature".into(), "landscape".into()]));
+        assert!(!wp.has_all_tags(&["nature".into(), "ocean".into()]));
+    }
+
+    // --- all_tags ---
+
+    #[test]
+    fn test_all_tags_combines_manual_and_auto() {
+        let mut wp = test_wallpaper(1920, 1080);
+        wp.add_tag("nature");
+        wp.auto_tags.push(AutoTag {
+            name: "forest".into(),
+            confidence: 0.8,
+        });
+        let all = wp.all_tags();
+        assert!(all.contains(&"nature".into()));
+        assert!(all.contains(&"forest".into()));
+    }
+
+    #[test]
+    fn test_all_tags_deduplicates() {
+        let mut wp = test_wallpaper(1920, 1080);
+        wp.add_tag("nature");
+        wp.auto_tags.push(AutoTag {
+            name: "nature".into(),
+            confidence: 0.8,
+        });
+        let all = wp.all_tags();
+        assert_eq!(all.iter().filter(|t| *t == "nature").count(), 1);
+    }
+
+    // --- SortMode / MatchMode cycling ---
+
+    #[test]
+    fn test_sort_mode_cycle() {
+        assert_eq!(SortMode::Name.next(), SortMode::Size);
+        assert_eq!(SortMode::Size.next(), SortMode::Date);
+        assert_eq!(SortMode::Date.next(), SortMode::Name);
+    }
+
+    #[test]
+    fn test_match_mode_cycle() {
+        assert_eq!(MatchMode::Strict.next(), MatchMode::Flexible);
+        assert_eq!(MatchMode::Flexible.next(), MatchMode::All);
+        assert_eq!(MatchMode::All.next(), MatchMode::Strict);
+    }
+
+    // --- auto_tags_above ---
+
+    #[test]
+    fn test_auto_tags_above_threshold() {
+        let mut wp = test_wallpaper(1920, 1080);
+        wp.auto_tags.push(AutoTag { name: "nature".into(), confidence: 0.9 });
+        wp.auto_tags.push(AutoTag { name: "dark".into(), confidence: 0.3 });
+        wp.auto_tags.push(AutoTag { name: "forest".into(), confidence: 0.7 });
+
+        let above = wp.auto_tags_above(0.5);
+        assert_eq!(above.len(), 2);
+        assert!(above.iter().all(|t| t.confidence >= 0.5));
+    }
+
+    // --- primary_color ---
+
+    #[test]
+    fn test_primary_color() {
+        let mut wp = test_wallpaper(1920, 1080);
+        assert!(wp.primary_color().is_none());
+        wp.colors = vec!["#FF0000".into(), "#00FF00".into()];
+        assert_eq!(wp.primary_color(), Some("#FF0000"));
     }
 }

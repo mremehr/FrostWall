@@ -244,4 +244,67 @@ mod tests {
         assert_eq!(TimePeriod::from_hour(22), TimePeriod::Night);
         assert_eq!(TimePeriod::from_hour(3), TimePeriod::Night);
     }
+
+    #[test]
+    fn test_time_period_boundaries() {
+        // Exact boundary: 5→Night, 6→Morning
+        assert_eq!(TimePeriod::from_hour(5), TimePeriod::Night);
+        assert_eq!(TimePeriod::from_hour(6), TimePeriod::Morning);
+        // 11→Morning, 12→Afternoon
+        assert_eq!(TimePeriod::from_hour(11), TimePeriod::Morning);
+        assert_eq!(TimePeriod::from_hour(12), TimePeriod::Afternoon);
+        // 17→Afternoon, 18→Evening
+        assert_eq!(TimePeriod::from_hour(17), TimePeriod::Afternoon);
+        assert_eq!(TimePeriod::from_hour(18), TimePeriod::Evening);
+        // 21→Evening, 22→Night
+        assert_eq!(TimePeriod::from_hour(21), TimePeriod::Evening);
+        assert_eq!(TimePeriod::from_hour(22), TimePeriod::Night);
+        // Midnight and end of day
+        assert_eq!(TimePeriod::from_hour(0), TimePeriod::Night);
+        assert_eq!(TimePeriod::from_hour(23), TimePeriod::Night);
+    }
+
+    #[test]
+    fn test_time_period_names() {
+        assert_eq!(TimePeriod::Morning.name(), "morning");
+        assert_eq!(TimePeriod::Afternoon.name(), "afternoon");
+        assert_eq!(TimePeriod::Evening.name(), "evening");
+        assert_eq!(TimePeriod::Night.name(), "night");
+    }
+
+    #[test]
+    fn test_time_profiles_disabled_returns_one() {
+        let profiles = TimeProfiles {
+            enabled: false,
+            ..Default::default()
+        };
+        let score = profiles.score_wallpaper(&["#FF0000".into()], &["nature".into()]);
+        assert!((score - 1.0).abs() < 0.001, "Disabled profiles should return 1.0, got {}", score);
+    }
+
+    #[test]
+    fn test_score_wallpaper_with_settings_brightness_in_range() {
+        let profiles = TimeProfiles::default();
+        let settings = TimeProfileSettings {
+            brightness_range: (0.0, 1.0), // Accept all brightness
+            preferred_tags: vec!["nature".into()],
+            brightness_weight: 0.5,
+            tag_weight: 0.5,
+        };
+        let score = profiles.score_wallpaper_with_settings(
+            &["#808080".into()], // Mid brightness
+            &["nature".into()],  // Matching tag
+            &settings,
+        );
+        assert!(score > 0.8, "In-range brightness + matching tag should score high, got {}", score);
+    }
+
+    #[test]
+    fn test_score_wallpaper_with_settings_empty_colors() {
+        let profiles = TimeProfiles::default();
+        let settings = TimeProfileSettings::default();
+        let score = profiles.score_wallpaper_with_settings(&[], &[], &settings);
+        // Empty colors → 0.5 * brightness_weight, empty tags → 0.5 * tag_weight
+        assert!((score - 0.5).abs() < 0.01, "Empty inputs should score ~0.5, got {}", score);
+    }
 }

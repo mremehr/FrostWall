@@ -369,6 +369,7 @@ impl KeybindingsConfig {
 }
 
 impl Config {
+    /// Return the path to the configuration file.
     pub fn config_path() -> PathBuf {
         directories::ProjectDirs::from("com", "mrmattias", "frostwall")
             .map(|dirs| dirs.config_dir().to_path_buf())
@@ -376,13 +377,26 @@ impl Config {
             .join("config.toml")
     }
 
+    /// Load config from file, creating default if missing or corrupt.
     pub fn load() -> Result<Self> {
         let path = Self::config_path();
 
         if path.exists() {
             let data = fs::read_to_string(&path)?;
-            let config: Config = toml::from_str(&data)?;
-            Ok(config)
+            match toml::from_str::<Config>(&data) {
+                Ok(config) => Ok(config),
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to parse config at {}: {}",
+                        path.display(),
+                        e
+                    );
+                    eprintln!("Using default configuration.");
+                    let config = Config::default();
+                    config.save()?;
+                    Ok(config)
+                }
+            }
         } else {
             // Create default config
             let config = Config::default();
@@ -391,6 +405,7 @@ impl Config {
         }
     }
 
+    /// Save config to file.
     pub fn save(&self) -> Result<()> {
         let path = Self::config_path();
 
@@ -432,6 +447,7 @@ impl Config {
         ))
     }
 
+    /// Build a Transition struct from config settings.
     pub fn transition(&self) -> Transition {
         let transition_type = match self.transition.transition_type.as_str() {
             "fade" => TransitionType::Fade,
@@ -494,65 +510,106 @@ pub enum AppEvent {
 /// Kitty graphics protocol can get confused with too many images
 const MAX_THUMBNAIL_CACHE: usize = 20;
 
+/// UI-related transient state (popups, command mode, errors).
+pub struct UiState {
+    pub should_quit: bool,
+    pub show_help: bool,
+    pub show_colors: bool,
+    pub show_color_picker: bool,
+    pub command_mode: bool,
+    pub command_buffer: String,
+    pub last_error: Option<String>,
+    pub pywal_export: bool,
+}
+
+impl Default for UiState {
+    fn default() -> Self {
+        Self {
+            should_quit: false,
+            show_help: false,
+            show_colors: false,
+            show_color_picker: false,
+            command_mode: false,
+            command_buffer: String::new(),
+            last_error: None,
+            pywal_export: false,
+        }
+    }
+}
+
+/// Filter and sort state.
+pub struct FilterState {
+    pub sort_mode: SortMode,
+    pub active_tag: Option<String>,
+    pub active_color: Option<String>,
+    pub available_colors: Vec<String>,
+    pub color_picker_idx: usize,
+}
+
+impl Default for FilterState {
+    fn default() -> Self {
+        Self {
+            sort_mode: SortMode::Name,
+            active_tag: None,
+            active_color: None,
+            available_colors: Vec::new(),
+            color_picker_idx: 0,
+        }
+    }
+}
+
+/// Selection navigation state.
+pub struct SelectionState {
+    pub screen_idx: usize,
+    pub wallpaper_idx: usize,
+    pub filtered_wallpapers: Vec<usize>,
+    pub screen_positions: HashMap<usize, usize>,
+}
+
+impl Default for SelectionState {
+    fn default() -> Self {
+        Self {
+            screen_idx: 0,
+            wallpaper_idx: 0,
+            filtered_wallpapers: Vec::new(),
+            screen_positions: HashMap::new(),
+        }
+    }
+}
+
+/// Multi-screen wallpaper pairing state.
+pub struct PairingState {
+    pub history: PairingHistory,
+    pub suggestions: Vec<PathBuf>,
+    pub current_wallpapers: HashMap<String, PathBuf>,
+    pub show_preview: bool,
+    pub preview_matches: HashMap<String, Vec<(PathBuf, f32, ColorHarmony)>>,
+    pub preview_idx: usize,
+    pub style_mode: PairingStyleMode,
+}
+
+/// Thumbnail rendering state.
+pub struct ThumbnailState {
+    pub image_picker: Option<Picker>,
+    pub cache: HashMap<usize, Box<dyn StatefulProtocol>>,
+    cache_order: Vec<usize>,
+    pub loading: std::collections::HashSet<usize>,
+    request_tx: Option<Sender<ThumbnailRequest>>,
+}
+
 pub struct App {
     pub screens: Vec<Screen>,
     pub cache: WallpaperCache,
     pub config: Config,
-    pub selected_screen_idx: usize,
-    pub selected_wallpaper_idx: usize,
-    pub filtered_wallpapers: Vec<usize>,
-    pub should_quit: bool,
-    pub image_picker: Option<Picker>,
-    pub thumbnail_cache: HashMap<usize, Box<dyn StatefulProtocol>>,
-    /// Order of cache entries for LRU eviction
-    thumbnail_cache_order: Vec<usize>,
-    /// Tracks which thumbnails are currently being loaded
-    pub loading_thumbnails: std::collections::HashSet<usize>,
-    /// Channel to request thumbnail loading
-    thumb_request_tx: Option<Sender<ThumbnailRequest>>,
-    /// Show help popup
-    pub show_help: bool,
-    /// Current sort mode
-    pub sort_mode: SortMode,
-    /// Active tag filter (None = show all)
-    pub active_tag_filter: Option<String>,
-    /// Show color palette of selected wallpaper
-    pub show_colors: bool,
-    /// Show color picker popup
-    pub show_color_picker: bool,
-    /// Available colors for filtering (extracted from all wallpapers)
-    pub available_colors: Vec<String>,
-    /// Selected color index in picker
-    pub color_picker_idx: usize,
-    /// Active color filter
-    pub active_color_filter: Option<String>,
-    /// Export pywal colors on apply
-    pub pywal_export: bool,
-    /// Last error message (for UI display)
-    pub last_error: Option<String>,
-    /// Pairing history for intelligent suggestions
-    pub pairing_history: PairingHistory,
-    /// Suggested wallpapers based on pairing history (for TUI highlighting)
-    pub pairing_suggestions: Vec<PathBuf>,
-    /// Current wallpaper per screen (for tracking pairings)
-    pub current_wallpapers: HashMap<String, PathBuf>,
-    /// Remember selected wallpaper index per screen
-    screen_positions: HashMap<usize, usize>,
-    /// Command mode (vim-style :)
-    pub command_mode: bool,
-    /// Command input buffer
-    pub command_buffer: String,
-    /// Show pairing preview popup
-    pub show_pairing_preview: bool,
-    /// Pairing preview suggestions per screen (screen_name -> [(path, score, harmony)])
-    pub pairing_preview_matches: HashMap<String, Vec<(PathBuf, f32, ColorHarmony)>>,
-    /// Selected index in pairing preview (which alternative)
-    pub pairing_preview_idx: usize,
-    /// Style matching mode used in pairing preview.
-    pub pairing_style_mode: PairingStyleMode,
+    pub ui: UiState,
+    pub selection: SelectionState,
+    pub filters: FilterState,
+    pub thumbnails: ThumbnailState,
+    pub pairing: PairingState,
 }
 
 impl App {
+    /// Create a new App instance with the given wallpaper directory.
     pub fn new(wallpaper_dir: PathBuf) -> Result<Self> {
         let config = Config::load()?;
         let cache =
@@ -578,51 +635,43 @@ impl App {
             screens: Vec::new(),
             cache,
             config,
-            selected_screen_idx: 0,
-            selected_wallpaper_idx: 0,
-            filtered_wallpapers: Vec::new(),
-            should_quit: false,
-            image_picker,
-            thumbnail_cache: HashMap::new(),
-            thumbnail_cache_order: Vec::new(),
-            loading_thumbnails: std::collections::HashSet::new(),
-            thumb_request_tx: None,
-            show_help: false,
-            sort_mode: SortMode::Name,
-            active_tag_filter: None,
-            show_colors: false,
-            show_color_picker: false,
-            available_colors: Vec::new(),
-            color_picker_idx: 0,
-            active_color_filter: None,
-            pywal_export: false,
-            last_error: None,
-            pairing_history,
-            pairing_suggestions: Vec::new(),
-            current_wallpapers: HashMap::new(),
-            screen_positions: HashMap::new(),
-            command_mode: false,
-            command_buffer: String::new(),
-            show_pairing_preview: false,
-            pairing_preview_matches: HashMap::new(),
-            pairing_preview_idx: 0,
-            pairing_style_mode: PairingStyleMode::default(),
+            ui: UiState::default(),
+            selection: SelectionState::default(),
+            filters: FilterState::default(),
+            thumbnails: ThumbnailState {
+                image_picker,
+                cache: HashMap::new(),
+                cache_order: Vec::new(),
+                loading: std::collections::HashSet::new(),
+                request_tx: None,
+            },
+            pairing: PairingState {
+                history: pairing_history,
+                suggestions: Vec::new(),
+                current_wallpapers: HashMap::new(),
+                show_preview: false,
+                preview_matches: HashMap::new(),
+                preview_idx: 0,
+                style_mode: PairingStyleMode::default(),
+            },
         })
     }
 
+    /// Detect connected screens and refresh the wallpaper filter.
     pub async fn init_screens(&mut self) -> Result<()> {
         self.screens = screen::detect_screens().await?;
         self.update_filtered_wallpapers();
         Ok(())
     }
 
+    /// Recompute the filtered wallpaper list based on screen, tag, and color filters.
     pub fn update_filtered_wallpapers(&mut self) {
         let match_mode = self.config.display.match_mode;
-        let tag_filter = self.active_tag_filter.as_deref();
-        let color_filter = self.active_color_filter.as_deref();
+        let tag_filter = self.filters.active_tag.as_deref();
+        let color_filter = self.filters.active_color.as_deref();
 
-        if let Some(screen) = self.screens.get(self.selected_screen_idx) {
-            self.filtered_wallpapers = self
+        if let Some(screen) = self.screens.get(self.selection.screen_idx) {
+            self.selection.filtered_wallpapers = self
                 .cache
                 .wallpapers
                 .iter()
@@ -654,20 +703,20 @@ impl App {
                 .map(|(i, _)| i)
                 .collect();
         } else {
-            self.filtered_wallpapers = (0..self.cache.wallpapers.len()).collect();
+            self.selection.filtered_wallpapers = (0..self.cache.wallpapers.len()).collect();
         }
 
         // Apply current sort
         self.apply_sort();
 
-        if self.selected_wallpaper_idx >= self.filtered_wallpapers.len() {
-            self.selected_wallpaper_idx = 0;
+        if self.selection.wallpaper_idx >= self.selection.filtered_wallpapers.len() {
+            self.selection.wallpaper_idx = 0;
         }
 
         // Clear thumbnail cache when filter changes
-        self.thumbnail_cache.clear();
-        self.thumbnail_cache_order.clear();
-        self.loading_thumbnails.clear();
+        self.thumbnails.cache.clear();
+        self.thumbnails.cache_order.clear();
+        self.thumbnails.loading.clear();
     }
 
     /// Toggle match mode and refresh filter
@@ -681,48 +730,53 @@ impl App {
         self.config.display.resize_mode = self.config.display.resize_mode.next();
     }
 
+    /// Return the currently selected wallpaper, if any.
     pub fn selected_wallpaper(&self) -> Option<&Wallpaper> {
-        self.filtered_wallpapers
-            .get(self.selected_wallpaper_idx)
+        self.selection.filtered_wallpapers
+            .get(self.selection.wallpaper_idx)
             .and_then(|&i| self.cache.wallpapers.get(i))
     }
 
+    /// Return the currently selected screen, if any.
     pub fn selected_screen(&self) -> Option<&Screen> {
-        self.screens.get(self.selected_screen_idx)
+        self.screens.get(self.selection.screen_idx)
     }
 
+    /// Select the next wallpaper in the filtered list.
     pub fn next_wallpaper(&mut self) {
-        if !self.filtered_wallpapers.is_empty() {
-            self.selected_wallpaper_idx =
-                (self.selected_wallpaper_idx + 1) % self.filtered_wallpapers.len();
+        if !self.selection.filtered_wallpapers.is_empty() {
+            self.selection.wallpaper_idx =
+                (self.selection.wallpaper_idx + 1) % self.selection.filtered_wallpapers.len();
             self.update_pairing_suggestions();
         }
     }
 
+    /// Select the previous wallpaper in the filtered list.
     pub fn prev_wallpaper(&mut self) {
-        if !self.filtered_wallpapers.is_empty() {
-            self.selected_wallpaper_idx = if self.selected_wallpaper_idx == 0 {
-                self.filtered_wallpapers.len() - 1
+        if !self.selection.filtered_wallpapers.is_empty() {
+            self.selection.wallpaper_idx = if self.selection.wallpaper_idx == 0 {
+                self.selection.filtered_wallpapers.len() - 1
             } else {
-                self.selected_wallpaper_idx - 1
+                self.selection.wallpaper_idx - 1
             };
             self.update_pairing_suggestions();
         }
     }
 
+    /// Switch to the next screen, preserving cursor position per screen.
     pub fn next_screen(&mut self) {
         if !self.screens.is_empty() {
             // Save current position
-            self.screen_positions
-                .insert(self.selected_screen_idx, self.selected_wallpaper_idx);
+            self.selection.screen_positions
+                .insert(self.selection.screen_idx, self.selection.wallpaper_idx);
 
-            self.selected_screen_idx = (self.selected_screen_idx + 1) % self.screens.len();
+            self.selection.screen_idx = (self.selection.screen_idx + 1) % self.screens.len();
             self.update_filtered_wallpapers();
 
             // Restore position for new screen (if saved)
-            if let Some(&pos) = self.screen_positions.get(&self.selected_screen_idx) {
-                if pos < self.filtered_wallpapers.len() {
-                    self.selected_wallpaper_idx = pos;
+            if let Some(&pos) = self.selection.screen_positions.get(&self.selection.screen_idx) {
+                if pos < self.selection.filtered_wallpapers.len() {
+                    self.selection.wallpaper_idx = pos;
                 }
             }
 
@@ -730,23 +784,24 @@ impl App {
         }
     }
 
+    /// Switch to the previous screen, preserving cursor position per screen.
     pub fn prev_screen(&mut self) {
         if !self.screens.is_empty() {
             // Save current position
-            self.screen_positions
-                .insert(self.selected_screen_idx, self.selected_wallpaper_idx);
+            self.selection.screen_positions
+                .insert(self.selection.screen_idx, self.selection.wallpaper_idx);
 
-            self.selected_screen_idx = if self.selected_screen_idx == 0 {
+            self.selection.screen_idx = if self.selection.screen_idx == 0 {
                 self.screens.len() - 1
             } else {
-                self.selected_screen_idx - 1
+                self.selection.screen_idx - 1
             };
             self.update_filtered_wallpapers();
 
             // Restore position for new screen (if saved)
-            if let Some(&pos) = self.screen_positions.get(&self.selected_screen_idx) {
-                if pos < self.filtered_wallpapers.len() {
-                    self.selected_wallpaper_idx = pos;
+            if let Some(&pos) = self.selection.screen_positions.get(&self.selection.screen_idx) {
+                if pos < self.selection.filtered_wallpapers.len() {
+                    self.selection.wallpaper_idx = pos;
                 }
             }
 
@@ -754,6 +809,7 @@ impl App {
         }
     }
 
+    /// Apply the selected wallpaper to the current screen via swww.
     pub fn apply_wallpaper(&mut self) -> Result<()> {
         if let (Some(screen), Some(wp)) = (self.selected_screen(), self.selected_wallpaper()) {
             let screen_name = screen.name.clone();
@@ -761,7 +817,7 @@ impl App {
             let wp_colors = wp.colors.clone();
 
             // Update current wallpaper for this screen
-            self.current_wallpapers
+            self.pairing.current_wallpapers
                 .insert(screen_name.clone(), wp_path.clone());
 
             swww::set_wallpaper_with_resize(
@@ -773,9 +829,9 @@ impl App {
             )?;
 
             // Export pywal colors if enabled
-            if self.pywal_export {
+            if self.ui.pywal_export {
                 if let Err(e) = crate::pywal::generate_from_wallpaper(&wp_colors, &wp_path) {
-                    self.last_error = Some(format!("pywal: {}", e));
+                    self.ui.last_error = Some(format!("pywal: {}", e));
                 }
             }
         }
@@ -784,7 +840,7 @@ impl App {
 
     /// Handle undo action (restore previous wallpapers)
     pub fn do_undo(&mut self) -> Result<()> {
-        if let Some(previous) = self.pairing_history.do_undo() {
+        if let Some(previous) = self.pairing.history.do_undo() {
             for (screen_name, wp_path) in &previous {
                 swww::set_wallpaper_with_resize(
                     screen_name,
@@ -795,21 +851,22 @@ impl App {
                 )?;
             }
             // Restore current_wallpapers tracking
-            self.current_wallpapers = previous;
+            self.pairing.current_wallpapers = previous;
         }
         Ok(())
     }
 
     /// Check and clear expired undo window
     pub fn tick_undo(&mut self) {
-        self.pairing_history.clear_expired_undo();
+        self.pairing.history.clear_expired_undo();
     }
 
+    /// Pick a random wallpaper from the filtered list and apply it.
     pub fn random_wallpaper(&mut self) -> Result<()> {
-        if !self.filtered_wallpapers.is_empty() {
+        if !self.selection.filtered_wallpapers.is_empty() {
             use rand::Rng;
             let mut rng = rand::thread_rng();
-            self.selected_wallpaper_idx = rng.gen_range(0..self.filtered_wallpapers.len());
+            self.selection.wallpaper_idx = rng.gen_range(0..self.selection.filtered_wallpapers.len());
 
             // Apply immediately
             self.apply_wallpaper()?;
@@ -825,20 +882,20 @@ impl App {
         }
 
         // Skip if already loaded or loading
-        if self.thumbnail_cache.contains_key(&cache_idx)
-            || self.loading_thumbnails.contains(&cache_idx)
+        if self.thumbnails.cache.contains_key(&cache_idx)
+            || self.thumbnails.loading.contains(&cache_idx)
         {
             return;
         }
 
         if let Some(wp) = self.cache.wallpapers.get(cache_idx) {
-            if let Some(tx) = &self.thumb_request_tx {
+            if let Some(tx) = &self.thumbnails.request_tx {
                 let request = ThumbnailRequest {
                     cache_idx,
                     source_path: wp.path.clone(),
                 };
                 if tx.send(request).is_ok() {
-                    self.loading_thumbnails.insert(cache_idx);
+                    self.thumbnails.loading.insert(cache_idx);
                 }
             }
         }
@@ -846,68 +903,68 @@ impl App {
 
     /// Handle a loaded thumbnail from background thread
     pub fn handle_thumbnail_ready(&mut self, response: ThumbnailResponse) {
-        self.loading_thumbnails.remove(&response.cache_idx);
+        self.thumbnails.loading.remove(&response.cache_idx);
 
-        if let Some(picker) = &mut self.image_picker {
+        if let Some(picker) = &mut self.thumbnails.image_picker {
             // Evict oldest entries if cache is full
-            while self.thumbnail_cache.len() >= MAX_THUMBNAIL_CACHE {
-                if let Some(oldest_idx) = self.thumbnail_cache_order.first().copied() {
-                    self.thumbnail_cache.remove(&oldest_idx);
-                    self.thumbnail_cache_order.remove(0);
+            while self.thumbnails.cache.len() >= MAX_THUMBNAIL_CACHE {
+                if let Some(oldest_idx) = self.thumbnails.cache_order.first().copied() {
+                    self.thumbnails.cache.remove(&oldest_idx);
+                    self.thumbnails.cache_order.remove(0);
                 } else {
                     break;
                 }
             }
 
             let protocol = picker.new_resize_protocol(response.image);
-            self.thumbnail_cache.insert(response.cache_idx, protocol);
-            self.thumbnail_cache_order.push(response.cache_idx);
+            self.thumbnails.cache.insert(response.cache_idx, protocol);
+            self.thumbnails.cache_order.push(response.cache_idx);
         }
     }
 
     /// Check if a thumbnail is ready (also updates LRU order)
     pub fn get_thumbnail(&mut self, cache_idx: usize) -> Option<&mut Box<dyn StatefulProtocol>> {
-        if self.thumbnail_cache.contains_key(&cache_idx) {
+        if self.thumbnails.cache.contains_key(&cache_idx) {
             // Move to end of LRU order (most recently used)
             if let Some(pos) = self
-                .thumbnail_cache_order
+                .thumbnails.cache_order
                 .iter()
                 .position(|&i| i == cache_idx)
             {
-                self.thumbnail_cache_order.remove(pos);
-                self.thumbnail_cache_order.push(cache_idx);
+                self.thumbnails.cache_order.remove(pos);
+                self.thumbnails.cache_order.push(cache_idx);
             }
         }
-        self.thumbnail_cache.get_mut(&cache_idx)
+        self.thumbnails.cache.get_mut(&cache_idx)
     }
 
     /// Check if a thumbnail is currently loading
     pub fn is_loading(&self, cache_idx: usize) -> bool {
-        self.loading_thumbnails.contains(&cache_idx)
+        self.thumbnails.loading.contains(&cache_idx)
     }
 
     /// Set the thumbnail request channel
     pub fn set_thumb_channel(&mut self, tx: Sender<ThumbnailRequest>) {
-        self.thumb_request_tx = Some(tx);
+        self.thumbnails.request_tx = Some(tx);
     }
 
     /// Toggle help popup
     pub fn toggle_help(&mut self) {
-        self.show_help = !self.show_help;
+        self.ui.show_help = !self.ui.show_help;
     }
 
     /// Cycle through sort modes
     pub fn toggle_sort_mode(&mut self) {
-        self.sort_mode = self.sort_mode.next();
+        self.filters.sort_mode = self.filters.sort_mode.next();
         self.apply_sort();
     }
 
     /// Apply current sort mode to filtered wallpapers
     fn apply_sort(&mut self) {
         let cache = &self.cache;
-        let sort_mode = self.sort_mode;
+        let sort_mode = self.filters.sort_mode;
 
-        self.filtered_wallpapers.sort_by(|&a, &b| {
+        self.selection.filtered_wallpapers.sort_by(|&a, &b| {
             let wp_a = &cache.wallpapers[a];
             let wp_b = &cache.wallpapers[b];
 
@@ -925,12 +982,12 @@ impl App {
         });
 
         // Reset selection after sort
-        self.selected_wallpaper_idx = 0;
+        self.selection.wallpaper_idx = 0;
     }
 
     /// Toggle color display for selected wallpaper
     pub fn toggle_colors(&mut self) {
-        self.show_colors = !self.show_colors;
+        self.ui.show_colors = !self.ui.show_colors;
     }
 
     /// Cycle through available tags as filter
@@ -938,14 +995,14 @@ impl App {
         let all_tags = self.cache.all_tags();
 
         if all_tags.is_empty() {
-            self.active_tag_filter = None;
-            self.last_error = Some(
+            self.filters.active_tag = None;
+            self.ui.last_error = Some(
                 "No tags defined. Use 'frostwall tag add <path> <tag>' to add tags.".to_string(),
             );
             return;
         }
 
-        self.active_tag_filter = match &self.active_tag_filter {
+        self.filters.active_tag = match &self.filters.active_tag {
             None => Some(all_tags[0].clone()),
             Some(current) => {
                 // Find current position and move to next
@@ -962,13 +1019,13 @@ impl App {
         };
 
         // Clear any previous error
-        self.last_error = None;
+        self.ui.last_error = None;
         self.update_filtered_wallpapers();
     }
 
     /// Clear tag filter
     pub fn clear_tag_filter(&mut self) {
-        self.active_tag_filter = None;
+        self.filters.active_tag = None;
         self.update_filtered_wallpapers();
     }
 
@@ -982,31 +1039,31 @@ impl App {
 
     /// Enter command mode
     pub fn enter_command_mode(&mut self) {
-        self.command_mode = true;
-        self.command_buffer.clear();
+        self.ui.command_mode = true;
+        self.ui.command_buffer.clear();
     }
 
     /// Exit command mode without executing
     pub fn exit_command_mode(&mut self) {
-        self.command_mode = false;
-        self.command_buffer.clear();
+        self.ui.command_mode = false;
+        self.ui.command_buffer.clear();
     }
 
     /// Add character to command buffer
     pub fn command_input(&mut self, c: char) {
-        self.command_buffer.push(c);
+        self.ui.command_buffer.push(c);
     }
 
     /// Remove last character from command buffer
     pub fn command_backspace(&mut self) {
-        self.command_buffer.pop();
+        self.ui.command_buffer.pop();
     }
 
     /// Execute the current command
     pub fn execute_command(&mut self) {
-        let cmd = self.command_buffer.trim().to_string();
-        self.command_mode = false;
-        self.command_buffer.clear();
+        let cmd = self.ui.command_buffer.trim().to_string();
+        self.ui.command_mode = false;
+        self.ui.command_buffer.clear();
 
         if cmd.is_empty() {
             return;
@@ -1020,7 +1077,7 @@ impl App {
         match command.as_str() {
             // Quit
             "q" | "quit" | "exit" => {
-                self.should_quit = true;
+                self.ui.should_quit = true;
             }
 
             // Tag filter
@@ -1029,9 +1086,9 @@ impl App {
                     // List available tags
                     let tags = self.cache.all_tags();
                     if tags.is_empty() {
-                        self.last_error = Some("No tags available".to_string());
+                        self.ui.last_error = Some("No tags available".to_string());
                     } else {
-                        self.last_error = Some(format!("Tags: {}", tags.join(", ")));
+                        self.ui.last_error = Some(format!("Tags: {}", tags.join(", ")));
                     }
                 } else {
                     // Filter by tag
@@ -1042,18 +1099,18 @@ impl App {
                         .iter()
                         .find(|t| t.to_lowercase().contains(&args.to_lowercase()))
                     {
-                        self.active_tag_filter = Some(matched.clone());
+                        self.filters.active_tag = Some(matched.clone());
                         self.update_filtered_wallpapers();
                     } else {
-                        self.last_error = Some(format!("Tag not found: {}", tag));
+                        self.ui.last_error = Some(format!("Tag not found: {}", tag));
                     }
                 }
             }
 
             // Clear filters
             "c" | "clear" => {
-                self.active_tag_filter = None;
-                self.active_color_filter = None;
+                self.filters.active_tag = None;
+                self.filters.active_color = None;
                 self.update_filtered_wallpapers();
             }
 
@@ -1070,19 +1127,19 @@ impl App {
             // Sort mode
             "sort" => match args.to_lowercase().as_str() {
                 "name" | "n" => {
-                    self.sort_mode = SortMode::Name;
+                    self.filters.sort_mode = SortMode::Name;
                     self.update_filtered_wallpapers();
                 }
                 "date" | "d" => {
-                    self.sort_mode = SortMode::Date;
+                    self.filters.sort_mode = SortMode::Date;
                     self.update_filtered_wallpapers();
                 }
                 "size" | "s" => {
-                    self.sort_mode = SortMode::Size;
+                    self.filters.sort_mode = SortMode::Size;
                     self.update_filtered_wallpapers();
                 }
                 _ => {
-                    self.last_error = Some("Sort modes: name, date, size".to_string());
+                    self.ui.last_error = Some("Sort modes: name, date, size".to_string());
                 }
             },
 
@@ -1097,7 +1154,7 @@ impl App {
 
             // Help
             "h" | "help" => {
-                self.show_help = true;
+                self.ui.show_help = true;
             }
 
             // Screen navigation
@@ -1105,18 +1162,18 @@ impl App {
                 if let Ok(n) = args.parse::<usize>() {
                     if n > 0 && n <= self.screens.len() {
                         // Save current position
-                        self.screen_positions
-                            .insert(self.selected_screen_idx, self.selected_wallpaper_idx);
-                        self.selected_screen_idx = n - 1;
+                        self.selection.screen_positions
+                            .insert(self.selection.screen_idx, self.selection.wallpaper_idx);
+                        self.selection.screen_idx = n - 1;
                         self.update_filtered_wallpapers();
                         // Restore position for new screen
-                        if let Some(&pos) = self.screen_positions.get(&self.selected_screen_idx) {
-                            if pos < self.filtered_wallpapers.len() {
-                                self.selected_wallpaper_idx = pos;
+                        if let Some(&pos) = self.selection.screen_positions.get(&self.selection.screen_idx) {
+                            if pos < self.selection.filtered_wallpapers.len() {
+                                self.selection.wallpaper_idx = pos;
                             }
                         }
                     } else {
-                        self.last_error = Some(format!("Screen {} not found", n));
+                        self.ui.last_error = Some(format!("Screen {} not found", n));
                     }
                 }
             }
@@ -1124,14 +1181,14 @@ impl App {
             // Go to wallpaper by number
             "go" | "g" => {
                 if let Ok(n) = args.parse::<usize>() {
-                    if n > 0 && n <= self.filtered_wallpapers.len() {
-                        self.selected_wallpaper_idx = n - 1;
+                    if n > 0 && n <= self.selection.filtered_wallpapers.len() {
+                        self.selection.wallpaper_idx = n - 1;
                     }
                 }
             }
 
             _ => {
-                self.last_error = Some(format!("Unknown command: {}", command));
+                self.ui.last_error = Some(format!("Unknown command: {}", command));
             }
         }
     }
@@ -1150,20 +1207,20 @@ impl App {
         let similar = crate::utils::find_similar_wallpapers(colors, &wallpaper_colors, 1);
         if let Some((_, idx)) = similar.first() {
             // Find this index in filtered wallpapers
-            if let Some(pos) = self.filtered_wallpapers.iter().position(|&i| i == *idx) {
-                self.selected_wallpaper_idx = pos;
+            if let Some(pos) = self.selection.filtered_wallpapers.iter().position(|&i| i == *idx) {
+                self.selection.wallpaper_idx = pos;
             }
         }
     }
 
     /// Toggle color picker popup
     pub fn toggle_color_picker(&mut self) {
-        if !self.show_color_picker {
+        if !self.ui.show_color_picker {
             // Build list of unique colors from all wallpapers
-            self.available_colors = self.get_unique_colors();
-            self.color_picker_idx = 0;
+            self.filters.available_colors = self.get_unique_colors();
+            self.filters.color_picker_idx = 0;
         }
-        self.show_color_picker = !self.show_color_picker;
+        self.ui.show_color_picker = !self.ui.show_color_picker;
     }
 
     /// Get unique colors across all wallpapers
@@ -1183,33 +1240,33 @@ impl App {
 
     /// Navigate color picker
     pub fn color_picker_next(&mut self) {
-        if !self.available_colors.is_empty() {
-            self.color_picker_idx = (self.color_picker_idx + 1) % self.available_colors.len();
+        if !self.filters.available_colors.is_empty() {
+            self.filters.color_picker_idx = (self.filters.color_picker_idx + 1) % self.filters.available_colors.len();
         }
     }
 
     pub fn color_picker_prev(&mut self) {
-        if !self.available_colors.is_empty() {
-            self.color_picker_idx = if self.color_picker_idx == 0 {
-                self.available_colors.len() - 1
+        if !self.filters.available_colors.is_empty() {
+            self.filters.color_picker_idx = if self.filters.color_picker_idx == 0 {
+                self.filters.available_colors.len() - 1
             } else {
-                self.color_picker_idx - 1
+                self.filters.color_picker_idx - 1
             };
         }
     }
 
     /// Apply selected color filter
     pub fn apply_color_filter(&mut self) {
-        if let Some(color) = self.available_colors.get(self.color_picker_idx) {
-            self.active_color_filter = Some(color.clone());
-            self.show_color_picker = false;
+        if let Some(color) = self.filters.available_colors.get(self.filters.color_picker_idx) {
+            self.filters.active_color = Some(color.clone());
+            self.ui.show_color_picker = false;
             self.update_filtered_wallpapers();
         }
     }
 
     /// Clear color filter
     pub fn clear_color_filter(&mut self) {
-        self.active_color_filter = None;
+        self.filters.active_color = None;
         self.update_filtered_wallpapers();
     }
 
@@ -1223,12 +1280,12 @@ impl App {
 
     /// Toggle pywal export on apply
     pub fn toggle_pywal_export(&mut self) {
-        self.pywal_export = !self.pywal_export;
+        self.ui.pywal_export = !self.ui.pywal_export;
     }
 
     /// Update pairing suggestions based on currently selected wallpaper
     pub fn update_pairing_suggestions(&mut self) {
-        self.pairing_suggestions.clear();
+        self.pairing.suggestions.clear();
 
         if !self.config.pairing.enabled {
             return;
@@ -1253,7 +1310,7 @@ impl App {
 
         // For each other screen, find suggested wallpapers
         for (screen_idx, screen) in self.screens.iter().enumerate() {
-            if screen_idx == self.selected_screen_idx {
+            if screen_idx == self.selection.screen_idx {
                 continue;
             }
 
@@ -1283,11 +1340,11 @@ impl App {
                 selected_style_tags: &selected_style_tags,
             };
             if let Some(suggested_path) = self
-                .pairing_history
+                .pairing.history
                 .get_best_match(&match_context, &matching)
             {
-                if !self.pairing_suggestions.contains(&suggested_path) {
-                    self.pairing_suggestions.push(suggested_path);
+                if !self.pairing.suggestions.contains(&suggested_path) {
+                    self.pairing.suggestions.push(suggested_path);
                 }
             }
         }
@@ -1295,30 +1352,30 @@ impl App {
 
     /// Check if a wallpaper is in the pairing suggestions
     pub fn is_pairing_suggestion(&self, path: &std::path::Path) -> bool {
-        self.pairing_suggestions.iter().any(|p| p == path)
+        self.pairing.suggestions.iter().any(|p| p == path)
     }
 
     /// Toggle pairing preview popup
     pub fn toggle_pairing_preview(&mut self) {
-        if !self.show_pairing_preview {
+        if !self.pairing.show_preview {
             self.update_pairing_preview_matches();
         }
-        self.show_pairing_preview = !self.show_pairing_preview;
-        self.pairing_preview_idx = 0;
+        self.pairing.show_preview = !self.pairing.show_preview;
+        self.pairing.preview_idx = 0;
     }
 
     /// Cycle style matching behavior used in pairing preview.
     pub fn toggle_pairing_style_mode(&mut self) {
-        self.pairing_style_mode = self.pairing_style_mode.next();
-        if self.show_pairing_preview {
+        self.pairing.style_mode = self.pairing.style_mode.next();
+        if self.pairing.show_preview {
             self.update_pairing_preview_matches();
-            self.pairing_preview_idx = 0;
+            self.pairing.preview_idx = 0;
         }
     }
 
     /// Update pairing preview matches for all other screens
     fn update_pairing_preview_matches(&mut self) {
-        self.pairing_preview_matches.clear();
+        self.pairing.preview_matches.clear();
 
         if !self.config.pairing.enabled || self.screens.len() <= 1 {
             return;
@@ -1354,7 +1411,7 @@ impl App {
             .collect();
 
         for (screen_idx, screen) in self.screens.iter().enumerate() {
-            if screen_idx == self.selected_screen_idx {
+            if screen_idx == self.selection.screen_idx {
                 continue;
             }
 
@@ -1380,11 +1437,11 @@ impl App {
                 tag_weight: self.config.pairing.tag_weight,
                 semantic_weight: self.config.pairing.semantic_weight,
                 repetition_penalty_weight: self.config.pairing.repetition_penalty_weight,
-                style_mode: self.pairing_style_mode,
+                style_mode: self.pairing.style_mode,
                 selected_style_tags: &selected_style_tags,
             };
             let top_matches = self
-                .pairing_history
+                .pairing.history
                 .get_top_matches(&match_context, &matching, preview_limit);
 
             // Calculate harmony for each match
@@ -1414,7 +1471,7 @@ impl App {
                 .collect();
 
             if !matches_with_harmony.is_empty() {
-                self.pairing_preview_matches
+                self.pairing.preview_matches
                     .insert(screen.name.clone(), matches_with_harmony);
             }
         }
@@ -1423,37 +1480,37 @@ impl App {
     /// Cycle through pairing preview alternatives
     pub fn pairing_preview_next(&mut self) {
         let max_alternatives = self
-            .pairing_preview_matches
+            .pairing.preview_matches
             .values()
             .map(|v| v.len())
             .max()
             .unwrap_or(1);
 
         if max_alternatives > 0 {
-            self.pairing_preview_idx = (self.pairing_preview_idx + 1) % max_alternatives;
+            self.pairing.preview_idx = (self.pairing.preview_idx + 1) % max_alternatives;
         }
     }
 
     pub fn pairing_preview_prev(&mut self) {
         let max_alternatives = self
-            .pairing_preview_matches
+            .pairing.preview_matches
             .values()
             .map(|v| v.len())
             .max()
             .unwrap_or(1);
 
         if max_alternatives > 0 {
-            self.pairing_preview_idx = if self.pairing_preview_idx == 0 {
+            self.pairing.preview_idx = if self.pairing.preview_idx == 0 {
                 max_alternatives - 1
             } else {
-                self.pairing_preview_idx - 1
+                self.pairing.preview_idx - 1
             };
         }
     }
 
     /// Apply the currently selected pairing preview
     pub fn apply_pairing_preview(&mut self) -> Result<()> {
-        if !self.show_pairing_preview {
+        if !self.pairing.show_preview {
             return Ok(());
         }
 
@@ -1461,9 +1518,9 @@ impl App {
         self.apply_wallpaper()?;
 
         // Then apply the preview selections to other screens
-        for (screen_name, matches) in &self.pairing_preview_matches {
+        for (screen_name, matches) in &self.pairing.preview_matches {
             let idx = self
-                .pairing_preview_idx
+                .pairing.preview_idx
                 .min(matches.len().saturating_sub(1));
             if let Some((wp_path, _, _)) = matches.get(idx) {
                 if let Err(e) = swww::set_wallpaper_with_resize(
@@ -1473,27 +1530,27 @@ impl App {
                     self.config.display.resize_mode,
                     &self.config.display.fill_color,
                 ) {
-                    self.last_error = Some(format!("Pairing {}: {}", screen_name, e));
+                    self.ui.last_error = Some(format!("Pairing {}: {}", screen_name, e));
                 } else {
-                    self.current_wallpapers
+                    self.pairing.current_wallpapers
                         .insert(screen_name.clone(), wp_path.clone());
                 }
             }
         }
 
         // Record the pairing
-        if self.current_wallpapers.len() > 1 {
-            self.pairing_history
-                .record_pairing(self.current_wallpapers.clone(), true);
+        if self.pairing.current_wallpapers.len() > 1 {
+            self.pairing.history
+                .record_pairing(self.pairing.current_wallpapers.clone(), true);
         }
 
-        self.show_pairing_preview = false;
+        self.pairing.show_preview = false;
         Ok(())
     }
 
     /// Get the number of alternatives available in pairing preview
     pub fn pairing_preview_alternatives(&self) -> usize {
-        self.pairing_preview_matches
+        self.pairing.preview_matches
             .values()
             .map(|v| v.len())
             .max()
@@ -1649,10 +1706,10 @@ fn run_app<B: ratatui::backend::Backend>(
                     }
 
                     // Handle help popup first (blocks other input)
-                    if app.show_help {
+                    if app.ui.show_help {
                         match key.code {
                             KeyCode::Char('?') | KeyCode::Esc | KeyCode::Enter => {
-                                app.show_help = false;
+                                app.ui.show_help = false;
                             }
                             _ => {}
                         }
@@ -1660,10 +1717,10 @@ fn run_app<B: ratatui::backend::Backend>(
                     }
 
                     // Handle color picker popup
-                    if app.show_color_picker {
+                    if app.ui.show_color_picker {
                         match key.code {
                             KeyCode::Esc | KeyCode::Char('C') => {
-                                app.show_color_picker = false;
+                                app.ui.show_color_picker = false;
                             }
                             KeyCode::Char('l') | KeyCode::Right => {
                                 app.color_picker_next();
@@ -1676,7 +1733,7 @@ fn run_app<B: ratatui::backend::Backend>(
                             }
                             KeyCode::Char('x') | KeyCode::Backspace => {
                                 app.clear_color_filter();
-                                app.show_color_picker = false;
+                                app.ui.show_color_picker = false;
                             }
                             _ => {}
                         }
@@ -1684,10 +1741,10 @@ fn run_app<B: ratatui::backend::Backend>(
                     }
 
                     // Handle pairing preview popup
-                    if app.show_pairing_preview {
+                    if app.pairing.show_preview {
                         match key.code {
                             KeyCode::Esc | KeyCode::Char('p') => {
-                                app.show_pairing_preview = false;
+                                app.pairing.show_preview = false;
                             }
                             KeyCode::Char('l') | KeyCode::Right | KeyCode::Char('n') => {
                                 app.pairing_preview_next();
@@ -1697,7 +1754,7 @@ fn run_app<B: ratatui::backend::Backend>(
                             }
                             KeyCode::Enter => {
                                 if let Err(e) = app.apply_pairing_preview() {
-                                    app.last_error = Some(format!("{}", e));
+                                    app.ui.last_error = Some(format!("{}", e));
                                 }
                             }
                             KeyCode::Char('y') => {
@@ -1711,7 +1768,7 @@ fn run_app<B: ratatui::backend::Backend>(
                                 };
                                 let max = app.pairing_preview_alternatives();
                                 if idx < max {
-                                    app.pairing_preview_idx = idx;
+                                    app.pairing.preview_idx = idx;
                                 }
                             }
                             _ => {}
@@ -1720,7 +1777,7 @@ fn run_app<B: ratatui::backend::Backend>(
                     }
 
                     // Handle command mode (vim-style :)
-                    if app.command_mode {
+                    if app.ui.command_mode {
                         match key.code {
                             KeyCode::Esc => {
                                 app.exit_command_mode();
@@ -1745,7 +1802,7 @@ fn run_app<B: ratatui::backend::Backend>(
 
                     // Quit (configurable + Esc always works)
                     if kb.matches(code, &kb.quit) || code == KeyCode::Esc {
-                        app.should_quit = true;
+                        app.ui.should_quit = true;
                     }
                     // Navigation (configurable + arrow keys always work)
                     else if kb.matches(code, &kb.next) || code == KeyCode::Right {
@@ -1762,13 +1819,13 @@ fn run_app<B: ratatui::backend::Backend>(
                     // Apply wallpaper (configurable)
                     else if kb.matches(code, &kb.apply) {
                         if let Err(e) = app.apply_wallpaper() {
-                            app.last_error = Some(format!("{}", e));
+                            app.ui.last_error = Some(format!("{}", e));
                         }
                     }
                     // Random wallpaper (configurable)
                     else if kb.matches(code, &kb.random) {
                         if let Err(e) = app.random_wallpaper() {
-                            app.last_error = Some(format!("{}", e));
+                            app.ui.last_error = Some(format!("{}", e));
                         }
                     }
                     // Toggle match mode (configurable)
@@ -1792,14 +1849,14 @@ fn run_app<B: ratatui::backend::Backend>(
                             KeyCode::Char('T') => app.clear_tag_filter(),
                             KeyCode::Char('w') => {
                                 if let Err(e) = app.export_pywal() {
-                                    app.last_error = Some(format!("pywal: {}", e));
+                                    app.ui.last_error = Some(format!("pywal: {}", e));
                                 }
                             }
                             KeyCode::Char('W') => app.toggle_pywal_export(),
                             KeyCode::Char('u') => {
                                 // Undo pairing
                                 if let Err(e) = app.do_undo() {
-                                    app.last_error = Some(format!("Undo: {}", e));
+                                    app.ui.last_error = Some(format!("Undo: {}", e));
                                 }
                             }
                             _ => {}
@@ -1816,7 +1873,7 @@ fn run_app<B: ratatui::backend::Backend>(
             }
         }
 
-        if app.should_quit {
+        if app.ui.should_quit {
             return Ok(());
         }
     }
