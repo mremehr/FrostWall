@@ -2,7 +2,7 @@
 name = "frostwall"
 version = "0.5.0"
 edition = "2021"
-authors = ["MrMattias"]
+authors = ["MrMattias", "Claude (Anthropic)"]
 description = "Intelligent wallpaper manager with screen-aware matching for Wayland"
 license = "GPL-2.0"
 repository = "https://github.com/mrmattias/frostwall"
