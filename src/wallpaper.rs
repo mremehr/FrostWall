@@ -573,6 +573,99 @@ impl WallpaperCache {
         })
     }
 
+    /// Incremental rescan: discover new files and remove deleted ones while
+    /// preserving all existing data (tags, auto_tags, embeddings, colors).
+    /// Returns (added, removed) counts.
+    pub fn incremental_rescan(&mut self, recursive: bool) -> Result<(usize, usize)> {
+        let source_dir = self.source_dir.clone();
+
+        // Discover current files on disk
+        let on_disk: Vec<PathBuf> = if recursive {
+            WalkDir::new(&source_dir)
+                .follow_links(true)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .map(|e| e.path().to_path_buf())
+                .filter(|p| p.is_file() && crate::utils::is_image_file(p))
+                .collect()
+        } else {
+            fs::read_dir(&source_dir)
+                .with_context(|| format!("Failed to read directory: {}", source_dir.display()))?
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_file() && crate::utils::is_image_file(p))
+                .collect()
+        };
+
+        // Build lookup of existing wallpapers by path
+        let mut existing: HashMap<PathBuf, Wallpaper> = self
+            .wallpapers
+            .drain(..)
+            .map(|wp| (wp.path.clone(), wp))
+            .collect();
+
+        let mut added = 0usize;
+        let mut kept = Vec::with_capacity(on_disk.len());
+
+        for path in &on_disk {
+            if let Some(wp) = existing.remove(path) {
+                // Existing file — check if modified since last scan
+                let needs_refresh = if wp.modified_at > 0 {
+                    std::fs::metadata(path)
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() > wp.modified_at)
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+
+                if needs_refresh {
+                    // Re-read dimensions + colors but preserve tags/embeddings
+                    match Wallpaper::from_path_fast(path) {
+                        Ok(mut fresh) => {
+                            // Preserve user data
+                            fresh.tags = wp.tags;
+                            fresh.auto_tags = wp.auto_tags;
+                            fresh.embedding = wp.embedding;
+                            // Re-extract colors for modified file
+                            let _ = fresh.extract_colors();
+                            kept.push(fresh);
+                        }
+                        Err(_) => kept.push(wp), // Keep old data on error
+                    }
+                } else {
+                    kept.push(wp);
+                }
+            } else {
+                // New file — scan dimensions + colors
+                match Wallpaper::from_path_fast(path) {
+                    Ok(mut wp) => {
+                        let _ = wp.extract_colors();
+                        kept.push(wp);
+                        added += 1;
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: Failed to read {}: {}", path.display(), e);
+                    }
+                }
+            }
+        }
+
+        // Whatever remains in `existing` was deleted from disk
+        let removed = existing.len();
+
+        kept.sort_by(|a, b| a.path.cmp(&b.path));
+        self.wallpapers = kept;
+        self.version = CACHE_VERSION;
+
+        // Auto-save after rescan
+        self.save()?;
+
+        Ok((added, removed))
+    }
+
     pub fn save(&self) -> Result<()> {
         let cache_path = Self::cache_path();
 

@@ -1121,6 +1121,13 @@ fn draw_help_popup(f: &mut Frame, area: Rect, theme: &FrostTheme) {
             Span::styled("Toggle auto pywal", Style::default().fg(theme.fg_secondary)),
         ]),
         Line::from(vec![
+            Span::styled("  R       ", Style::default().fg(theme.accent_primary)),
+            Span::styled(
+                "Rescan wallpaper dir",
+                Style::default().fg(theme.fg_secondary),
+            ),
+        ]),
+        Line::from(vec![
             Span::styled("  q/Esc   ", Style::default().fg(theme.accent_primary)),
             Span::styled("Quit", Style::default().fg(theme.fg_secondary)),
         ]),

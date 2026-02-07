@@ -503,12 +503,14 @@ pub struct ThumbnailResponse {
 pub enum AppEvent {
     Key(event::KeyEvent),
     ThumbnailReady(ThumbnailResponse),
+    Resize,
     Tick,
 }
 
-/// Maximum number of thumbnails to keep in memory
-/// Kitty graphics protocol can get confused with too many images
-const MAX_THUMBNAIL_CACHE: usize = 20;
+/// Thumbnail cache size multiplier over visible grid columns.
+/// Keeps enough thumbnails for smooth scrolling without overwhelming
+/// the terminal graphics protocol.
+const THUMBNAIL_CACHE_MULTIPLIER: usize = 4;
 
 /// UI-related transient state (popups, command mode, errors).
 #[derive(Default)]
@@ -883,6 +885,12 @@ impl App {
         }
     }
 
+    /// Dynamic max thumbnail cache size based on grid columns.
+    fn max_thumbnail_cache(&self) -> usize {
+        let cols = self.config.thumbnails.grid_columns.max(1);
+        (cols * THUMBNAIL_CACHE_MULTIPLIER).max(12)
+    }
+
     /// Handle a loaded thumbnail from background thread
     pub fn handle_thumbnail_ready(&mut self, response: ThumbnailResponse) {
         self.thumbnails.loading.remove(&response.cache_idx);
@@ -892,9 +900,10 @@ impl App {
             return;
         }
 
+        let max_cache = self.max_thumbnail_cache();
         if let Some(picker) = &mut self.thumbnails.image_picker {
             // Evict oldest entries if cache is full
-            while self.thumbnails.cache.len() >= MAX_THUMBNAIL_CACHE {
+            while self.thumbnails.cache.len() >= max_cache {
                 if let Some(oldest_idx) = self.thumbnails.cache_order.first().copied() {
                     self.thumbnails.cache.remove(&oldest_idx);
                     self.thumbnails.cache_order.remove(0);
@@ -933,6 +942,54 @@ impl App {
     /// Set the thumbnail request channel
     pub fn set_thumb_channel(&mut self, tx: Sender<ThumbnailRequest>) {
         self.thumbnails.request_tx = Some(tx);
+    }
+
+    /// Handle terminal resize: clear thumbnail cache and re-init picker.
+    /// StatefulProtocol objects are sized for the old terminal dimensions
+    /// and will render garbled if reused after resize.
+    pub fn handle_resize(&mut self) {
+        self.thumbnails.cache.clear();
+        self.thumbnails.cache_order.clear();
+        self.thumbnails.loading.clear();
+
+        // Re-detect font metrics for the new terminal size
+        if let Ok(mut picker) = Picker::from_termios() {
+            picker.guess_protocol();
+            self.thumbnails.image_picker = Some(picker);
+        }
+    }
+
+    /// Incremental rescan: find new files, remove deleted ones, keep all
+    /// existing tags, auto-tags, CLIP embeddings and color data intact.
+    /// Returns a human-readable status message.
+    pub fn rescan(&mut self) -> Result<String> {
+        let recursive = self.config.wallpaper.recursive;
+        let (added, removed) = self.cache.incremental_rescan(recursive)?;
+        self.update_filtered_wallpapers();
+
+        let total = self.cache.wallpapers.len();
+        let mut parts = vec![format!("{} wallpapers", total)];
+        if added > 0 {
+            parts.push(format!("+{} new", added));
+        }
+        if removed > 0 {
+            parts.push(format!("-{} removed", removed));
+        }
+        if added == 0 && removed == 0 {
+            parts.push("no changes".to_string());
+        }
+
+        let needs_tagging = self
+            .cache
+            .wallpapers
+            .iter()
+            .filter(|wp| wp.auto_tags.is_empty())
+            .count();
+        if needs_tagging > 0 && self.config.clip.enabled {
+            parts.push(format!("{} untagged", needs_tagging));
+        }
+
+        Ok(parts.join(", "))
     }
 
     /// Toggle help popup
@@ -1136,6 +1193,18 @@ impl App {
                     let colors = wp.colors.clone();
                     let path = wp.path.clone();
                     self.find_and_select_similar(&colors, &path);
+                }
+            }
+
+            // Rescan wallpaper directory
+            "rescan" | "scan" => {
+                match self.rescan() {
+                    Ok(msg) => {
+                        self.ui.last_error = Some(format!("Rescan: {}", msg));
+                    }
+                    Err(e) => {
+                        self.ui.last_error = Some(format!("Rescan: {}", e));
+                    }
                 }
             }
 
@@ -1633,10 +1702,18 @@ fn thumbnail_worker(
 fn input_worker(tx: Sender<AppEvent>) {
     loop {
         if event::poll(std::time::Duration::from_millis(50)).unwrap_or(false) {
-            if let Ok(Event::Key(key)) = event::read() {
-                if tx.send(AppEvent::Key(key)).is_err() {
-                    break;
+            match event::read() {
+                Ok(Event::Key(key)) => {
+                    if tx.send(AppEvent::Key(key)).is_err() {
+                        break;
+                    }
                 }
+                Ok(Event::Resize(_, _)) => {
+                    if tx.send(AppEvent::Resize).is_err() {
+                        break;
+                    }
+                }
+                _ => {}
             }
         } else if tx.send(AppEvent::Tick).is_err() {
             break;
@@ -1846,12 +1923,27 @@ fn run_app<B: ratatui::backend::Backend>(
                                     app.ui.last_error = Some(format!("Undo: {}", e));
                                 }
                             }
+                            KeyCode::Char('R') => {
+                                // Rescan wallpaper directory
+                                match app.rescan() {
+                                    Ok(msg) => {
+                                        app.ui.last_error = Some(format!("Rescan: {}", msg));
+                                    }
+                                    Err(e) => {
+                                        app.ui.last_error = Some(format!("Rescan: {}", e));
+                                    }
+                                }
+                            }
                             _ => {}
                         }
                     }
                 }
                 AppEvent::ThumbnailReady(response) => {
                     app.handle_thumbnail_ready(response);
+                }
+                AppEvent::Resize => {
+                    app.handle_resize();
+                    terminal.clear()?;
                 }
                 AppEvent::Tick => {
                     // Check for expired undo window
