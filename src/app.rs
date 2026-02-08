@@ -509,8 +509,10 @@ pub enum AppEvent {
 
 /// Thumbnail cache size multiplier over visible grid columns.
 /// Keeps enough thumbnails for smooth scrolling without overwhelming
-/// the terminal graphics protocol.
-const THUMBNAIL_CACHE_MULTIPLIER: usize = 4;
+/// the terminal graphics protocol. When the cache reaches capacity,
+/// all Kitty images are purged from the terminal and the cache is
+/// reset — visible thumbnails reload from warm disk cache in one frame.
+const THUMBNAIL_CACHE_MULTIPLIER: usize = 8;
 
 /// UI-related transient state (popups, command mode, errors).
 pub struct UiState {
@@ -913,9 +915,12 @@ impl App {
     }
 
     /// Dynamic max thumbnail cache size based on grid columns.
+    /// Capped at 200 to stay well below the Kitty protocol's u8 image ID
+    /// limit (255) and prevent ID wrap-around which causes every thumbnail
+    /// to render the same picture.
     fn max_thumbnail_cache(&self) -> usize {
         let cols = self.config.thumbnails.grid_columns.max(1);
-        (cols * THUMBNAIL_CACHE_MULTIPLIER).max(12)
+        (cols * THUMBNAIL_CACHE_MULTIPLIER).max(24).min(200)
     }
 
     /// Handle a loaded thumbnail from background thread
@@ -929,20 +934,34 @@ impl App {
 
         let max_cache = self.max_thumbnail_cache();
         if let Some(picker) = &mut self.thumbnails.image_picker {
-            // Evict oldest entries if cache is full
-            while self.thumbnails.cache.len() >= max_cache {
-                if let Some(oldest_idx) = self.thumbnails.cache_order.first().copied() {
-                    self.thumbnails.cache.remove(&oldest_idx);
-                    self.thumbnails.cache_order.remove(0);
-                } else {
-                    break;
-                }
+            // When cache is full, purge all Kitty images from the terminal
+            // and reset the in-memory cache. ratatui-image assigns each
+            // protocol a u8 unique_id (0-255) and never sends a delete
+            // command when the Rust object is dropped. Without this purge,
+            // IDs eventually wrap around and every thumbnail renders the
+            // same picture. Visible thumbnails are re-requested on the very
+            // next frame from the warm disk cache, so the visual gap is at
+            // most one frame.
+            if self.thumbnails.cache.len() >= max_cache {
+                Self::clear_terminal_images();
+                self.thumbnails.cache.clear();
+                self.thumbnails.cache_order.clear();
             }
 
             let protocol = picker.new_resize_protocol(response.image);
             self.thumbnails.cache.insert(response.cache_idx, protocol);
             self.thumbnails.cache_order.push(response.cache_idx);
         }
+    }
+
+    /// Purge all Kitty graphics protocol images from the terminal.
+    ///
+    /// Sends `APC G a=d,d=A ST` which deletes every stored image and its
+    /// placements. Harmlessly ignored by non-Kitty terminals (Sixel, etc.).
+    fn clear_terminal_images() {
+        use std::io::Write;
+        let _ = std::io::stdout().write_all(b"\x1b_Ga=d,d=A\x1b\\");
+        let _ = std::io::stdout().flush();
     }
 
     /// Check if a thumbnail is ready (also updates LRU order)
