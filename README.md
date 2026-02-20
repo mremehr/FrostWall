@@ -4,6 +4,19 @@
 
 FrostWall automatically detects your screen configurations and intelligently matches wallpapers based on aspect ratio, orientation, and display characteristics. Built as a Rust TUI with image preview support and CLI commands for scripting.
 
+## Collaboration Stack (Experimental)
+
+Det finns nu en lokal samarbetsstack i repot:
+
+- `tools/collab-core` (realtime backend: chat/tasks/timeline/presence/observer)
+- `tools/displayfrost-observer` (desktop frame capture)
+- `tools/displayfrost-hardfork` (full DisplayFrost fork)
+
+Dokumentation:
+
+- `docs/collab-mvp.md`
+- `docs/collab-core-guide.md`
+
 ## Vision
 
 Managing wallpapers across multiple monitors with different aspect ratios (ultrawide, portrait, landscape) is tedious. FrostWall transforms this into a seamless, visual experience:
