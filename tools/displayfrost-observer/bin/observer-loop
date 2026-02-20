@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE_DIR="${STATE_DIR:-/tmp/displayfrost-observer}"
+URL_FILE="$STATE_DIR/stream.url"
+FRAMES_DIR="$STATE_DIR/frames"
+
+url=""
+fps="1"
+count=""
+out_dir="$FRAMES_DIR"
+mode="auto"
+
+usage() {
+  cat <<'EOF'
+Usage: observer-loop [--url URL] [--fps N] [--count N] [--out-dir DIR] [--mode auto|hls|grim]
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --url)
+      url="${2:-}"
+      shift 2
+      ;;
+    --fps)
+      fps="${2:-}"
+      shift 2
+      ;;
+    --count)
+      count="${2:-}"
+      shift 2
+      ;;
+    --out-dir)
+      out_dir="${2:-}"
+      shift 2
+      ;;
+    --mode)
+      mode="${2:-}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage
+      exit 2
+      ;;
+  esac
+done
+
+mkdir -p "$out_dir"
+
+capture_with_grim_loop() {
+  if ! command -v grim >/dev/null 2>&1; then
+    echo "grim not found for fallback capture" >&2
+    return 1
+  fi
+
+  local delay
+  delay="$(awk "BEGIN { if ($fps <= 0) print 1; else print 1/$fps }")"
+  local i=1
+  local max="${count:-0}"
+  while :; do
+    if [[ "$max" -gt 0 && "$i" -gt "$max" ]]; then
+      break
+    fi
+    printf -v file "%s/frame_%06d.png" "$out_dir" "$i"
+    grim "$file"
+    i=$((i + 1))
+    sleep "$delay"
+  done
+}
+
+capture_with_hls_loop() {
+  if [[ -z "$url" && -f "$URL_FILE" ]]; then
+    url="$(cat "$URL_FILE")"
+  fi
+  if [[ -z "$url" ]]; then
+    echo "No stream URL. Start observer first or pass --url." >&2
+    return 1
+  fi
+
+  cmd=(ffmpeg -hide_banner -loglevel error -y -i "$url" -vf "fps=${fps}")
+  if [[ -n "$count" ]]; then
+    cmd+=(-frames:v "$count")
+  fi
+  cmd+=("$out_dir/frame_%06d.jpg")
+
+  echo "capturing from: $url"
+  echo "writing to: $out_dir"
+  "${cmd[@]}"
+}
+
+case "$mode" in
+  grim)
+    capture_with_grim_loop
+    ;;
+  hls)
+    capture_with_hls_loop
+    ;;
+  auto)
+    if capture_with_hls_loop; then
+      exit 0
+    fi
+    capture_with_grim_loop
+    ;;
+  *)
+    echo "Unknown mode: $mode (expected auto|hls|grim)" >&2
+    exit 2
+    ;;
+esac
