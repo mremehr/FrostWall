@@ -8,6 +8,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
+use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -79,28 +80,57 @@ fn thumbnail_worker(
     tx: Sender<AppEvent>,
     disk_cache: ThumbnailCache,
 ) {
-    while let Ok(request) = rx.recv() {
-        // Load thumbnail (uses fast_image_resize with disk caching).
-        match disk_cache.load(&request.source_path) {
-            Ok(image) => {
-                let response = ThumbnailResponse {
-                    cache_idx: request.cache_idx,
-                    image,
-                    generation: request.generation,
-                };
-                if tx.send(AppEvent::ThumbnailReady(response)).is_err() {
-                    break;
+    while let Ok(first_request) = rx.recv() {
+        // Drain available work and keep only the newest generation.
+        // Also deduplicate by cache index so fast scrolling doesn't waste
+        // time decoding thumbnails that were immediately superseded.
+        let requests = collect_latest_requests(first_request, &rx);
+
+        for request in requests {
+            // Load thumbnail (uses fast_image_resize with disk caching).
+            match disk_cache.load(&request.source_path) {
+                Ok(image) => {
+                    let response = ThumbnailResponse {
+                        cache_idx: request.cache_idx,
+                        image,
+                        generation: request.generation,
+                    };
+                    if tx.send(AppEvent::ThumbnailReady(response)).is_err() {
+                        return;
+                    }
                 }
-            }
-            Err(e) => {
-                eprintln!(
-                    "Thumbnail failed for {}: {}",
-                    request.source_path.display(),
-                    e
-                );
+                Err(e) => {
+                    eprintln!(
+                        "Thumbnail failed for {}: {}",
+                        request.source_path.display(),
+                        e
+                    );
+                }
             }
         }
     }
+}
+
+fn collect_latest_requests(
+    first_request: ThumbnailRequest,
+    rx: &Receiver<ThumbnailRequest>,
+) -> Vec<ThumbnailRequest> {
+    let mut latest_generation = first_request.generation;
+    let mut latest_by_idx: HashMap<usize, ThumbnailRequest> = HashMap::new();
+    latest_by_idx.insert(first_request.cache_idx, first_request);
+
+    while let Ok(request) = rx.try_recv() {
+        if request.generation > latest_generation {
+            latest_generation = request.generation;
+            latest_by_idx.clear();
+        }
+
+        if request.generation == latest_generation {
+            latest_by_idx.insert(request.cache_idx, request);
+        }
+    }
+
+    latest_by_idx.into_values().collect()
 }
 
 /// Background thread that polls for input events.
@@ -361,5 +391,55 @@ fn run_app<B: ratatui::backend::Backend>(
         if app.ui.should_quit {
             return Ok(());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_latest_requests;
+    use crate::app::ThumbnailRequest;
+    use std::sync::mpsc;
+
+    fn request(cache_idx: usize, generation: u64, suffix: &str) -> ThumbnailRequest {
+        ThumbnailRequest {
+            cache_idx,
+            source_path: format!("/tmp/{suffix}.png").into(),
+            generation,
+        }
+    }
+
+    #[test]
+    fn collect_latest_requests_keeps_newest_generation_only() {
+        let (tx, rx) = mpsc::sync_channel(16);
+        tx.send(request(0, 1, "old-a")).expect("send old-a");
+        tx.send(request(1, 1, "old-b")).expect("send old-b");
+        tx.send(request(2, 2, "new-a")).expect("send new-a");
+        tx.send(request(3, 2, "new-b")).expect("send new-b");
+
+        let first = rx.recv().expect("recv first");
+        let mut batch = collect_latest_requests(first, &rx);
+        batch.sort_by_key(|r| r.cache_idx);
+
+        assert_eq!(batch.len(), 2);
+        assert!(batch.iter().all(|r| r.generation == 2));
+        assert_eq!(batch[0].cache_idx, 2);
+        assert_eq!(batch[1].cache_idx, 3);
+    }
+
+    #[test]
+    fn collect_latest_requests_deduplicates_cache_idx() {
+        let (tx, rx) = mpsc::sync_channel(16);
+        tx.send(request(7, 5, "first")).expect("send first");
+        tx.send(request(7, 5, "second")).expect("send second");
+        tx.send(request(8, 5, "other")).expect("send other");
+
+        let first = rx.recv().expect("recv first");
+        let mut batch = collect_latest_requests(first, &rx);
+        batch.sort_by_key(|r| r.cache_idx);
+
+        assert_eq!(batch.len(), 2);
+        assert_eq!(batch[0].cache_idx, 7);
+        assert_eq!(batch[0].source_path.to_string_lossy(), "/tmp/second.png");
+        assert_eq!(batch[1].cache_idx, 8);
     }
 }

@@ -143,3 +143,124 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{FilterState, PairingState, SelectionState, ThumbnailState, UiState};
+    use crate::pairing::{PairingHistory, PairingStyleMode};
+    use crate::screen::AspectCategory;
+    use crate::wallpaper::{Wallpaper, WallpaperCache};
+    use std::collections::{HashMap, HashSet};
+    use std::path::PathBuf;
+    use std::sync::mpsc;
+
+    fn test_wallpaper(name: &str) -> Wallpaper {
+        Wallpaper {
+            path: PathBuf::from(format!("/tmp/{name}.png")),
+            width: 1920,
+            height: 1080,
+            aspect_category: AspectCategory::Landscape,
+            colors: Vec::new(),
+            tags: Vec::new(),
+            auto_tags: Vec::new(),
+            color_weights: Vec::new(),
+            embedding: None,
+            file_size: 0,
+            modified_at: 0,
+        }
+    }
+
+    fn test_app(wallpaper_count: usize) -> App {
+        let wallpapers = (0..wallpaper_count)
+            .map(|i| test_wallpaper(&format!("wp-{i}")))
+            .collect();
+
+        App {
+            screens: Vec::new(),
+            cache: WallpaperCache {
+                version: 1,
+                wallpapers,
+                source_dir: PathBuf::from("/tmp"),
+                screen_indices: HashMap::new(),
+                recursive: false,
+            },
+            config: Config::default(),
+            ui: UiState::default(),
+            selection: SelectionState::default(),
+            filters: FilterState::default(),
+            thumbnails: ThumbnailState {
+                image_picker: None,
+                cache: HashMap::new(),
+                cache_order: Vec::new(),
+                loading: HashSet::new(),
+                request_tx: None,
+                generation: 0,
+            },
+            pairing: PairingState {
+                history: PairingHistory::new(128),
+                suggestions: Vec::new(),
+                current_wallpapers: HashMap::new(),
+                show_preview: false,
+                preview_matches: HashMap::new(),
+                preview_idx: 0,
+                style_mode: PairingStyleMode::default(),
+            },
+        }
+    }
+
+    #[test]
+    fn max_thumbnail_cache_is_clamped_to_prevent_id_wrap() {
+        let mut app = test_app(0);
+
+        app.config.thumbnails.grid_columns = 1;
+        assert_eq!(app.max_thumbnail_cache(), 24);
+
+        app.config.thumbnails.grid_columns = 1_000;
+        assert_eq!(app.max_thumbnail_cache(), 200);
+    }
+
+    #[test]
+    fn request_thumbnail_does_not_mark_loading_when_queue_is_full() {
+        let mut app = test_app(2);
+        let (tx, _rx) = mpsc::sync_channel(1);
+        app.set_thumb_channel(tx);
+
+        app.request_thumbnail(0);
+        assert!(app.is_loading(0));
+
+        app.request_thumbnail(1);
+        assert!(!app.is_loading(1));
+    }
+
+    #[test]
+    fn handle_thumbnail_ready_ignores_stale_generation() {
+        let mut app = test_app(1);
+        app.thumbnails.generation = 2;
+        app.thumbnails.loading.insert(0);
+
+        app.handle_thumbnail_ready(ThumbnailResponse {
+            cache_idx: 0,
+            image: image::DynamicImage::new_rgba8(1, 1),
+            generation: 1,
+        });
+
+        assert!(app.is_loading(0));
+        assert!(app.thumbnails.cache.is_empty());
+    }
+
+    #[test]
+    fn handle_thumbnail_ready_current_generation_clears_loading() {
+        let mut app = test_app(1);
+        app.thumbnails.generation = 7;
+        app.thumbnails.loading.insert(0);
+
+        app.handle_thumbnail_ready(ThumbnailResponse {
+            cache_idx: 0,
+            image: image::DynamicImage::new_rgba8(1, 1),
+            generation: 7,
+        });
+
+        assert!(!app.is_loading(0));
+    }
+}
