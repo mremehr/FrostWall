@@ -65,7 +65,7 @@ pub struct ThumbnailConfig {
 }
 
 fn default_preload_count() -> usize {
-    1
+    20
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +85,9 @@ pub struct TerminalConfig {
     /// Whether the optimization hint has been shown
     #[serde(default)]
     pub hint_shown: bool,
+    /// Force safe thumbnail protocol on Kitty (uses halfblocks instead of Kitty graphics).
+    #[serde(default = "default_kitty_safe_thumbnails")]
+    pub kitty_safe_thumbnails: bool,
 }
 
 fn default_repaint_delay() -> u32 {
@@ -95,12 +98,17 @@ fn default_input_delay() -> u32 {
     1
 }
 
+fn default_kitty_safe_thumbnails() -> bool {
+    true
+}
+
 impl Default for TerminalConfig {
     fn default() -> Self {
         Self {
             recommended_repaint_delay: 5,
             recommended_input_delay: 1,
             hint_shown: false,
+            kitty_safe_thumbnails: true,
         }
     }
 }
@@ -241,7 +249,7 @@ impl Default for ThumbnailConfig {
             height: 600,
             quality: 92,
             grid_columns: 3,
-            preload_count: 1,
+            preload_count: 20,
         }
     }
 }
@@ -410,6 +418,20 @@ impl Config {
             .map(|t| t.contains("kitty"))
             .unwrap_or(false)
             || std::env::var("KITTY_WINDOW_ID").is_ok()
+    }
+
+    /// Whether to force the safe thumbnail protocol path on Kitty.
+    /// Env override: `FROSTWALL_KITTY_SAFE_THUMBNAILS=0|1`.
+    pub fn use_safe_kitty_thumbnail_protocol(&self) -> bool {
+        match std::env::var("FROSTWALL_KITTY_SAFE_THUMBNAILS")
+            .ok()
+            .map(|v| v.trim().to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("1" | "true" | "yes" | "on") => true,
+            Some("0" | "false" | "no" | "off") => false,
+            _ => self.terminal.kitty_safe_thumbnails,
+        }
     }
 
     /// Show terminal optimization hint if not shown before.

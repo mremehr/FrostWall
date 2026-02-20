@@ -396,6 +396,7 @@ fn run_app<B: ratatui::backend::Backend>(
                                     app.ui.status_message = Some(format!("pywal: {}", e));
                                 }
                             }
+                            KeyCode::Char('i') => app.toggle_thumbnail_protocol_mode(),
                             KeyCode::Char('W') => app.toggle_pywal_export(),
                             KeyCode::Char('u') => {
                                 // Undo pairing.

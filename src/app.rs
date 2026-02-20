@@ -151,15 +151,8 @@ impl App {
 
         // Try to create image picker for thumbnail rendering
         // from_termios() queries terminal for font size
-        // guess_protocol() then detects the best graphics protocol (Kitty, Sixel, etc.)
-        let image_picker = Picker::from_termios()
-            .ok()
-            .map(|mut p| {
-                // Actively query terminal for graphics protocol support
-                p.guess_protocol();
-                p
-            })
-            .or_else(|| Some(Picker::new((8, 16))));
+        // and config can force a safer protocol on Kitty.
+        let image_picker = Some(Self::new_thumbnail_picker(&config));
 
         // Load pairing history and rebuild affinity scores with corrected formula
         let mut pairing_history = PairingHistory::load(config.pairing.max_history_records)

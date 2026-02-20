@@ -90,6 +90,31 @@ impl App {
                 let _ = self.apply_wallpaper();
             }
 
+            // Image protocol mode (HB/KTY).
+            "img" | "image" => {
+                let mode = args.to_ascii_lowercase();
+                match mode.as_str() {
+                    "" | "toggle" => self.toggle_thumbnail_protocol_mode(),
+                    "hb" | "safe" | "halfblocks" => {
+                        self.config.terminal.kitty_safe_thumbnails = true;
+                        self.reset_thumbnail_cache();
+                        self.thumbnails.image_picker =
+                            Some(Self::new_thumbnail_picker(&self.config));
+                        self.ui.status_message = Some("Thumbnail protocol: HB (safe)".to_string());
+                    }
+                    "kty" | "kitty" => {
+                        self.config.terminal.kitty_safe_thumbnails = false;
+                        self.reset_thumbnail_cache();
+                        self.thumbnails.image_picker =
+                            Some(Self::new_thumbnail_picker(&self.config));
+                        self.ui.status_message = Some("Thumbnail protocol: KTY".to_string());
+                    }
+                    _ => {
+                        self.ui.status_message = Some("Usage: :img [toggle|hb|kitty]".to_string());
+                    }
+                }
+            }
+
             // Sort mode.
             "sort" => match args.to_lowercase().as_str() {
                 "name" | "n" => {

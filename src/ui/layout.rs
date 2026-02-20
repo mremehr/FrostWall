@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
-use ratatui_image::StatefulImage;
+use ratatui_image::{picker::ProtocolType, StatefulImage};
 
 const THUMBNAIL_WIDTH: u16 = 48;
 const THUMBNAIL_HEIGHT: u16 = 28;
@@ -176,6 +176,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
     let match_mode = app.config.display.match_mode.display_name();
     let resize_mode = app.config.display.resize_mode.display_name();
     let sort_mode = app.filters.sort_mode.display_name();
+    let thumb_protocol = thumbnail_protocol_label(app);
 
     let mut header_spans = vec![Span::styled(
         " FrostWall ",
@@ -202,6 +203,11 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
         Span::styled(" ", Style::default()),
         Span::styled(
             format!("[⇅{}]", sort_mode),
+            Style::default().fg(theme.fg_secondary),
+        ),
+        Span::styled(" ", Style::default()),
+        Span::styled(
+            format!("[img:{}]", thumb_protocol),
             Style::default().fg(theme.fg_secondary),
         ),
     ]);
@@ -574,12 +580,7 @@ fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme)
     let thumb_y = area.y + (area.height.saturating_sub(THUMBNAIL_HEIGHT + 2)) / 2;
 
     // Preload extra thumbnails ahead/behind for smooth scrolling.
-    // Keep preload conservative on Kitty to avoid protocol churn under rapid scroll.
-    let preload = if crate::app::Config::is_kitty_terminal() {
-        app.config.thumbnails.preload_count.min(1)
-    } else {
-        app.config.thumbnails.preload_count
-    };
+    let preload = app.config.thumbnails.preload_count;
     let preload_start = start.saturating_sub(preload);
     let preload_end = (end + preload).min(total);
 
@@ -739,8 +740,14 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
     // Pairing preview mode - show pairing-specific help
     if app.pairing.show_preview {
         let sep = Span::styled(" │ ", Style::default().fg(theme.fg_muted));
+        let thumb_protocol = thumbnail_protocol_label(app);
 
         let help = Line::from(vec![
+            Span::styled(
+                format!("img:{}", thumb_protocol),
+                Style::default().fg(theme.fg_secondary),
+            ),
+            sep.clone(),
             Span::styled("←/→", Style::default().fg(theme.success)),
             Span::styled(" cycle", Style::default().fg(theme.fg_muted)),
             sep.clone(),
@@ -753,6 +760,9 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
             Span::styled("y", Style::default().fg(theme.success)),
             Span::styled(" style", Style::default().fg(theme.fg_muted)),
             sep.clone(),
+            Span::styled("i", Style::default().fg(theme.success)),
+            Span::styled(" img", Style::default().fg(theme.fg_muted)),
+            sep.clone(),
             Span::styled("p/Esc", Style::default().fg(theme.success)),
             Span::styled(" close", Style::default().fg(theme.fg_muted)),
         ]);
@@ -761,13 +771,19 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
         return;
     }
 
-    draw_help_line(f, area, theme);
+    draw_help_line(f, app, area, theme);
 }
 
-fn draw_help_line(f: &mut Frame, area: Rect, theme: &FrostTheme) {
+fn draw_help_line(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
     let sep = Span::styled(" │ ", Style::default().fg(theme.fg_muted));
+    let thumb_protocol = thumbnail_protocol_label(app);
 
     let help = Line::from(vec![
+        Span::styled(
+            format!("img:{}", thumb_protocol),
+            Style::default().fg(theme.fg_secondary),
+        ),
+        sep.clone(),
         Span::styled("←/→", Style::default().fg(theme.accent_primary)),
         Span::styled(" nav", Style::default().fg(theme.fg_muted)),
         sep.clone(),
@@ -783,12 +799,28 @@ fn draw_help_line(f: &mut Frame, area: Rect, theme: &FrostTheme) {
         Span::styled("?", Style::default().fg(theme.accent_primary)),
         Span::styled(" help", Style::default().fg(theme.fg_muted)),
         sep.clone(),
+        Span::styled("i", Style::default().fg(theme.accent_primary)),
+        Span::styled(" img", Style::default().fg(theme.fg_muted)),
+        sep.clone(),
         Span::styled("q", Style::default().fg(theme.accent_primary)),
         Span::styled(" quit", Style::default().fg(theme.fg_muted)),
     ]);
 
     let paragraph = Paragraph::new(help).alignment(Alignment::Center);
     f.render_widget(paragraph, area);
+}
+
+fn thumbnail_protocol_label(app: &App) -> &'static str {
+    app.thumbnails
+        .image_picker
+        .as_ref()
+        .map(|p| match p.protocol_type {
+            ProtocolType::Halfblocks => "HB",
+            ProtocolType::Sixel => "SIX",
+            ProtocolType::Kitty => "KTY",
+            ProtocolType::Iterm2 => "IT2",
+        })
+        .unwrap_or("N/A")
 }
 
 fn center_vertically(area: Rect, height: u16) -> Rect {

@@ -27,7 +27,7 @@ pub struct Picker {
     pub background_color: Option<Rgb<u8>>,
     pub protocol_type: ProtocolType,
     pub is_tmux: bool,
-    kitty_counter: u8,
+    kitty_counter: u16,
 }
 
 /// Serde-friendly protocol-type enum for [Picker].
@@ -97,19 +97,23 @@ impl Picker {
             is_tmux: false,
             // Start from a randomized offset to reduce deterministic ID reuse
             // when terminal-side state lingers across picker recreation.
-            kitty_counter: random(),
+            kitty_counter: random::<u16>(),
         }
     }
 
     #[inline]
-    fn next_kitty_id(&mut self) -> u8 {
-        // Avoid saturating at 255 (which causes every later image to share one ID).
-        // Wrap and skip 0 so we stay in 1..=255.
+    fn next_kitty_id(&mut self) -> u32 {
+        // Keep a 16-bit logical counter and encode it as:
+        // id = low8 (foreground 8-bit color) + (high8 << 24) (3rd diacritic).
+        // This stays robust even when truecolor is unavailable in the text path.
         self.kitty_counter = self.kitty_counter.wrapping_add(1);
         if self.kitty_counter == 0 {
             self.kitty_counter = 1;
         }
-        self.kitty_counter
+
+        let low = (self.kitty_counter & 0x00FF) as u32;
+        let high = ((self.kitty_counter >> 8) & 0x00FF) as u32;
+        low | (high << 24)
     }
 
     /// Guess the best protocol for the current terminal by issuing some escape sequences to

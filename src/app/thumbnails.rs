@@ -1,5 +1,8 @@
 use super::{App, Config, ThumbnailRequest, ThumbnailResponse, THUMBNAIL_CACHE_MULTIPLIER};
-use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
+use ratatui_image::{
+    picker::{Picker, ProtocolType},
+    protocol::StatefulProtocol,
+};
 use std::sync::mpsc::SyncSender;
 
 const THUMBNAIL_MAX_IN_FLIGHT_MULTIPLIER: usize = 2;
@@ -37,13 +40,17 @@ impl App {
         }
     }
 
-    /// Dynamic max thumbnail cache size based on grid columns.
-    /// Capped at 200 to stay well below the Kitty protocol's u8 image ID
-    /// limit (255) and prevent ID wrap-around which causes every thumbnail
-    /// to render the same picture.
+    /// Dynamic max thumbnail cache size based on both visible columns and
+    /// preload window. If cache capacity is lower than the working preload
+    /// range, the cache constantly churns and can destabilize visible images.
+    ///
+    /// Capped to keep memory usage predictable during long sessions.
     fn max_thumbnail_cache(&self) -> usize {
         let cols = self.config.thumbnails.grid_columns.max(1);
-        (cols * THUMBNAIL_CACHE_MULTIPLIER).clamp(24, 200)
+        let preload = self.config.thumbnails.preload_count;
+        let warm_window = cols.saturating_add(preload.saturating_mul(2));
+        let target = (cols * THUMBNAIL_CACHE_MULTIPLIER).max(warm_window.saturating_mul(2));
+        target.clamp(24, 200)
     }
 
     fn max_in_flight_thumbnail_requests(&self) -> usize {
@@ -51,9 +58,14 @@ impl App {
         (cols * THUMBNAIL_MAX_IN_FLIGHT_MULTIPLIER).clamp(6, 12)
     }
 
-    fn new_thumbnail_picker() -> Picker {
+    pub(super) fn new_thumbnail_picker(config: &Config) -> Picker {
         let mut picker = Picker::from_termios().unwrap_or_else(|_| Picker::new((8, 16)));
         picker.guess_protocol();
+        if config.use_safe_kitty_thumbnail_protocol()
+            && (Config::is_kitty_terminal() || matches!(picker.protocol_type, ProtocolType::Kitty))
+        {
+            picker.protocol_type = ProtocolType::Halfblocks;
+        }
         picker
     }
 
@@ -65,9 +77,22 @@ impl App {
         self.thumbnails.loading.clear();
         self.thumbnails.generation = self.thumbnails.generation.wrapping_add(1);
 
-        // Reset picker to avoid long-running image-id wrap behavior.
+        // Recreate picker after purge so protocol state is fresh.
         if Config::is_kitty_terminal() {
-            self.thumbnails.image_picker = Some(Self::new_thumbnail_picker());
+            self.thumbnails.image_picker = Some(Self::new_thumbnail_picker(&self.config));
+        }
+    }
+
+    /// Evict the least recently used thumbnail from memory cache.
+    fn evict_oldest_thumbnail(&mut self) {
+        if let Some(oldest_idx) = self.thumbnails.cache_order.first().copied() {
+            self.thumbnails.cache_order.remove(0);
+            self.thumbnails.cache.remove(&oldest_idx);
+            return;
+        }
+
+        if let Some((&oldest_idx, _)) = self.thumbnails.cache.iter().next() {
+            self.thumbnails.cache.remove(&oldest_idx);
         }
     }
 
@@ -85,20 +110,21 @@ impl App {
         }
 
         let max_cache = self.max_thumbnail_cache();
-        // When cache is full, purge all Kitty images from the terminal
-        // and reset the in-memory cache. ratatui-image assigns each
-        // protocol a u8 unique_id (0-255) and never sends a delete
-        // command when the Rust object is dropped. Without this purge,
-        // IDs eventually wrap around and every thumbnail renders the
-        // same picture. Visible thumbnails are re-requested on the very
-        // next frame from the warm disk cache, so the visual gap is at
-        // most one frame.
-        if self.thumbnails.cache.len() >= max_cache {
-            self.reset_thumbnail_cache();
+        // Keep cache steady with LRU eviction to avoid full-cache reset churn.
+        while self.thumbnails.cache.len() >= max_cache {
+            self.evict_oldest_thumbnail();
         }
 
         if let Some(picker) = &mut self.thumbnails.image_picker {
             let protocol = picker.new_resize_protocol(response.image);
+            if let Some(pos) = self
+                .thumbnails
+                .cache_order
+                .iter()
+                .position(|&i| i == response.cache_idx)
+            {
+                self.thumbnails.cache_order.remove(pos);
+            }
             self.thumbnails.cache.insert(response.cache_idx, protocol);
             self.thumbnails.cache_order.push(response.cache_idx);
         }
@@ -113,7 +139,7 @@ impl App {
             return;
         }
         use std::io::Write;
-        let _ = std::io::stdout().write_all(b"\x1b_Ga=d,d=A\x1b\\");
+        let _ = std::io::stdout().write_all(b"\x1b_Ga=d,d=A;\x1b\\");
         let _ = std::io::stdout().flush();
     }
 
@@ -151,7 +177,23 @@ impl App {
         self.reset_thumbnail_cache();
 
         // Re-detect font metrics for the new terminal size.
-        self.thumbnails.image_picker = Some(Self::new_thumbnail_picker());
+        self.thumbnails.image_picker = Some(Self::new_thumbnail_picker(&self.config));
+    }
+
+    /// Toggle thumbnail rendering protocol between safe halfblocks and Kitty graphics.
+    ///
+    /// The selection is persisted in config and takes effect immediately.
+    pub fn toggle_thumbnail_protocol_mode(&mut self) {
+        self.config.terminal.kitty_safe_thumbnails = !self.config.terminal.kitty_safe_thumbnails;
+        self.reset_thumbnail_cache();
+        self.thumbnails.image_picker = Some(Self::new_thumbnail_picker(&self.config));
+
+        let mode = if self.config.terminal.kitty_safe_thumbnails {
+            "HB (safe)"
+        } else {
+            "KTY"
+        };
+        self.ui.status_message = Some(format!("Thumbnail protocol: {mode}"));
     }
 }
 
@@ -221,14 +263,46 @@ mod tests {
     }
 
     #[test]
-    fn max_thumbnail_cache_is_clamped_to_prevent_id_wrap() {
+    fn max_thumbnail_cache_is_clamped() {
         let mut app = test_app(0);
+        app.config.thumbnails.preload_count = 1;
 
         app.config.thumbnails.grid_columns = 1;
         assert_eq!(app.max_thumbnail_cache(), 24);
 
         app.config.thumbnails.grid_columns = 1_000;
         assert_eq!(app.max_thumbnail_cache(), 200);
+    }
+
+    #[test]
+    fn max_thumbnail_cache_scales_with_preload_window() {
+        let mut app = test_app(0);
+        app.config.thumbnails.grid_columns = 3;
+        app.config.thumbnails.preload_count = 20;
+
+        // visible(3) + preload behind/ahead(40) = 43; keep extra headroom => 86
+        assert_eq!(app.max_thumbnail_cache(), 86);
+    }
+
+    #[test]
+    fn handle_thumbnail_ready_evicts_oldest_when_cache_is_full() {
+        let mut app = test_app(64);
+        app.config.thumbnails.grid_columns = 1;
+        app.config.thumbnails.preload_count = 1;
+        app.thumbnails.image_picker = Some(Picker::new((8, 16)));
+
+        let max_cache = app.max_thumbnail_cache();
+        for idx in 0..(max_cache + 6) {
+            app.handle_thumbnail_ready(ThumbnailResponse {
+                cache_idx: idx,
+                image: image::DynamicImage::new_rgba8(1, 1),
+                generation: app.thumbnails.generation,
+            });
+        }
+
+        assert_eq!(app.thumbnails.cache.len(), max_cache);
+        assert!(!app.thumbnails.cache.contains_key(&0));
+        assert!(app.thumbnails.cache.contains_key(&(max_cache + 5)));
     }
 
     #[test]
