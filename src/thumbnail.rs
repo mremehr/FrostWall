@@ -142,22 +142,6 @@ impl ThumbnailCache {
 
         (dst_w.max(1), dst_h.max(1))
     }
-
-    /// Clear the thumbnail cache
-    #[allow(dead_code)]
-    pub fn clear(&self) -> Result<()> {
-        if self.cache_dir.exists() {
-            fs::remove_dir_all(&self.cache_dir)?;
-            fs::create_dir_all(&self.cache_dir)?;
-        }
-        Ok(())
-    }
-
-    /// Get cache directory path
-    #[allow(dead_code)]
-    pub fn cache_dir(&self) -> &Path {
-        &self.cache_dir
-    }
 }
 
 impl Default for ThumbnailCache {

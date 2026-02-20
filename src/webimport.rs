@@ -20,24 +20,13 @@ impl Gallery {
             Gallery::Wallhaven => "Wallhaven",
         }
     }
-
-    #[allow(dead_code)]
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "unsplash" => Some(Gallery::Unsplash),
-            "wallhaven" => Some(Gallery::Wallhaven),
-            _ => None,
-        }
-    }
 }
 
 /// Search result from a gallery
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct GalleryImage {
     pub id: String,
     pub url: String,
-    pub thumb_url: String,
     pub width: u32,
     pub height: u32,
     pub author: Option<String>,
@@ -46,7 +35,6 @@ pub struct GalleryImage {
 
 // Unsplash API response structures
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct UnsplashPhoto {
     id: String,
     width: u32,
@@ -56,62 +44,32 @@ struct UnsplashPhoto {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct UnsplashUrls {
     raw: String,
-    full: String,
-    regular: String,
-    small: String,
-    thumb: String,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct UnsplashUser {
     name: String,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct UnsplashSearchResponse {
-    total: u32,
-    total_pages: u32,
     results: Vec<UnsplashPhoto>,
 }
 
 // Wallhaven API response structures
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct WallhavenResponse {
     data: Vec<WallhavenImage>,
-    meta: WallhavenMeta,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct WallhavenImage {
     id: String,
-    url: String,
     path: String,
     dimension_x: u32,
     dimension_y: u32,
-    thumbs: WallhavenThumbs,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct WallhavenThumbs {
-    large: String,
-    original: String,
-    small: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct WallhavenMeta {
-    current_page: u32,
-    last_page: u32,
-    total: u32,
 }
 
 /// Web import client
@@ -185,7 +143,6 @@ impl WebImporter {
             .map(|photo| GalleryImage {
                 id: photo.id,
                 url: format!("{}?w=3840&q=85", photo.urls.raw), // 4K quality
-                thumb_url: photo.urls.small,
                 width: photo.width,
                 height: photo.height,
                 author: Some(photo.user.name),
@@ -222,7 +179,6 @@ impl WebImporter {
             .map(|img| GalleryImage {
                 id: img.id,
                 url: img.path,
-                thumb_url: img.thumbs.small,
                 width: img.dimension_x,
                 height: img.dimension_y,
                 author: None,
@@ -295,7 +251,6 @@ impl WebImporter {
             .map(|img| GalleryImage {
                 id: img.id,
                 url: img.path,
-                thumb_url: img.thumbs.small,
                 width: img.dimension_x,
                 height: img.dimension_y,
                 author: None,

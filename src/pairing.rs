@@ -816,22 +816,6 @@ impl PairingHistory {
         });
     }
 
-    /// Begin undo window
-    #[allow(dead_code)]
-    pub fn begin_undo(
-        &mut self,
-        previous: HashMap<String, PathBuf>,
-        message: String,
-        duration_secs: u64,
-    ) {
-        self.undo_state = Some(UndoState {
-            previous_wallpapers: previous,
-            started_at: Instant::now(),
-            duration: Duration::from_secs(duration_secs),
-            message,
-        });
-    }
-
     /// Check if undo is available
     pub fn can_undo(&self) -> bool {
         if let Some(state) = &self.undo_state {

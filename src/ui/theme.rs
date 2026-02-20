@@ -2,13 +2,11 @@ use ratatui::style::Color;
 use std::fs;
 
 /// Frost theme colors - inspired by Nord/Catppuccin ice palette
-#[allow(dead_code)]
 #[derive(Clone)]
 pub struct FrostTheme {
     // Backgrounds
     pub bg_dark: Color,
     pub bg_medium: Color,
-    pub bg_light: Color,
 
     // Foregrounds
     pub fg_primary: Color,
@@ -23,7 +21,6 @@ pub struct FrostTheme {
     // Status
     pub success: Color,
     pub warning: Color,
-    pub error: Color,
 
     // Borders
     pub border: Color,
@@ -37,7 +34,6 @@ impl FrostTheme {
             // Transparent backgrounds (inherit from terminal)
             bg_dark: Color::Reset,
             bg_medium: Color::Reset,
-            bg_light: Color::Reset,
 
             // Dark text for light background
             fg_primary: Color::Rgb(10, 15, 20), // #0a0f14 - near black
@@ -52,7 +48,6 @@ impl FrostTheme {
             // Status
             success: Color::Rgb(13, 94, 58), // #0d5e3a - dark ice green
             warning: Color::Rgb(153, 101, 21), // #996515 - dark golden
-            error: Color::Rgb(160, 24, 36),  // #a01824 - dark cold red
 
             // Borders
             border: Color::Rgb(184, 212, 241), // #b8d4f1 - soft ice
@@ -66,7 +61,6 @@ impl FrostTheme {
             // Transparent backgrounds (inherit from terminal)
             bg_dark: Color::Reset,
             bg_medium: Color::Reset,
-            bg_light: Color::Reset,
 
             // Light text for dark background
             fg_primary: Color::Rgb(245, 250, 255), // #f5faff - bright white
@@ -81,7 +75,6 @@ impl FrostTheme {
             // Status
             success: Color::Rgb(80, 250, 150), // #50fa96 - cold green
             warning: Color::Rgb(255, 215, 95), // #ffd75f - warm yellow
-            error: Color::Rgb(255, 95, 135),   // #ff5f87 - bright red
 
             // Borders
             border: Color::Rgb(60, 90, 120), // #3c5a78 - dark ice

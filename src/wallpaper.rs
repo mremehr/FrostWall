@@ -327,13 +327,13 @@ impl Wallpaper {
     }
 
     /// Check if wallpaper has any of the given tags
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn has_any_tag(&self, tags: &[String]) -> bool {
         tags.iter().any(|t| self.has_tag(t))
     }
 
     /// Check if wallpaper has all of the given tags
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn has_all_tags(&self, tags: &[String]) -> bool {
         tags.iter().all(|t| self.has_tag(t))
     }
@@ -348,7 +348,7 @@ impl Wallpaper {
     }
 
     /// Get auto tags above a confidence threshold
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn auto_tags_above(&self, threshold: f32) -> Vec<&AutoTag> {
         self.auto_tags
             .iter()
@@ -357,19 +357,19 @@ impl Wallpaper {
     }
 
     /// Set auto tags (replaces existing)
-    #[allow(dead_code)]
+    #[cfg(feature = "clip")]
     pub fn set_auto_tags(&mut self, tags: Vec<AutoTag>) {
         self.auto_tags = tags;
     }
 
     /// Set embedding (replaces existing)
-    #[allow(dead_code)]
+    #[cfg(feature = "clip")]
     pub fn set_embedding(&mut self, embedding: Vec<f32>) {
         self.embedding = Some(embedding);
     }
 
     /// Get primary/dominant color (first in list)
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn primary_color(&self) -> Option<&str> {
         self.colors.first().map(|s| s.as_str())
     }
@@ -886,16 +886,6 @@ impl WallpaperCache {
         self.wallpapers
             .iter()
             .filter(|wp| wp.has_tag(tag))
-            .collect()
-    }
-
-    /// Get wallpapers by dominant color (hex string like "#1a2b3c")
-    #[allow(dead_code)]
-    pub fn with_color(&self, color: &str) -> Vec<&Wallpaper> {
-        let color = color.to_lowercase();
-        self.wallpapers
-            .iter()
-            .filter(|wp| wp.colors.iter().any(|c| c.to_lowercase() == color))
             .collect()
     }
 }

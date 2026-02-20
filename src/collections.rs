@@ -113,41 +113,6 @@ impl CollectionStore {
             Ok(false)
         }
     }
-
-    /// List all collection names
-    #[allow(dead_code)]
-    pub fn list_names(&self) -> Vec<&str> {
-        self.collections.iter().map(|c| c.name.as_str()).collect()
-    }
-
-    /// Update an existing collection
-    #[allow(dead_code)]
-    pub fn update(&mut self, name: &str, wallpapers: HashMap<String, PathBuf>) -> Result<bool> {
-        if let Some(collection) = self.collections.iter_mut().find(|c| c.name == name) {
-            collection.wallpapers = wallpapers;
-            self.save()?;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-
-    /// Rename a collection
-    #[allow(dead_code)]
-    pub fn rename(&mut self, old_name: &str, new_name: &str) -> Result<bool> {
-        // Check new name doesn't exist
-        if self.collections.iter().any(|c| c.name == new_name) {
-            anyhow::bail!("Collection '{}' already exists", new_name);
-        }
-
-        if let Some(collection) = self.collections.iter_mut().find(|c| c.name == old_name) {
-            collection.name = new_name.to_string();
-            self.save()?;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
 }
 
 /// CLI commands for collection management

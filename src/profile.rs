@@ -82,11 +82,6 @@ impl ProfileManager {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    pub fn get(&self, name: &str) -> Option<&Profile> {
-        self.profiles.get(name)
-    }
-
     pub fn create(&mut self, name: &str) -> &mut Profile {
         let profile = Profile::new(name);
         self.profiles.insert(name.to_string(), profile);
@@ -111,13 +106,6 @@ impl ProfileManager {
         } else {
             false
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn active(&self) -> Option<&Profile> {
-        self.active_profile
-            .as_ref()
-            .and_then(|name| self.profiles.get(name))
     }
 }
 

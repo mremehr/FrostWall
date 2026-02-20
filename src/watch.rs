@@ -290,19 +290,3 @@ fn set_wallpapers(
 fn is_image_file(path: &Path) -> bool {
     crate::utils::is_image_file(path)
 }
-
-/// Run a single wallpaper change (for cron/timer use)
-#[allow(dead_code)]
-pub async fn run_once(shuffle: bool) -> Result<()> {
-    let config = Config::load()?;
-    let wallpaper_dir = config.wallpaper_dir();
-    let mut cache = WallpaperCache::load_or_scan(&wallpaper_dir)?;
-    let screens = screen::detect_screens().await?;
-
-    set_wallpapers(&mut cache, &screens, &config, shuffle)?;
-    if !shuffle {
-        cache.save()?;
-    }
-
-    Ok(())
-}

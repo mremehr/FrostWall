@@ -216,19 +216,6 @@ pub fn sort_by_time_profile<'a>(
     scored.into_iter().map(|(wp, _)| wp).collect()
 }
 
-/// Filter wallpapers that match time profile (score above threshold)
-#[allow(dead_code)]
-pub fn filter_by_time_profile<'a>(
-    wallpapers: &'a [crate::wallpaper::Wallpaper],
-    profiles: &TimeProfiles,
-    min_score: f32,
-) -> Vec<&'a crate::wallpaper::Wallpaper> {
-    wallpapers
-        .iter()
-        .filter(|wp| profiles.score_wallpaper(&wp.colors, &wp.tags) >= min_score)
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

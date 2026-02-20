@@ -300,31 +300,6 @@ impl ClipTagger {
         })
     }
 
-    /// Tag a single image using CLIP visual encoder
-    ///
-    /// Returns tags sorted by confidence (highest first)
-    #[allow(dead_code)]
-    pub fn tag_image(&mut self, image_path: &Path, threshold: f32) -> Result<Vec<AutoTag>> {
-        self.tag_image_verbose(image_path, threshold, false)
-    }
-
-    /// Tag with optional verbose output for debugging
-    pub fn tag_image_verbose(
-        &mut self,
-        image_path: &Path,
-        threshold: f32,
-        verbose: bool,
-    ) -> Result<Vec<AutoTag>> {
-        self.analyze_image_verbose(image_path, threshold, verbose)
-            .map(|analysis| analysis.tags)
-    }
-
-    /// Analyze image with CLIP and return both semantic tags and normalized embedding.
-    #[allow(dead_code)]
-    pub fn analyze_image(&mut self, image_path: &Path, threshold: f32) -> Result<ClipAnalysis> {
-        self.analyze_image_verbose(image_path, threshold, false)
-    }
-
     /// Analyze image with optional verbose output for debugging.
     pub fn analyze_image_verbose(
         &mut self,

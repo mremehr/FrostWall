@@ -84,7 +84,6 @@ impl Default for FillColor {
     }
 }
 
-#[allow(dead_code)]
 impl FillColor {
     pub fn black() -> Self {
         Self {
@@ -92,23 +91,6 @@ impl FillColor {
             g: 0,
             b: 0,
             a: 255,
-        }
-    }
-
-    pub fn from_hex(hex: &str) -> Option<Self> {
-        let hex = hex.trim_start_matches('#').trim_start_matches("0x");
-        if hex.len() >= 6 {
-            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-            let a = if hex.len() >= 8 {
-                u8::from_str_radix(&hex[6..8], 16).ok()?
-            } else {
-                255
-            };
-            Some(Self { r, g, b, a })
-        } else {
-            None
         }
     }
 
@@ -185,46 +167,6 @@ pub fn set_wallpaper_with_resize(
     cmd.arg("img")
         .arg("-o")
         .arg(output)
-        .arg(path)
-        .arg("--resize")
-        .arg(resize_mode.as_str())
-        .arg("--fill-color")
-        .arg(fill_color.to_hex())
-        .arg("--transition-type")
-        .arg(transition.transition_type.as_str())
-        .arg("--transition-duration")
-        .arg(transition.duration.to_string())
-        .arg("--transition-fps")
-        .arg(transition.fps.to_string());
-
-    let output = cmd.output().context("Failed to run swww")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("swww failed: {}", stderr);
-    }
-
-    Ok(())
-}
-
-/// Set wallpaper on all outputs
-#[allow(dead_code)]
-pub fn set_wallpaper_all(path: &Path, transition: &Transition) -> Result<()> {
-    set_wallpaper_all_with_resize(path, transition, ResizeMode::Crop, &FillColor::black())
-}
-
-/// Set wallpaper on all outputs with full control over resize behavior
-#[allow(dead_code)]
-pub fn set_wallpaper_all_with_resize(
-    path: &Path,
-    transition: &Transition,
-    resize_mode: ResizeMode,
-    fill_color: &FillColor,
-) -> Result<()> {
-    ensure_daemon()?;
-
-    let mut cmd = Command::new("swww");
-    cmd.arg("img")
         .arg(path)
         .arg("--resize")
         .arg(resize_mode.as_str())
