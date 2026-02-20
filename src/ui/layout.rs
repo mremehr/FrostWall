@@ -573,13 +573,27 @@ fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme)
     // Center vertically
     let thumb_y = area.y + (area.height.saturating_sub(THUMBNAIL_HEIGHT + 2)) / 2;
 
-    // Preload extra thumbnails ahead/behind for smooth scrolling
-    let preload = app.config.thumbnails.preload_count;
+    // Preload extra thumbnails ahead/behind for smooth scrolling.
+    // Keep preload conservative on Kitty to avoid protocol churn under rapid scroll.
+    let preload = if crate::app::Config::is_kitty_terminal() {
+        app.config.thumbnails.preload_count.min(1)
+    } else {
+        app.config.thumbnails.preload_count
+    };
     let preload_start = start.saturating_sub(preload);
     let preload_end = (end + preload).min(total);
 
-    // Request thumbnails for visible + preload range (non-blocking)
-    for idx in preload_start..preload_end {
+    // Request visible thumbnails first (highest priority).
+    for idx in start..end {
+        let cache_idx = app.selection.filtered_wallpapers[idx];
+        app.request_thumbnail(cache_idx);
+    }
+    // Then request preload range behind and ahead.
+    for idx in preload_start..start {
+        let cache_idx = app.selection.filtered_wallpapers[idx];
+        app.request_thumbnail(cache_idx);
+    }
+    for idx in end..preload_end {
         let cache_idx = app.selection.filtered_wallpapers[idx];
         app.request_thumbnail(cache_idx);
     }

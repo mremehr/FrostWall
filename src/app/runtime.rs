@@ -117,13 +117,7 @@ fn thumbnail_worker(
 }
 
 fn send_thumbnail_ready(tx: &SyncSender<AppEvent>, response: ThumbnailResponse) -> bool {
-    match tx.try_send(AppEvent::ThumbnailReady(response)) {
-        Ok(()) => true,
-        // Queue is full with older work; drop this thumbnail update and keep going.
-        // Visible thumbnails are requested continuously while scrolling.
-        Err(TrySendError::Full(_)) => true,
-        Err(TrySendError::Disconnected(_)) => false,
-    }
+    tx.send(AppEvent::ThumbnailReady(response)).is_ok()
 }
 
 fn collect_latest_requests(
@@ -502,17 +496,10 @@ mod tests {
     }
 
     #[test]
-    fn send_thumbnail_ready_drops_when_event_queue_is_full() {
+    fn send_thumbnail_ready_returns_false_when_receiver_is_gone() {
         let (tx, rx) = mpsc::sync_channel(1);
-        tx.send(AppEvent::Tick).expect("seed queue");
-
-        assert!(send_thumbnail_ready(&tx, response(42, 9)));
-
-        match rx.recv().expect("recv first") {
-            AppEvent::Tick => {}
-            _ => panic!("expected existing Tick event"),
-        }
-        assert!(rx.try_recv().is_err());
+        drop(rx);
+        assert!(!send_thumbnail_ready(&tx, response(42, 9)));
     }
 
     #[test]

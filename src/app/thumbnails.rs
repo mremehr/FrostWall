@@ -2,6 +2,8 @@ use super::{App, Config, ThumbnailRequest, ThumbnailResponse, THUMBNAIL_CACHE_MU
 use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
 use std::sync::mpsc::SyncSender;
 
+const THUMBNAIL_MAX_IN_FLIGHT_MULTIPLIER: usize = 2;
+
 impl App {
     /// Request a thumbnail to be loaded in background.
     pub fn request_thumbnail(&mut self, cache_idx: usize) {
@@ -14,6 +16,10 @@ impl App {
         if self.thumbnails.cache.contains_key(&cache_idx)
             || self.thumbnails.loading.contains(&cache_idx)
         {
+            return;
+        }
+
+        if self.thumbnails.loading.len() >= self.max_in_flight_thumbnail_requests() {
             return;
         }
 
@@ -40,6 +46,17 @@ impl App {
         (cols * THUMBNAIL_CACHE_MULTIPLIER).clamp(24, 200)
     }
 
+    fn max_in_flight_thumbnail_requests(&self) -> usize {
+        let cols = self.config.thumbnails.grid_columns.max(1);
+        (cols * THUMBNAIL_MAX_IN_FLIGHT_MULTIPLIER).clamp(6, 12)
+    }
+
+    fn new_thumbnail_picker() -> Picker {
+        let mut picker = Picker::from_termios().unwrap_or_else(|_| Picker::new((8, 16)));
+        picker.guess_protocol();
+        picker
+    }
+
     /// Clear in-memory thumbnail state and purge terminal-side image IDs.
     pub(super) fn reset_thumbnail_cache(&mut self) {
         Self::clear_terminal_images();
@@ -50,10 +67,7 @@ impl App {
 
         // Reset picker to avoid long-running image-id wrap behavior.
         if Config::is_kitty_terminal() {
-            if let Ok(mut picker) = Picker::from_termios() {
-                picker.guess_protocol();
-                self.thumbnails.image_picker = Some(picker);
-            }
+            self.thumbnails.image_picker = Some(Self::new_thumbnail_picker());
         }
     }
 
@@ -137,10 +151,7 @@ impl App {
         self.reset_thumbnail_cache();
 
         // Re-detect font metrics for the new terminal size.
-        if let Ok(mut picker) = Picker::from_termios() {
-            picker.guess_protocol();
-            self.thumbnails.image_picker = Some(picker);
-        }
+        self.thumbnails.image_picker = Some(Self::new_thumbnail_picker());
     }
 }
 
@@ -218,6 +229,25 @@ mod tests {
 
         app.config.thumbnails.grid_columns = 1_000;
         assert_eq!(app.max_thumbnail_cache(), 200);
+    }
+
+    #[test]
+    fn in_flight_thumbnail_requests_are_bounded() {
+        let mut app = test_app(32);
+        app.config.thumbnails.grid_columns = 3;
+
+        let max_in_flight = app.max_in_flight_thumbnail_requests();
+        let (tx, _rx) = mpsc::sync_channel(64);
+        app.set_thumb_channel(tx);
+
+        for idx in 0..max_in_flight {
+            app.request_thumbnail(idx);
+        }
+        assert_eq!(app.thumbnails.loading.len(), max_in_flight);
+
+        app.request_thumbnail(max_in_flight + 1);
+        assert_eq!(app.thumbnails.loading.len(), max_in_flight);
+        assert!(!app.is_loading(max_in_flight + 1));
     }
 
     #[test]

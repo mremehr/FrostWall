@@ -65,7 +65,7 @@ pub struct ThumbnailConfig {
 }
 
 fn default_preload_count() -> usize {
-    3
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -241,7 +241,7 @@ impl Default for ThumbnailConfig {
             height: 600,
             quality: 92,
             grid_columns: 3,
-            preload_count: 3,
+            preload_count: 1,
         }
     }
 }
