@@ -11,8 +11,11 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::thread;
+
+const THUMBNAIL_REQUEST_QUEUE_CAPACITY: usize = 512;
+const APP_EVENT_QUEUE_CAPACITY: usize = 1024;
 
 pub async fn run_tui(wallpaper_dir: PathBuf) -> Result<()> {
     let mut app = App::new(wallpaper_dir)?;
@@ -40,8 +43,10 @@ pub async fn run_tui(wallpaper_dir: PathBuf) -> Result<()> {
 
     // Set up channels for background thumbnail loading.
     // Bounded queue prevents unlimited backlog during rapid scrolling.
-    let (thumb_tx, thumb_rx) = mpsc::sync_channel::<ThumbnailRequest>(512);
-    let (event_tx, event_rx) = mpsc::channel::<AppEvent>();
+    let (thumb_tx, thumb_rx) =
+        mpsc::sync_channel::<ThumbnailRequest>(THUMBNAIL_REQUEST_QUEUE_CAPACITY);
+    // Bounded event queue avoids unbounded memory growth during heavy thumbnail churn.
+    let (event_tx, event_rx) = mpsc::sync_channel::<AppEvent>(APP_EVENT_QUEUE_CAPACITY);
 
     app.set_thumb_channel(thumb_tx);
 
@@ -77,7 +82,7 @@ pub async fn run_tui(wallpaper_dir: PathBuf) -> Result<()> {
 /// Background thread that loads thumbnails using fast_image_resize.
 fn thumbnail_worker(
     rx: Receiver<ThumbnailRequest>,
-    tx: Sender<AppEvent>,
+    tx: SyncSender<AppEvent>,
     disk_cache: ThumbnailCache,
 ) {
     while let Ok(first_request) = rx.recv() {
@@ -95,7 +100,7 @@ fn thumbnail_worker(
                         image,
                         generation: request.generation,
                     };
-                    if tx.send(AppEvent::ThumbnailReady(response)).is_err() {
+                    if !send_thumbnail_ready(&tx, response) {
                         return;
                     }
                 }
@@ -108,6 +113,16 @@ fn thumbnail_worker(
                 }
             }
         }
+    }
+}
+
+fn send_thumbnail_ready(tx: &SyncSender<AppEvent>, response: ThumbnailResponse) -> bool {
+    match tx.try_send(AppEvent::ThumbnailReady(response)) {
+        Ok(()) => true,
+        // Queue is full with older work; drop this thumbnail update and keep going.
+        // Visible thumbnails are requested continuously while scrolling.
+        Err(TrySendError::Full(_)) => true,
+        Err(TrySendError::Disconnected(_)) => false,
     }
 }
 
@@ -134,7 +149,7 @@ fn collect_latest_requests(
 }
 
 /// Background thread that polls for input events.
-fn input_worker(tx: Sender<AppEvent>) {
+fn input_worker(tx: SyncSender<AppEvent>) {
     loop {
         if event::poll(std::time::Duration::from_millis(50)).unwrap_or(false) {
             match event::read() {
@@ -150,10 +165,45 @@ fn input_worker(tx: Sender<AppEvent>) {
                 }
                 _ => {}
             }
-        } else if tx.send(AppEvent::Tick).is_err() {
-            break;
+        } else {
+            match tx.try_send(AppEvent::Tick) {
+                Ok(()) | Err(TrySendError::Full(_)) => {}
+                Err(TrySendError::Disconnected(_)) => break,
+            }
         }
     }
+}
+
+fn coalesce_thumbnail_events(events: Vec<AppEvent>) -> Vec<AppEvent> {
+    let mut coalesced = Vec::with_capacity(events.len());
+    let mut latest_generation: Option<u64> = None;
+    let mut latest_by_idx: HashMap<usize, ThumbnailResponse> = HashMap::new();
+
+    for event in events {
+        match event {
+            AppEvent::ThumbnailReady(response) => {
+                match latest_generation {
+                    None => latest_generation = Some(response.generation),
+                    Some(gen) if response.generation > gen => {
+                        latest_generation = Some(response.generation);
+                        latest_by_idx.clear();
+                    }
+                    Some(gen) if response.generation < gen => continue,
+                    Some(_) => {}
+                }
+                latest_by_idx.insert(response.cache_idx, response);
+            }
+            other => coalesced.push(other),
+        }
+    }
+
+    if !latest_by_idx.is_empty() {
+        let mut thumbnails: Vec<_> = latest_by_idx.into_values().collect();
+        thumbnails.sort_by_key(|r| r.cache_idx);
+        coalesced.extend(thumbnails.into_iter().map(AppEvent::ThumbnailReady));
+    }
+
+    coalesced
 }
 
 fn run_app<B: ratatui::backend::Backend>(
@@ -193,7 +243,7 @@ fn run_app<B: ratatui::backend::Backend>(
                     while let Ok(e) = event_rx.try_recv() {
                         events.push(e);
                     }
-                    events
+                    coalesce_thumbnail_events(events)
                 }
                 Err(_) => continue, // Timeout, check theme and loop.
             };
@@ -396,14 +446,22 @@ fn run_app<B: ratatui::backend::Backend>(
 
 #[cfg(test)]
 mod tests {
-    use super::collect_latest_requests;
-    use crate::app::ThumbnailRequest;
+    use super::{coalesce_thumbnail_events, collect_latest_requests, send_thumbnail_ready};
+    use crate::app::{AppEvent, ThumbnailRequest, ThumbnailResponse};
     use std::sync::mpsc;
 
     fn request(cache_idx: usize, generation: u64, suffix: &str) -> ThumbnailRequest {
         ThumbnailRequest {
             cache_idx,
             source_path: format!("/tmp/{suffix}.png").into(),
+            generation,
+        }
+    }
+
+    fn response(cache_idx: usize, generation: u64) -> ThumbnailResponse {
+        ThumbnailResponse {
+            cache_idx,
+            image: image::DynamicImage::new_rgba8(1, 1),
             generation,
         }
     }
@@ -441,5 +499,47 @@ mod tests {
         assert_eq!(batch[0].cache_idx, 7);
         assert_eq!(batch[0].source_path.to_string_lossy(), "/tmp/second.png");
         assert_eq!(batch[1].cache_idx, 8);
+    }
+
+    #[test]
+    fn send_thumbnail_ready_drops_when_event_queue_is_full() {
+        let (tx, rx) = mpsc::sync_channel(1);
+        tx.send(AppEvent::Tick).expect("seed queue");
+
+        assert!(send_thumbnail_ready(&tx, response(42, 9)));
+
+        match rx.recv().expect("recv first") {
+            AppEvent::Tick => {}
+            _ => panic!("expected existing Tick event"),
+        }
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn coalesce_thumbnail_events_keeps_latest_generation_and_dedupes_idx() {
+        let events = vec![
+            AppEvent::ThumbnailReady(response(0, 1)),
+            AppEvent::Tick,
+            AppEvent::ThumbnailReady(response(1, 1)),
+            AppEvent::ThumbnailReady(response(2, 2)),
+            AppEvent::ThumbnailReady(response(2, 2)),
+            AppEvent::ThumbnailReady(response(3, 2)),
+        ];
+
+        let coalesced = coalesce_thumbnail_events(events);
+        let mut kept = Vec::new();
+        let mut saw_tick = false;
+
+        for event in coalesced {
+            match event {
+                AppEvent::ThumbnailReady(r) => kept.push((r.cache_idx, r.generation)),
+                AppEvent::Tick => saw_tick = true,
+                _ => {}
+            }
+        }
+
+        kept.sort_unstable();
+        assert!(saw_tick);
+        assert_eq!(kept, vec![(2, 2), (3, 2)]);
     }
 }
