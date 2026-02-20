@@ -86,3 +86,6 @@ harness = false
 [profile.release]
 lto = true
 strip = true
+
+[patch.crates-io]
+ratatui-image = { path = "vendor/ratatui-image" }
