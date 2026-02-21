@@ -4,18 +4,6 @@
 
 FrostWall automatically detects your screen configurations and intelligently matches wallpapers based on aspect ratio, orientation, and display characteristics. Built as a Rust TUI with image preview support and CLI commands for scripting.
 
-## Collaboration Stack (Experimental)
-
-Det finns nu en lokal samarbetsstack i repot:
-
-- `tools/collab-core` (realtime backend: chat/tasks/timeline/presence/observer)
-- extern frame-producer som skriver bilder till `COLLAB_OBSERVER_DIR`
-
-Dokumentation:
-
-- `docs/collab-mvp.md`
-- `docs/collab-core-guide.md`
-
 ## Vision
 
 Managing wallpapers across multiple monitors with different aspect ratios (ultrawide, portrait, landscape) is tedious. FrostWall transforms this into a seamless, visual experience:
@@ -77,28 +65,20 @@ Multi-monitor wallpaper pairing that learns from your choices:
 - **Strict is truly strict** - In `Strict`, non-matching style candidates are filtered out (no automatic fallback to `Soft`)
 - **Position memory** - TUI remembers your browsing position per screen
 
-### Auto-Tagging
+### Tagging
 
-Two tagging systems available:
+#### Manual Tagging (built-in)
 
-#### Color-Based Tagging (built-in)
-
-Automatic content detection based on color analysis:
+Manual tags are available in all builds:
 
 ```bash
-frostwall color-tag              # Auto-tag all wallpapers
-frostwall color-tag --incremental # Only tag new wallpapers
+frostwall tag list
+frostwall tag add ~/wallpapers/forest.jpg nature
+frostwall tag remove ~/wallpapers/forest.jpg nature
+frostwall tag show nature
 ```
 
-12 built-in tag categories:
-`nature`, `ocean`, `forest`, `sunset`, `dark`, `bright`, `cyberpunk`, `minimal`, `mountain`, `space`, `autumn`, `pastel`
-
-Tags are assigned based on:
-- Brightness range matching
-- Saturation range matching
-- Color palette similarity (LAB/Delta-E)
-
-#### CLIP AI Tagging (optional feature)
+#### CLIP AI Auto-Tagging (optional feature)
 
 Semantic image understanding using OpenAI's CLIP model:
 
@@ -109,10 +89,11 @@ cargo build --release --features clip
 # Build with CLIP + CUDA GPU acceleration
 cargo build --release --features clip-cuda
 
-# Tag wallpapers with AI
+# Tag wallpapers with AI (command exists only in clip-enabled builds)
 frostwall auto-tag                    # Tag all wallpapers
 frostwall auto-tag --incremental      # Only tag new wallpapers
 frostwall auto-tag --threshold 0.55   # Custom confidence threshold
+frostwall auto-tag --max-tags 5       # Limit tags per image (0 = unlimited)
 frostwall auto-tag --verbose          # Show per-image results
 frostwall --dir ~/pictures/wallpapers auto-tag --incremental --threshold 0.55
 ```
@@ -206,6 +187,7 @@ Press `:` in TUI for vim-style commands:
 | `:clear` / `:c` | Clear all filters |
 | `:random` / `:r` | Random wallpaper |
 | `:apply` / `:a` | Apply current wallpaper |
+| `:img [toggle|hb|kitty]` | Toggle/set thumbnail protocol |
 | `:similar` / `:sim` | Find similar wallpapers |
 | `:sort name/date/size` | Change sort mode |
 | `:screen <n>` | Switch to screen n |
@@ -231,12 +213,13 @@ frostwall watch        # Background daemon for auto-rotation
 # Tag management
 frostwall tag list
 frostwall tag add ~/wallpapers/forest.jpg nature
+frostwall tag remove ~/wallpapers/forest.jpg nature
 frostwall tag show nature
-frostwall color-tag                    # Auto-tag by colors
 frostwall auto-tag                     # AI tagging (requires --features clip)
 
 # Pairing management
 frostwall pair stats
+frostwall pair clear
 frostwall pair suggest ~/wallpapers/forest.jpg
 
 # Collections
@@ -284,7 +267,7 @@ Features:
 Control how wallpapers fit the screen:
 - **Crop** (default) - Fill screen, crop excess
 - **Fit** - Fit inside screen with letterboxing
-- **Center** - No resize, center image
+- **No** - No resize, center image
 - **Stretch** - Fill screen (distorts aspect)
 
 ### Additional Features
@@ -348,9 +331,17 @@ width = 800
 height = 600
 quality = 92
 grid_columns = 3
+preload_count = 3
 
 [theme]
 mode = "auto"              # auto, light, dark
+check_interval_ms = 500
+
+[terminal]
+recommended_repaint_delay = 5
+recommended_input_delay = 1
+hint_shown = false
+kitty_safe_thumbnails = true  # Safe half-block mode in Kitty
 
 [pairing]
 enabled = true             # Enable intelligent pairing
@@ -365,6 +356,12 @@ harmony_weight = 3.0             # Color harmony bonus weight
 tag_weight = 2.0                 # Per shared tag (up to 3 tags)
 semantic_weight = 7.0            # CLIP embedding similarity weight
 repetition_penalty_weight = 1.0  # Recent repetition penalty multiplier
+
+[clip]
+enabled = false           # CLIP auto-tagging opt-in flag (used for status hints)
+threshold = 0.25
+show_in_filter = true
+cache_embeddings = true
 
 [time_profiles]
 enabled = false            # Enable time-based wallpaper selection
@@ -398,14 +395,16 @@ preferred_tags = ["dark", "space", "minimal"]
 | `R` | Incremental rescan (preserves tags & pairing) |
 | `:` | **Command mode** (vim-style) |
 | `m` | Toggle match mode (Strict/Flexible/All) |
-| `f` | Toggle resize mode (Crop/Fit/Center/Stretch) |
+| `f` | Toggle resize mode (Crop/Fit/No/Stretch) |
 | `s` | Toggle sort mode (Name/Size/Date) |
 | `c` | Show/hide color palette |
 | `C` | Open color filter picker |
 | `t` | Cycle tag filter |
 | `T` | Clear tag filter |
 | `w` | Export pywal colors |
+| `i` | Toggle thumbnail protocol (HB safe / KTY) |
 | `W` | Toggle auto pywal export |
+| `u` | Undo latest pairing auto-apply (if undo window is active) |
 | `Tab` | Next screen (remembers position) |
 | `Shift+Tab` | Previous screen (remembers position) |
 | `?` | Show help popup |
@@ -442,7 +441,7 @@ src/
   collections.rs # Wallpaper collections/presets
   timeprofile.rs # Time-based wallpaper profiles
   webimport.rs   # Web gallery import (Unsplash/Wallhaven)
-  utils.rs       # Color utilities, LAB matching, auto-tagging
+  utils.rs       # Color utilities and LAB matching
   watch.rs       # Watch daemon with inotify
   init.rs        # Interactive setup wizard
   clip.rs              # CLIP auto-tagging (optional feature)
@@ -456,7 +455,7 @@ src/
 ### Data Flow
 
 1. **Startup**: Detect screens via `niri msg outputs` or `wlr-randr`
-2. **Scan**: Load wallpaper metadata (dimensions, colors, auto-tags) into cache
+2. **Scan**: Load wallpaper metadata (dimensions, colors, tags, optional auto-tags/embeddings) into cache
 3. **Filter**: Match wallpapers to selected screen's aspect category
 4. **Pair**: Calculate pairing suggestions based on history + color similarity
 5. **Preview**: Split-view shows selected wallpaper + thumbnail suggestions
