@@ -4,17 +4,13 @@ Praktisk guide för nya samarbetsstacken i projektet.
 
 ## Delar
 
-- `tools/displayfrost-hardfork`: full fork av DisplayFrost
-- `tools/displayfrost-observer`: producerar frames lokalt
 - `tools/collab-core`: realtime backend (chat/tasks/timeline/presence/observer)
+- extern frame-producer: skriver bilder till observer-katalog
 
 ## Startordning (lokalt)
 
-1. Starta desktop-observer:
-
-```bash
-tools/displayfrost-observer/bin/observer-start --port 8900 --output DP-2
-```
+1. Se till att en extern frame-producer skriver bilder till `/tmp/frostwall-observer/frames`
+eller sätt `COLLAB_OBSERVER_DIR` till katalogen du använder.
 
 2. Starta backend:
 
@@ -23,16 +19,10 @@ cd /home/mrmattias/git/FrostWall/tools/collab-core
 cargo run
 ```
 
-3. Generera en frame manuellt (för test):
+3. Lista observer frames (för test):
 
 ```bash
-tools/displayfrost-observer/bin/observer-frame --mode auto
-```
-
-4. Stäng observer när du är klar:
-
-```bash
-tools/displayfrost-observer/bin/observer-stop
+curl -s http://127.0.0.1:7878/api/observer/frames
 ```
 
 ## Snabb verifiering
@@ -93,14 +83,14 @@ Eventformat:
 ## Miljövariabler
 
 - `COLLAB_BIND` (default `127.0.0.1:7878`)
-- `COLLAB_OBSERVER_DIR` (default `/tmp/displayfrost-observer/frames`)
+- `COLLAB_OBSERVER_DIR` (default `/tmp/frostwall-observer/frames`)
 - `COLLAB_OBSERVER_SCAN_MS` (default `800`)
 
 Exempel:
 
 ```bash
 COLLAB_BIND=127.0.0.1:7999 \
-COLLAB_OBSERVER_DIR=/tmp/displayfrost-observer/frames \
+COLLAB_OBSERVER_DIR=/tmp/frostwall-observer/frames \
 COLLAB_OBSERVER_SCAN_MS=200 \
 cargo run
 ```
@@ -110,4 +100,3 @@ cargo run
 - In-memory state (ingen DB än)
 - Ingen auth än
 - Local-first/dev-first design
-

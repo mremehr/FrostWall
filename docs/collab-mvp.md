@@ -8,7 +8,7 @@ Build a local-first collaboration backend that supports:
 - task tracking
 - shared timeline
 - user presence
-- desktop observer frame events (from `displayfrost-observer`)
+- desktop observer frame events (from extern frame-producer)
 
 MVP is optimized for speed and iteration, not long-term storage yet.
 
@@ -19,7 +19,7 @@ MVP is optimized for speed and iteration, not long-term storage yet.
 - HTTP API for CRUD-lite operations
 - WebSocket realtime channel for all clients
 - In-memory state snapshot
-- Observer integration that watches `/tmp/displayfrost-observer/frames`
+- Observer integration that watches `/tmp/frostwall-observer/frames`
 - Local development deployment (`127.0.0.1`)
 
 ### Not included (yet)
@@ -92,7 +92,7 @@ MVP is optimized for speed and iteration, not long-term storage yet.
 
 Source:
 
-- `displayfrost-observer` writes frames into `/tmp/displayfrost-observer/frames`
+- extern frame-producer writes frames into `/tmp/frostwall-observer/frames`
 
 Behavior:
 
@@ -106,4 +106,3 @@ Behavior:
 - all mutation endpoints emit realtime events
 - observer frames appear in `/api/observer/frames`, timeline, and websocket stream
 - `cargo check` passes for `tools/collab-core`
-

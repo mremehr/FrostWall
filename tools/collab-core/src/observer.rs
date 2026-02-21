@@ -15,7 +15,7 @@ pub struct ObserverConfig {
 impl Default for ObserverConfig {
     fn default() -> Self {
         Self {
-            frames_dir: PathBuf::from("/tmp/displayfrost-observer/frames"),
+            frames_dir: PathBuf::from("/tmp/frostwall-observer/frames"),
             scan_interval: Duration::from_millis(800),
         }
     }

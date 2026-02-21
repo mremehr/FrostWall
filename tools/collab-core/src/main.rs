@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
     let bind = env::var("COLLAB_BIND").unwrap_or_else(|_| "127.0.0.1:7878".to_string());
     let observer_dir = env::var("COLLAB_OBSERVER_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp/displayfrost-observer/frames"));
+        .unwrap_or_else(|_| PathBuf::from("/tmp/frostwall-observer/frames"));
     let observer_scan_ms = env::var("COLLAB_OBSERVER_SCAN_MS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())

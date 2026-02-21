@@ -13,7 +13,7 @@ Project docs:
 - tasks
 - timeline
 - presence
-- observer frame ingestion from `/tmp/displayfrost-observer/frames`
+- observer frame ingestion from `/tmp/frostwall-observer/frames`
 - websocket event stream (`/ws`)
 
 ## Run
@@ -30,7 +30,7 @@ Default bind:
 Environment variables:
 
 - `COLLAB_BIND` (default `127.0.0.1:7878`)
-- `COLLAB_OBSERVER_DIR` (default `/tmp/displayfrost-observer/frames`)
+- `COLLAB_OBSERVER_DIR` (default `/tmp/frostwall-observer/frames`)
 - `COLLAB_OBSERVER_SCAN_MS` (default `800`)
 
 ## API

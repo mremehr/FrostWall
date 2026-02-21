@@ -9,8 +9,7 @@ FrostWall automatically detects your screen configurations and intelligently mat
 Det finns nu en lokal samarbetsstack i repot:
 
 - `tools/collab-core` (realtime backend: chat/tasks/timeline/presence/observer)
-- `tools/displayfrost-observer` (desktop frame capture)
-- `tools/displayfrost-hardfork` (full DisplayFrost fork)
+- extern frame-producer som skriver bilder till `COLLAB_OBSERVER_DIR`
 
 Dokumentation:
 
