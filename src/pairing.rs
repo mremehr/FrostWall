@@ -246,6 +246,155 @@ mod tests {
         assert!(!history.can_undo());
     }
 
+    fn test_pairing_wallpaper(
+        path: &str,
+        colors: &[&str],
+        tags: &[&str],
+    ) -> crate::wallpaper::Wallpaper {
+        crate::wallpaper::Wallpaper {
+            path: PathBuf::from(path),
+            width: 1920,
+            height: 1080,
+            aspect_category: crate::screen::AspectCategory::Landscape,
+            colors: colors.iter().map(|c| (*c).to_string()).collect(),
+            color_weights: if colors.is_empty() {
+                Vec::new()
+            } else {
+                vec![1.0 / colors.len() as f32; colors.len()]
+            },
+            tags: tags.iter().map(|t| (*t).to_string()).collect(),
+            auto_tags: Vec::new(),
+            embedding: None,
+            file_size: 0,
+            modified_at: 0,
+        }
+    }
+
+    #[test]
+    fn test_get_top_matches_prefers_higher_history_affinity() {
+        let selected_path = PathBuf::from("/test/selected.jpg");
+        let high_path = PathBuf::from("/test/high.jpg");
+        let low_path = PathBuf::from("/test/low.jpg");
+
+        let history = PairingHistory {
+            data: PairingHistoryData {
+                records: Vec::new(),
+                affinity_scores: vec![
+                    AffinityScore {
+                        wallpaper_a: selected_path.clone(),
+                        wallpaper_b: high_path.clone(),
+                        score: 0.95,
+                        pair_count: 8,
+                        avg_duration_secs: 1200.0,
+                    },
+                    AffinityScore {
+                        wallpaper_a: selected_path.clone(),
+                        wallpaper_b: low_path.clone(),
+                        score: 0.20,
+                        pair_count: 2,
+                        avg_duration_secs: 300.0,
+                    },
+                ],
+            },
+            cache_path: PathBuf::from("/tmp/frostwall/test_pairing_history.json"),
+            current_pairing_start: None,
+            undo_state: None,
+            max_records: 100,
+        };
+
+        let high = test_pairing_wallpaper("/test/high.jpg", &["#223344"], &[]);
+        let low = test_pairing_wallpaper("/test/low.jpg", &["#223344"], &[]);
+        let selected_colors = vec!["#112233".to_string()];
+        let selected_weights = vec![1.0];
+        let selected_tags: Vec<String> = Vec::new();
+        let selected_style_tags: Vec<String> = Vec::new();
+
+        let context = MatchContext {
+            selected_wp: &selected_path,
+            target_screen: "DP-2",
+            selected_colors: &selected_colors,
+            selected_weights: &selected_weights,
+            selected_tags: &selected_tags,
+            selected_embedding: None,
+            screen_context_weight: 1.0,
+            visual_weight: 0.0,
+            harmony_weight: 0.0,
+            tag_weight: 0.0,
+            semantic_weight: 0.0,
+            repetition_penalty_weight: 0.0,
+            style_mode: PairingStyleMode::Off,
+            selected_style_tags: &selected_style_tags,
+        };
+
+        let matches = history.get_top_matches(&context, &[&low, &high], 2);
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].0, high_path);
+        assert_eq!(matches[1].0, low_path);
+        assert!(matches[0].1 > matches[1].1);
+    }
+
+    #[test]
+    fn test_get_top_matches_strict_filters_style_mismatch_even_with_high_history() {
+        let selected_path = PathBuf::from("/test/selected.jpg");
+        let anime_path = PathBuf::from("/test/anime.jpg");
+        let photo_path = PathBuf::from("/test/photo.jpg");
+
+        let history = PairingHistory {
+            data: PairingHistoryData {
+                records: Vec::new(),
+                affinity_scores: vec![
+                    // Wrong style has stronger history, but strict mode should still reject it.
+                    AffinityScore {
+                        wallpaper_a: selected_path.clone(),
+                        wallpaper_b: photo_path.clone(),
+                        score: 0.99,
+                        pair_count: 10,
+                        avg_duration_secs: 2400.0,
+                    },
+                    AffinityScore {
+                        wallpaper_a: selected_path.clone(),
+                        wallpaper_b: anime_path.clone(),
+                        score: 0.10,
+                        pair_count: 1,
+                        avg_duration_secs: 120.0,
+                    },
+                ],
+            },
+            cache_path: PathBuf::from("/tmp/frostwall/test_pairing_history_strict.json"),
+            current_pairing_start: None,
+            undo_state: None,
+            max_records: 100,
+        };
+
+        let anime = test_pairing_wallpaper("/test/anime.jpg", &["#112233"], &["anime"]);
+        let photo = test_pairing_wallpaper("/test/photo.jpg", &["#112233"], &["photography"]);
+        let selected_colors = vec!["#112233".to_string()];
+        let selected_weights = vec![1.0];
+        let selected_tags = vec!["anime".to_string()];
+        let selected_style_tags = extract_style_tags(&selected_tags);
+
+        let context = MatchContext {
+            selected_wp: &selected_path,
+            target_screen: "DP-2",
+            selected_colors: &selected_colors,
+            selected_weights: &selected_weights,
+            selected_tags: &selected_tags,
+            selected_embedding: None,
+            screen_context_weight: 1.0,
+            visual_weight: 1.0,
+            harmony_weight: 0.0,
+            tag_weight: 1.0,
+            semantic_weight: 0.0,
+            repetition_penalty_weight: 0.0,
+            style_mode: PairingStyleMode::Strict,
+            selected_style_tags: &selected_style_tags,
+        };
+
+        let matches = history.get_top_matches(&context, &[&photo, &anime], 5);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].0, anime_path);
+    }
+
     // --- normalize_cosine_similarity ---
 
     #[test]

@@ -509,4 +509,90 @@ mod tests {
             .expect("expected a matching wallpaper");
         assert_eq!(selected.path, PathBuf::from("/test/second.jpg"));
     }
+
+    #[test]
+    fn test_wallpaper_cache_serde_roundtrip_preserves_fields() {
+        let mut first = named_wallpaper("first", 1920, 1080);
+        first.colors = vec!["#112233".into(), "#445566".into()];
+        first.color_weights = vec![0.7, 0.3];
+        first.tags = vec!["nature".into(), "forest".into()];
+        first.auto_tags = vec![AutoTag {
+            name: "mist".into(),
+            confidence: 0.91,
+        }];
+        first.embedding = Some(vec![0.1, 0.2, 0.3]);
+        first.file_size = 4242;
+        first.modified_at = 1_700_000_000;
+
+        let second = named_wallpaper("second", 2560, 1440);
+
+        let mut cache = WallpaperCache {
+            version: CACHE_VERSION,
+            wallpapers: vec![first, second],
+            source_dir: PathBuf::from("/test"),
+            screen_indices: HashMap::new(),
+            recursive: true,
+        };
+        cache.screen_indices.insert("DP-1".into(), 1);
+
+        let json = serde_json::to_string(&cache).expect("serialize cache");
+        let decoded: WallpaperCache = serde_json::from_str(&json).expect("deserialize cache");
+
+        assert_eq!(decoded.version, CACHE_VERSION);
+        assert!(decoded.recursive);
+        assert_eq!(decoded.screen_indices.get("DP-1"), Some(&1usize));
+        assert_eq!(decoded.wallpapers.len(), 2);
+
+        let decoded_first = &decoded.wallpapers[0];
+        assert_eq!(decoded_first.path, PathBuf::from("/test/first.jpg"));
+        assert_eq!(
+            decoded_first.colors,
+            vec!["#112233".to_string(), "#445566".to_string()]
+        );
+        assert_eq!(decoded_first.color_weights, vec![0.7, 0.3]);
+        assert_eq!(
+            decoded_first.tags,
+            vec!["nature".to_string(), "forest".to_string()]
+        );
+        assert_eq!(decoded_first.auto_tags.len(), 1);
+        assert_eq!(decoded_first.auto_tags[0].name, "mist");
+        assert_eq!(decoded_first.auto_tags[0].confidence, 0.91);
+        assert_eq!(decoded_first.embedding, Some(vec![0.1, 0.2, 0.3]));
+        assert_eq!(decoded_first.file_size, 4242);
+        assert_eq!(decoded_first.modified_at, 1_700_000_000);
+    }
+
+    #[test]
+    fn test_wallpaper_cache_deserialize_legacy_defaults() {
+        let legacy = r##"{
+            "wallpapers":[
+                {
+                    "path":"/test/legacy.jpg",
+                    "width":1920,
+                    "height":1080,
+                    "aspect_category":"Landscape",
+                    "colors":["#000000"]
+                }
+            ],
+            "source_dir":"/test",
+            "screen_indices":{"DP-1":0}
+        }"##;
+
+        let decoded: WallpaperCache =
+            serde_json::from_str(legacy).expect("deserialize legacy cache");
+        assert_eq!(decoded.version, 0);
+        assert!(!decoded.recursive);
+        assert_eq!(decoded.screen_indices.get("DP-1"), Some(&0usize));
+        assert_eq!(decoded.wallpapers.len(), 1);
+
+        let wp = &decoded.wallpapers[0];
+        assert_eq!(wp.path, PathBuf::from("/test/legacy.jpg"));
+        assert_eq!(wp.colors, vec!["#000000".to_string()]);
+        assert!(wp.color_weights.is_empty());
+        assert!(wp.tags.is_empty());
+        assert!(wp.auto_tags.is_empty());
+        assert!(wp.embedding.is_none());
+        assert_eq!(wp.file_size, 0);
+        assert_eq!(wp.modified_at, 0);
+    }
 }

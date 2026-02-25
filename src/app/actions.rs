@@ -5,30 +5,36 @@ use anyhow::Result;
 impl App {
     /// Apply the selected wallpaper to the current screen via swww.
     pub fn apply_wallpaper(&mut self) -> Result<()> {
-        if let (Some(screen), Some(wp)) = (self.selected_screen(), self.selected_wallpaper()) {
-            let screen_name = screen.name.clone();
-            let wp_path = wp.path.clone();
-            let wp_colors = wp.colors.clone();
-
-            // Update current wallpaper for this screen.
-            self.pairing
-                .current_wallpapers
-                .insert(screen_name.clone(), wp_path.clone());
+        let (screen_name, wp_path, pywal_error) = {
+            let (Some(screen), Some(wp)) = (self.selected_screen(), self.selected_wallpaper())
+            else {
+                return Ok(());
+            };
 
             swww::set_wallpaper_with_resize(
-                &screen_name,
-                &wp_path,
+                &screen.name,
+                &wp.path,
                 &self.config.transition(),
                 self.config.display.resize_mode,
                 &self.config.display.fill_color,
             )?;
 
-            // Export pywal colors if enabled.
-            if self.ui.pywal_export {
-                if let Err(e) = crate::pywal::generate_from_wallpaper(&wp_colors, &wp_path) {
-                    self.ui.status_message = Some(format!("pywal: {}", e));
-                }
-            }
+            let pywal_error = if self.ui.pywal_export {
+                crate::pywal::generate_from_wallpaper(&wp.colors, &wp.path)
+                    .err()
+                    .map(|e| format!("pywal: {}", e))
+            } else {
+                None
+            };
+
+            (screen.name.clone(), wp.path.clone(), pywal_error)
+        };
+
+        // Update current wallpaper for this screen.
+        self.pairing.current_wallpapers.insert(screen_name, wp_path);
+
+        if let Some(error) = pywal_error {
+            self.ui.status_message = Some(error);
         }
         Ok(())
     }

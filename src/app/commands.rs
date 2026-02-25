@@ -1,6 +1,5 @@
 use super::App;
 use crate::wallpaper::SortMode;
-use std::path::Path;
 
 impl App {
     /// Enter command mode.
@@ -136,11 +135,7 @@ impl App {
 
             // Similar wallpapers.
             "similar" | "sim" => {
-                if let Some(wp) = self.selected_wallpaper() {
-                    let colors = wp.colors.clone();
-                    let path = wp.path.clone();
-                    self.find_and_select_similar(&colors, &path);
-                }
+                self.find_and_select_similar();
             }
 
             // Rescan wallpaper directory.
@@ -211,27 +206,41 @@ impl App {
     }
 
     /// Find similar wallpapers and select the best match.
-    fn find_and_select_similar(&mut self, colors: &[String], current_path: &Path) {
-        let wallpaper_colors: Vec<(usize, &[String])> = self
-            .cache
-            .wallpapers
-            .iter()
-            .enumerate()
-            .filter(|(_, wp)| wp.path != current_path && !wp.colors.is_empty())
-            .map(|(i, wp)| (i, wp.colors.as_slice()))
-            .collect();
-
-        let similar = crate::utils::find_similar_wallpapers(colors, &wallpaper_colors, 1);
-        if let Some((_, idx)) = similar.first() {
-            // Find this index in filtered wallpapers.
-            if let Some(pos) = self
+    fn find_and_select_similar(&mut self) {
+        let next_pos = {
+            let Some(current_cache_idx) = self
                 .selection
                 .filtered_wallpapers
+                .get(self.selection.wallpaper_idx)
+                .copied()
+            else {
+                return;
+            };
+            let Some(current_wp) = self.cache.wallpapers.get(current_cache_idx) else {
+                return;
+            };
+
+            let wallpaper_colors: Vec<(usize, &[String])> = self
+                .cache
+                .wallpapers
                 .iter()
-                .position(|&i| i == *idx)
-            {
-                self.selection.wallpaper_idx = pos;
-            }
+                .enumerate()
+                .filter(|(idx, wp)| *idx != current_cache_idx && !wp.colors.is_empty())
+                .map(|(idx, wp)| (idx, wp.colors.as_slice()))
+                .collect();
+
+            let similar =
+                crate::utils::find_similar_wallpapers(&current_wp.colors, &wallpaper_colors, 1);
+            similar.first().and_then(|(_, idx)| {
+                self.selection
+                    .filtered_wallpapers
+                    .iter()
+                    .position(|&cache_idx| cache_idx == *idx)
+            })
+        };
+
+        if let Some(pos) = next_pos {
+            self.selection.wallpaper_idx = pos;
         }
     }
 }
