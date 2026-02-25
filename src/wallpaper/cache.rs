@@ -22,11 +22,6 @@ impl WallpaperCache {
         Self::load_or_scan_with_mode(source_dir, recursive, mode)
     }
 
-    /// Backward-compatible alias for full cache loading.
-    pub fn load_or_scan_recursive(source_dir: &Path, recursive: bool) -> Result<Self> {
-        Self::load_or_scan(source_dir, recursive, CacheLoadMode::Full)
-    }
-
     fn load_or_scan_with_mode(
         source_dir: &Path,
         recursive: bool,

@@ -72,7 +72,11 @@ pub async fn run_watch(watch_config: WatchConfig) -> Result<()> {
     ctrlc_handler(running_clone);
 
     // Initial scan
-    let mut cache = WallpaperCache::load_or_scan_recursive(&wallpaper_dir, recursive)?;
+    let mut cache = WallpaperCache::load_or_scan(
+        &wallpaper_dir,
+        recursive,
+        crate::wallpaper::CacheLoadMode::Full,
+    )?;
     println!("✓ Loaded {} wallpapers", cache.wallpapers.len());
 
     // Set up file system watcher

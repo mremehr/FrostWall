@@ -60,7 +60,11 @@ pub fn cmd_tag(action: TagAction, wallpaper_dir: &Path) -> Result<()> {
 
 pub fn cmd_similar(wallpaper_dir: &Path, target_path: &Path, limit: usize) -> Result<()> {
     let recursive = app::Config::load()?.wallpaper.recursive;
-    let cache = wallpaper::WallpaperCache::load_or_scan_recursive(wallpaper_dir, recursive)?;
+    let cache = wallpaper::WallpaperCache::load_or_scan(
+        wallpaper_dir,
+        recursive,
+        wallpaper::CacheLoadMode::Full,
+    )?;
 
     // Find the target wallpaper
     let target = cache

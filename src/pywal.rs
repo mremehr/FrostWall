@@ -336,7 +336,11 @@ pub fn cmd_pywal(wallpaper_path: &Path, apply: bool) -> Result<()> {
     // Load configured cache to reuse already extracted palettes when available.
     let config = crate::app::Config::load()?;
     let source_dir = config.wallpaper_dir();
-    let cache = WallpaperCache::load_or_scan_recursive(&source_dir, config.wallpaper.recursive)?;
+    let cache = WallpaperCache::load_or_scan(
+        &source_dir,
+        config.wallpaper.recursive,
+        crate::wallpaper::CacheLoadMode::Full,
+    )?;
 
     // Find the wallpaper in cache or scan it fresh
     let colors = cache
