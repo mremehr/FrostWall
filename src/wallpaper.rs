@@ -101,7 +101,7 @@ pub struct Wallpaper {
 const CACHE_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy)]
-enum CacheLoadMode {
+pub enum CacheLoadMode {
     Full,
     MetadataOnly,
 }

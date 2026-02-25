@@ -1,7 +1,7 @@
 use crate::pairing::{PairingHistory, PairingStyleMode};
 use crate::screen::{self, Screen};
 use crate::utils::ColorHarmony;
-use crate::wallpaper::{SortMode, WallpaperCache};
+use crate::wallpaper::{CacheLoadMode, SortMode, WallpaperCache};
 use anyhow::Result;
 use crossterm::event;
 use lru::LruCache;
@@ -148,8 +148,11 @@ impl App {
     /// Create a new App instance with the given wallpaper directory.
     pub fn new(wallpaper_dir: PathBuf) -> Result<Self> {
         let config = Config::load()?;
-        let cache =
-            WallpaperCache::load_or_scan_recursive(&wallpaper_dir, config.wallpaper.recursive)?;
+        let cache = WallpaperCache::load_or_scan(
+            &wallpaper_dir,
+            config.wallpaper.recursive,
+            CacheLoadMode::Full,
+        )?;
 
         // Try to create image picker for thumbnail rendering
         // from_termios() queries terminal for font size

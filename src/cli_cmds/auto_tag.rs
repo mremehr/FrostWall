@@ -17,8 +17,11 @@ pub async fn cmd_auto_tag(
     let mut tagger = ClipTagger::new().await?;
 
     let recursive = app::Config::load()?.wallpaper.recursive;
-    let mut cache =
-        wallpaper::WallpaperCache::load_or_scan_for_ai_recursive(wallpaper_dir, recursive)?;
+    let mut cache = wallpaper::WallpaperCache::load_or_scan(
+        wallpaper_dir,
+        recursive,
+        wallpaper::CacheLoadMode::MetadataOnly,
+    )?;
 
     let to_process: Vec<usize> = cache
         .wallpapers

@@ -17,12 +17,14 @@ impl WallpaperCache {
             .join("wallpaper_cache.json")
     }
 
-    pub fn load_or_scan_recursive(source_dir: &Path, recursive: bool) -> Result<Self> {
-        Self::load_or_scan_with_mode(source_dir, recursive, CacheLoadMode::Full)
+    /// Load cache when valid, otherwise scan with the requested mode.
+    pub fn load_or_scan(source_dir: &Path, recursive: bool, mode: CacheLoadMode) -> Result<Self> {
+        Self::load_or_scan_with_mode(source_dir, recursive, mode)
     }
 
-    pub fn load_or_scan_for_ai_recursive(source_dir: &Path, recursive: bool) -> Result<Self> {
-        Self::load_or_scan_with_mode(source_dir, recursive, CacheLoadMode::MetadataOnly)
+    /// Backward-compatible alias for full cache loading.
+    pub fn load_or_scan_recursive(source_dir: &Path, recursive: bool) -> Result<Self> {
+        Self::load_or_scan(source_dir, recursive, CacheLoadMode::Full)
     }
 
     fn load_or_scan_with_mode(

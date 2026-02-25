@@ -6,8 +6,11 @@ use crate::{app, utils, wallpaper};
 
 pub fn cmd_tag(action: TagAction, wallpaper_dir: &Path) -> Result<()> {
     let recursive = app::Config::load()?.wallpaper.recursive;
-    let mut cache =
-        wallpaper::WallpaperCache::load_or_scan_for_ai_recursive(wallpaper_dir, recursive)?;
+    let mut cache = wallpaper::WallpaperCache::load_or_scan(
+        wallpaper_dir,
+        recursive,
+        wallpaper::CacheLoadMode::MetadataOnly,
+    )?;
 
     match action {
         TagAction::List => {

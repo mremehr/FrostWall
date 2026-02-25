@@ -6,7 +6,11 @@ use crate::{app, screen, swww, wallpaper};
 pub async fn cmd_random(wallpaper_dir: &Path) -> Result<()> {
     let recursive = app::Config::load()?.wallpaper.recursive;
     let screens = screen::detect_screens().await?;
-    let cache = wallpaper::WallpaperCache::load_or_scan_for_ai_recursive(wallpaper_dir, recursive)?;
+    let cache = wallpaper::WallpaperCache::load_or_scan(
+        wallpaper_dir,
+        recursive,
+        wallpaper::CacheLoadMode::MetadataOnly,
+    )?;
 
     if cache.wallpapers.is_empty() {
         eprintln!("No wallpapers found in: {}", wallpaper_dir.display());
@@ -27,8 +31,11 @@ pub async fn cmd_random(wallpaper_dir: &Path) -> Result<()> {
 pub async fn cmd_next(wallpaper_dir: &Path) -> Result<()> {
     let recursive = app::Config::load()?.wallpaper.recursive;
     let screens = screen::detect_screens().await?;
-    let mut cache =
-        wallpaper::WallpaperCache::load_or_scan_for_ai_recursive(wallpaper_dir, recursive)?;
+    let mut cache = wallpaper::WallpaperCache::load_or_scan(
+        wallpaper_dir,
+        recursive,
+        wallpaper::CacheLoadMode::MetadataOnly,
+    )?;
 
     if cache.wallpapers.is_empty() {
         eprintln!("No wallpapers found in: {}", wallpaper_dir.display());
@@ -50,8 +57,11 @@ pub async fn cmd_next(wallpaper_dir: &Path) -> Result<()> {
 pub async fn cmd_prev(wallpaper_dir: &Path) -> Result<()> {
     let recursive = app::Config::load()?.wallpaper.recursive;
     let screens = screen::detect_screens().await?;
-    let mut cache =
-        wallpaper::WallpaperCache::load_or_scan_for_ai_recursive(wallpaper_dir, recursive)?;
+    let mut cache = wallpaper::WallpaperCache::load_or_scan(
+        wallpaper_dir,
+        recursive,
+        wallpaper::CacheLoadMode::MetadataOnly,
+    )?;
 
     if cache.wallpapers.is_empty() {
         eprintln!("No wallpapers found in: {}", wallpaper_dir.display());
