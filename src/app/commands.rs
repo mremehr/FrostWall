@@ -99,10 +99,10 @@ impl App {
                     let tags = self.cache.all_tags();
                     let args_lower = args.to_ascii_lowercase();
                     if let Some(matched) = tags
-                        .iter()
+                        .into_iter()
                         .find(|t| t.to_ascii_lowercase().contains(&args_lower))
                     {
-                        self.filters.active_tag = Some(matched.clone());
+                        self.filters.active_tag = Some(matched);
                         self.update_filtered_wallpapers();
                     } else {
                         self.ui.status_message = Some(format!("Tag not found: {}", tag));
