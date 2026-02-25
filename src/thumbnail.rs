@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use fast_image_resize::{images::Image, ResizeOptions, Resizer};
-use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
+use image::{DynamicImage, RgbaImage};
 use std::collections::hash_map::DefaultHasher;
 use std::fs::{self, File};
 use std::hash::{Hash, Hasher};
@@ -13,6 +13,8 @@ pub const THUMB_HEIGHT: u32 = 600;
 
 // JPEG quality (0-100) - 92 is high quality with good compression
 const JPEG_QUALITY: u8 = 92;
+const UNSHARP_SIGMA: f32 = 0.5;
+const UNSHARP_THRESHOLD: i32 = 1;
 
 pub struct ThumbnailCache {
     cache_dir: PathBuf,
@@ -57,75 +59,35 @@ impl ThumbnailCache {
         }
     }
 
-    /// Generate a thumbnail using fast_image_resize (SIMD accelerated)
-    pub fn generate(&self, source_path: &Path) -> Result<PathBuf> {
-        let thumb_path = self.thumb_filename(source_path);
-
-        // Return cached if exists
-        if thumb_path.exists() {
-            return Ok(thumb_path);
-        }
-
-        // Load source image
-        let src_image = image::open(source_path)
-            .with_context(|| format!("Failed to open image: {}", source_path.display()))?;
-
-        // Convert to RGBA8
-        let src_rgba = src_image.to_rgba8();
-        let (src_width, src_height) = (src_rgba.width(), src_rgba.height());
-
-        // Calculate target dimensions maintaining aspect ratio
-        let (dst_width, dst_height) =
-            Self::fit_dimensions(src_width, src_height, THUMB_WIDTH, THUMB_HEIGHT);
-
-        // Create fast_image_resize source image
-        let src_fir = Image::from_vec_u8(
-            src_width,
-            src_height,
-            src_rgba.into_raw(),
-            fast_image_resize::PixelType::U8x4,
-        )?;
-
-        // Create destination image
-        let mut dst_fir = Image::new(dst_width, dst_height, fast_image_resize::PixelType::U8x4);
-
-        // Resize using SIMD-accelerated Lanczos3 (high quality)
-        let mut resizer = Resizer::new();
-        resizer.resize(
-            &src_fir,
-            &mut dst_fir,
-            &ResizeOptions::new().resize_alg(fast_image_resize::ResizeAlg::Convolution(
-                fast_image_resize::FilterType::Lanczos3,
-            )),
-        )?;
-
-        // Convert back to image crate format
-        let dst_buffer = dst_fir.into_vec();
-        let mut result_image = RgbaImage::from_raw(dst_width, dst_height, dst_buffer)
-            .context("Failed to create output image")?;
-
-        // Apply unsharp mask for crispness
-        apply_unsharp_mask(&mut result_image, 0.5, 1.0);
-
-        // Save as high-quality JPEG
-        save_as_jpeg(&result_image, &thumb_path, JPEG_QUALITY)?;
-
-        Ok(thumb_path)
-    }
-
     /// Load a thumbnail as DynamicImage (for ratatui-image)
     pub fn load(&self, source_path: &Path) -> Result<DynamicImage> {
-        // Try cached first
         if let Some(thumb_path) = self.get_cached(source_path) {
-            return image::open(&thumb_path).with_context(|| {
-                format!("Failed to load cached thumbnail: {}", thumb_path.display())
-            });
+            match image::open(&thumb_path) {
+                Ok(img) => return Ok(img),
+                Err(err) => {
+                    // Corrupted cache entry: regenerate from source below.
+                    eprintln!(
+                        "Warning: failed to decode cached thumbnail {}: {}",
+                        thumb_path.display(),
+                        err
+                    );
+                    let _ = fs::remove_file(&thumb_path);
+                }
+            }
         }
 
-        // Generate and load
-        let thumb_path = self.generate(source_path)?;
-        image::open(&thumb_path)
-            .with_context(|| format!("Failed to load thumbnail: {}", thumb_path.display()))
+        let thumb_path = self.thumb_filename(source_path);
+        let result_image = Self::build_thumbnail_image(source_path)?;
+        if let Err(err) = save_as_jpeg(&result_image, &thumb_path, JPEG_QUALITY) {
+            // Rendering should still work even if the cache cannot be written.
+            eprintln!(
+                "Warning: failed to persist thumbnail {}: {}",
+                thumb_path.display(),
+                err
+            );
+        }
+
+        Ok(DynamicImage::ImageRgba8(result_image))
     }
 
     /// Calculate dimensions that fit within bounds while maintaining aspect ratio
@@ -142,96 +104,51 @@ impl ThumbnailCache {
 
         (dst_w.max(1), dst_h.max(1))
     }
+
+    fn build_thumbnail_image(source_path: &Path) -> Result<RgbaImage> {
+        let src_image = image::open(source_path)
+            .with_context(|| format!("Failed to open image: {}", source_path.display()))?;
+
+        let src_rgba = src_image.to_rgba8();
+        let (src_width, src_height) = (src_rgba.width(), src_rgba.height());
+        let (dst_width, dst_height) =
+            Self::fit_dimensions(src_width, src_height, THUMB_WIDTH, THUMB_HEIGHT);
+
+        let src_fir = Image::from_vec_u8(
+            src_width,
+            src_height,
+            src_rgba.into_raw(),
+            fast_image_resize::PixelType::U8x4,
+        )?;
+
+        let mut dst_fir = Image::new(dst_width, dst_height, fast_image_resize::PixelType::U8x4);
+
+        let mut resizer = Resizer::new();
+        resizer.resize(
+            &src_fir,
+            &mut dst_fir,
+            &ResizeOptions::new().resize_alg(fast_image_resize::ResizeAlg::Convolution(
+                fast_image_resize::FilterType::Lanczos3,
+            )),
+        )?;
+
+        let dst_buffer = dst_fir.into_vec();
+        let result_image = RgbaImage::from_raw(dst_width, dst_height, dst_buffer)
+            .context("Failed to create output image")?;
+
+        // Library implementation is simpler to maintain than the old handwritten blur/sharpen.
+        Ok(image::imageops::unsharpen(
+            &result_image,
+            UNSHARP_SIGMA,
+            UNSHARP_THRESHOLD,
+        ))
+    }
 }
 
 impl Default for ThumbnailCache {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Apply unsharp mask to sharpen the image
-/// radius: blur radius (0.5-2.0 typical)
-/// amount: sharpening strength (0.5-2.0 typical)
-fn apply_unsharp_mask(img: &mut RgbaImage, radius: f32, amount: f32) {
-    let (width, height) = (img.width(), img.height());
-
-    // Create a blurred copy using box blur (fast approximation)
-    let blurred = box_blur(img, radius as u32 + 1);
-
-    // Apply unsharp mask: result = original + amount * (original - blurred)
-    for y in 0..height {
-        for x in 0..width {
-            let orig = img.get_pixel(x, y);
-            let blur = blurred.get_pixel(x, y);
-
-            let mut new_pixel = [0u8; 4];
-            for c in 0..3 {
-                let diff = orig[c] as f32 - blur[c] as f32;
-                let sharpened = orig[c] as f32 + amount * diff;
-                new_pixel[c] = sharpened.clamp(0.0, 255.0) as u8;
-            }
-            new_pixel[3] = orig[3]; // Keep alpha unchanged
-
-            img.put_pixel(x, y, Rgba(new_pixel));
-        }
-    }
-}
-
-/// Separable box blur (two-pass) for unsharp mask
-fn box_blur(img: &RgbaImage, radius: u32) -> RgbaImage {
-    let (width, height) = (img.width(), img.height());
-    let r = radius as i32;
-
-    // Horizontal pass: read from img, write to temp
-    let mut temp: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(width, height);
-    for y in 0..height {
-        for x in 0..width {
-            let mut sum = [0u32; 4];
-            let mut count = 0u32;
-
-            for dx in -r..=r {
-                let nx = (x as i32 + dx).clamp(0, width as i32 - 1) as u32;
-                let pixel = img.get_pixel(nx, y);
-                for c in 0..4 {
-                    sum[c] += pixel[c] as u32;
-                }
-                count += 1;
-            }
-
-            let mut avg = [0u8; 4];
-            for c in 0..4 {
-                avg[c] = (sum[c] / count) as u8;
-            }
-            temp.put_pixel(x, y, Rgba(avg));
-        }
-    }
-
-    // Vertical pass: read from temp, write to result
-    let mut result: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(width, height);
-    for y in 0..height {
-        for x in 0..width {
-            let mut sum = [0u32; 4];
-            let mut count = 0u32;
-
-            for dy in -r..=r {
-                let ny = (y as i32 + dy).clamp(0, height as i32 - 1) as u32;
-                let pixel = temp.get_pixel(x, ny);
-                for c in 0..4 {
-                    sum[c] += pixel[c] as u32;
-                }
-                count += 1;
-            }
-
-            let mut avg = [0u8; 4];
-            for c in 0..4 {
-                avg[c] = (sum[c] / count) as u8;
-            }
-            result.put_pixel(x, y, Rgba(avg));
-        }
-    }
-
-    result
 }
 
 /// Save RGBA image as JPEG with specified quality
@@ -259,4 +176,60 @@ fn save_as_jpeg(img: &RgbaImage, path: &Path, quality: u8) -> Result<()> {
         .with_context(|| format!("Failed to encode JPEG: {}", path.display()))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{Rgb, RgbImage};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_tmp_dir() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock before epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("frostwall-thumb-test-{nanos}"))
+    }
+
+    #[test]
+    fn fit_dimensions_preserves_aspect_ratio() {
+        assert_eq!(
+            ThumbnailCache::fit_dimensions(3840, 2160, 800, 600),
+            (800, 450)
+        );
+        assert_eq!(
+            ThumbnailCache::fit_dimensions(1080, 1920, 800, 600),
+            (338, 600)
+        );
+    }
+
+    #[test]
+    fn load_regenerates_corrupted_cached_thumbnail() -> Result<()> {
+        let root = unique_tmp_dir();
+        let src_dir = root.join("src");
+        let cache_dir = root.join("cache");
+        fs::create_dir_all(&src_dir)?;
+        fs::create_dir_all(&cache_dir)?;
+
+        let source_path = src_dir.join("image.png");
+        let source = RgbImage::from_pixel(64, 64, Rgb([240, 80, 80]));
+        source.save(&source_path)?;
+
+        let cache = ThumbnailCache {
+            cache_dir: cache_dir.clone(),
+        };
+        let thumb_path = cache.thumb_filename(&source_path);
+        fs::write(&thumb_path, b"not-a-valid-jpeg")?;
+
+        let loaded = cache.load(&source_path)?;
+        let (expected_w, expected_h) =
+            ThumbnailCache::fit_dimensions(64, 64, THUMB_WIDTH, THUMB_HEIGHT);
+        assert_eq!(loaded.width(), expected_w);
+        assert_eq!(loaded.height(), expected_h);
+        assert!(image::open(&thumb_path).is_ok());
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
 }

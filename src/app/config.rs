@@ -187,26 +187,38 @@ fn default_pairing_preview_match_limit() -> usize {
     10
 }
 
+/// Screen context is strongest by default because repeated multi-screen
+/// combinations reflect explicit user preference over time.
 fn default_pairing_screen_context_weight() -> f32 {
     8.0
 }
 
+/// Visual similarity should matter a lot, but still stay below learned
+/// pair history so familiar pairings remain stable.
 fn default_pairing_visual_weight() -> f32 {
     5.0
 }
 
+/// Harmony is a secondary boost: useful for cohesion, but not strong
+/// enough to dominate screen context or core palette similarity.
 fn default_pairing_harmony_weight() -> f32 {
     3.0
 }
 
+/// Shared tags are a lightweight semantic hint and intentionally low
+/// weight to avoid noisy manual/auto-tag matches dominating ranking.
 fn default_pairing_tag_weight() -> f32 {
     2.0
 }
 
+/// Semantic CLIP similarity is high enough to rescue cases where color
+/// differs but image content/style matches user intent.
 fn default_pairing_semantic_weight() -> f32 {
     7.0
 }
 
+/// Penalty multiplier stays at 1.0 by default so repetition reduction
+/// is active but conservative and easy to reason about.
 fn default_pairing_repetition_penalty_weight() -> f32 {
     1.0
 }

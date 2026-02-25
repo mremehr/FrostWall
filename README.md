@@ -387,6 +387,17 @@ brightness_range = [0.0, 0.4]
 preferred_tags = ["dark", "space", "minimal"]
 ```
 
+### Pairing Weight Rationale (Defaults)
+
+Default weights are tuned so ranking is stable first, expressive second:
+
+- `screen_context_weight = 8.0`: strongest signal, because repeated pairings reflect explicit user choices.
+- `semantic_weight = 7.0`: high to keep content/style matches competitive even when palettes differ.
+- `visual_weight = 5.0`: strong visual anchor, but below learned history to avoid churn.
+- `harmony_weight = 3.0`: secondary bonus for pleasing combinations, not a dominant factor.
+- `tag_weight = 2.0`: lightweight hint to avoid noisy tag overlaps overpowering better matches.
+- `repetition_penalty_weight = 1.0`: conservative anti-repeat behavior by default.
+
 ## Keybindings (TUI)
 
 | Key | Action |

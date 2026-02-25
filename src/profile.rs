@@ -202,13 +202,10 @@ pub fn cmd_profile_use(name: &str) -> Result<()> {
 pub fn cmd_profile_set(name: &str, key: &str, value: &str) -> Result<()> {
     let mut manager = ProfileManager::load()?;
 
-    let profile = manager.profiles.get_mut(name);
-    if profile.is_none() {
+    let Some(profile) = manager.profiles.get_mut(name) else {
         println!("Profile '{}' not found.", name);
         return Ok(());
-    }
-
-    let profile = profile.unwrap();
+    };
 
     match key {
         "directory" | "dir" => {
