@@ -44,6 +44,7 @@ rand = "0.8"
 
 # Parallel processing
 rayon = "1.10"
+lru = "0.12"
 
 # Interactive CLI
 dialoguer = "0.11"
@@ -55,7 +56,7 @@ notify = "6"
 chrono = "0.4"
 
 # Web gallery import & HTTP
-reqwest = { version = "0.12", features = ["blocking", "json", "stream"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
 
 # Directory walking
 walkdir = "2"

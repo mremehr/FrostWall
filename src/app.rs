@@ -4,8 +4,10 @@ use crate::utils::ColorHarmony;
 use crate::wallpaper::{SortMode, WallpaperCache};
 use anyhow::Result;
 use crossterm::event;
+use lru::LruCache;
 use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::mpsc::SyncSender;
 
@@ -49,6 +51,7 @@ pub enum AppEvent {
 /// all Kitty images are purged from the terminal and the cache is
 /// reset — visible thumbnails reload from warm disk cache in one frame.
 const THUMBNAIL_CACHE_MULTIPLIER: usize = 8;
+pub(super) const THUMBNAIL_CACHE_HARD_CAP: usize = 200;
 
 /// UI-related transient state (popups, command mode, errors).
 pub struct UiState {
@@ -124,8 +127,7 @@ pub struct PairingState {
 /// Thumbnail rendering state.
 pub struct ThumbnailState {
     pub image_picker: Option<Picker>,
-    pub cache: HashMap<usize, Box<dyn StatefulProtocol>>,
-    cache_order: Vec<usize>,
+    pub cache: LruCache<usize, Box<dyn StatefulProtocol>>,
     pub loading: std::collections::HashSet<usize>,
     request_tx: Option<SyncSender<ThumbnailRequest>>,
     generation: u64,
@@ -168,8 +170,10 @@ impl App {
             filters: FilterState::default(),
             thumbnails: ThumbnailState {
                 image_picker,
-                cache: HashMap::new(),
-                cache_order: Vec::new(),
+                cache: LruCache::new(
+                    NonZeroUsize::new(THUMBNAIL_CACHE_HARD_CAP)
+                        .expect("thumbnail cache hard cap must be non-zero"),
+                ),
                 loading: std::collections::HashSet::new(),
                 request_tx: None,
                 generation: 0,

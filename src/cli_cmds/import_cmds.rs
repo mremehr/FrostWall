@@ -104,7 +104,7 @@ fn wallhaven_image_from_id(id: String, extension: &str) -> GalleryImage {
     }
 }
 
-pub fn cmd_import(action: ImportAction, wallpaper_dir: &Path) -> Result<()> {
+pub async fn cmd_import(action: ImportAction, wallpaper_dir: &Path) -> Result<()> {
     let importer = WebImporter::new();
 
     match action {
@@ -117,7 +117,7 @@ pub fn cmd_import(action: ImportAction, wallpaper_dir: &Path) -> Result<()> {
             }
 
             println!("Searching Unsplash for \"{}\"...", query);
-            let results = importer.search(Gallery::Unsplash, &query, 1, count)?;
+            let results = importer.search(Gallery::Unsplash, &query, 1, count).await?;
 
             if results.is_empty() {
                 println!("No results found.");
@@ -145,7 +145,9 @@ pub fn cmd_import(action: ImportAction, wallpaper_dir: &Path) -> Result<()> {
         }
         ImportAction::Wallhaven { query, count } => {
             println!("Searching Wallhaven for \"{}\"...", query);
-            let results = importer.search(Gallery::Wallhaven, &query, 1, count)?;
+            let results = importer
+                .search(Gallery::Wallhaven, &query, 1, count)
+                .await?;
 
             if results.is_empty() {
                 println!("No results found.");
@@ -162,7 +164,7 @@ pub fn cmd_import(action: ImportAction, wallpaper_dir: &Path) -> Result<()> {
         }
         ImportAction::Featured { count } => {
             println!("Fetching top wallpapers from Wallhaven...");
-            let results = importer.featured_wallhaven(count)?;
+            let results = importer.featured_wallhaven(count).await?;
 
             if results.is_empty() {
                 println!("No results found.");
@@ -179,7 +181,7 @@ pub fn cmd_import(action: ImportAction, wallpaper_dir: &Path) -> Result<()> {
         ImportAction::Download { url } => {
             // Determine source from URL/ID
             let image = if let Some(photo_id) = parse_prefixed_unsplash_id(&url) {
-                importer.unsplash_photo_by_id(photo_id)?
+                importer.unsplash_photo_by_id(photo_id).await?
             } else if url.starts_with("http") {
                 if url.contains("images.unsplash.com") {
                     direct_unsplash_image(&url)
@@ -189,7 +191,7 @@ pub fn cmd_import(action: ImportAction, wallpaper_dir: &Path) -> Result<()> {
                         println!("Use format: https://unsplash.com/photos/<id>");
                         return Ok(());
                     };
-                    importer.unsplash_photo_by_id(&photo_id)?
+                    importer.unsplash_photo_by_id(&photo_id).await?
                 } else if url.contains("wallhaven.cc") || url.contains("w.wallhaven") {
                     let Some(id) = normalize_wallhaven_id(&url) else {
                         println!("Invalid Wallhaven URL: {}", url);
@@ -212,7 +214,7 @@ pub fn cmd_import(action: ImportAction, wallpaper_dir: &Path) -> Result<()> {
 
             println!("Downloading {}...", image.id);
 
-            match importer.download(&image, wallpaper_dir) {
+            match importer.download(&image, wallpaper_dir).await {
                 Ok(path) => {
                     println!("Downloaded to: {}", path.display());
                     println!("\nRun 'frostwall scan' to add it to the cache.");
@@ -225,7 +227,7 @@ pub fn cmd_import(action: ImportAction, wallpaper_dir: &Path) -> Result<()> {
                             url: wallhaven_image_url(&image.id, "png"),
                             ..image.clone()
                         };
-                        if let Ok(path) = importer.download(&png_image, wallpaper_dir) {
+                        if let Ok(path) = importer.download(&png_image, wallpaper_dir).await {
                             println!("Downloaded to: {}", path.display());
                             println!("\nRun 'frostwall scan' to add it to the cache.");
                             return Ok(());

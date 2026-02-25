@@ -1,4 +1,7 @@
-use super::{App, Config, ThumbnailRequest, ThumbnailResponse, THUMBNAIL_CACHE_MULTIPLIER};
+use super::{
+    App, Config, ThumbnailRequest, ThumbnailResponse, THUMBNAIL_CACHE_HARD_CAP,
+    THUMBNAIL_CACHE_MULTIPLIER,
+};
 use ratatui_image::{
     picker::{Picker, ProtocolType},
     protocol::StatefulProtocol,
@@ -16,7 +19,7 @@ impl App {
         }
 
         // Skip if already loaded or loading.
-        if self.thumbnails.cache.contains_key(&cache_idx)
+        if self.thumbnails.cache.contains(&cache_idx)
             || self.thumbnails.loading.contains(&cache_idx)
         {
             return;
@@ -50,7 +53,7 @@ impl App {
         let preload = self.config.thumbnails.preload_count;
         let warm_window = cols.saturating_add(preload.saturating_mul(2));
         let target = (cols * THUMBNAIL_CACHE_MULTIPLIER).max(warm_window.saturating_mul(2));
-        target.clamp(24, 200)
+        target.clamp(24, THUMBNAIL_CACHE_HARD_CAP)
     }
 
     fn max_in_flight_thumbnail_requests(&self) -> usize {
@@ -73,7 +76,6 @@ impl App {
     pub(super) fn reset_thumbnail_cache(&mut self) {
         Self::clear_terminal_images();
         self.thumbnails.cache.clear();
-        self.thumbnails.cache_order.clear();
         self.thumbnails.loading.clear();
         self.thumbnails.generation = self.thumbnails.generation.wrapping_add(1);
 
@@ -85,15 +87,7 @@ impl App {
 
     /// Evict the least recently used thumbnail from memory cache.
     fn evict_oldest_thumbnail(&mut self) {
-        if let Some(oldest_idx) = self.thumbnails.cache_order.first().copied() {
-            self.thumbnails.cache_order.remove(0);
-            self.thumbnails.cache.remove(&oldest_idx);
-            return;
-        }
-
-        if let Some((&oldest_idx, _)) = self.thumbnails.cache.iter().next() {
-            self.thumbnails.cache.remove(&oldest_idx);
-        }
+        let _ = self.thumbnails.cache.pop_lru();
     }
 
     /// Handle a loaded thumbnail from background thread.
@@ -117,16 +111,7 @@ impl App {
 
         if let Some(picker) = &mut self.thumbnails.image_picker {
             let protocol = picker.new_resize_protocol(response.image);
-            if let Some(pos) = self
-                .thumbnails
-                .cache_order
-                .iter()
-                .position(|&i| i == response.cache_idx)
-            {
-                self.thumbnails.cache_order.remove(pos);
-            }
-            self.thumbnails.cache.insert(response.cache_idx, protocol);
-            self.thumbnails.cache_order.push(response.cache_idx);
+            let _ = self.thumbnails.cache.put(response.cache_idx, protocol);
         }
     }
 
@@ -145,18 +130,6 @@ impl App {
 
     /// Check if a thumbnail is ready (also updates LRU order).
     pub fn get_thumbnail(&mut self, cache_idx: usize) -> Option<&mut Box<dyn StatefulProtocol>> {
-        if self.thumbnails.cache.contains_key(&cache_idx) {
-            // Move to end of LRU order (most recently used).
-            if let Some(pos) = self
-                .thumbnails
-                .cache_order
-                .iter()
-                .position(|&i| i == cache_idx)
-            {
-                self.thumbnails.cache_order.remove(pos);
-                self.thumbnails.cache_order.push(cache_idx);
-            }
-        }
         self.thumbnails.cache.get_mut(&cache_idx)
     }
 
@@ -204,7 +177,9 @@ mod tests {
     use crate::pairing::{PairingHistory, PairingStyleMode};
     use crate::screen::AspectCategory;
     use crate::wallpaper::{Wallpaper, WallpaperCache};
+    use lru::LruCache;
     use std::collections::{HashMap, HashSet};
+    use std::num::NonZeroUsize;
     use std::path::PathBuf;
     use std::sync::mpsc;
 
@@ -244,8 +219,10 @@ mod tests {
             filters: FilterState::default(),
             thumbnails: ThumbnailState {
                 image_picker: None,
-                cache: HashMap::new(),
-                cache_order: Vec::new(),
+                cache: LruCache::new(
+                    NonZeroUsize::new(THUMBNAIL_CACHE_HARD_CAP)
+                        .expect("thumbnail cache hard cap must be non-zero"),
+                ),
                 loading: HashSet::new(),
                 request_tx: None,
                 generation: 0,
@@ -301,8 +278,8 @@ mod tests {
         }
 
         assert_eq!(app.thumbnails.cache.len(), max_cache);
-        assert!(!app.thumbnails.cache.contains_key(&0));
-        assert!(app.thumbnails.cache.contains_key(&(max_cache + 5)));
+        assert!(!app.thumbnails.cache.contains(&0));
+        assert!(app.thumbnails.cache.contains(&(max_cache + 5)));
     }
 
     #[test]

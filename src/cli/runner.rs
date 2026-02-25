@@ -81,7 +81,7 @@ pub(crate) async fn run() -> Result<()> {
             cmd_time_profile(action, &wallpaper_dir).await?;
         }
         Some(Commands::Import { action }) => {
-            cmd_import(action, &wallpaper_dir)?;
+            cmd_import(action, &wallpaper_dir).await?;
         }
         None => {
             // TUI mode

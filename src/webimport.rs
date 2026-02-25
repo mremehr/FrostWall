@@ -5,6 +5,7 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use tokio::fs;
 
 /// Supported web galleries
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +75,7 @@ struct WallhavenImage {
 
 /// Web import client
 pub struct WebImporter {
-    client: reqwest::blocking::Client,
+    client: reqwest::Client,
     unsplash_key: Option<String>,
     wallhaven_key: Option<String>,
 }
@@ -83,10 +84,10 @@ impl WebImporter {
     /// Create a new web importer
     pub fn new() -> Self {
         Self {
-            client: reqwest::blocking::Client::builder()
+            client: reqwest::Client::builder()
                 .user_agent(format!("FrostWall/{}", env!("CARGO_PKG_VERSION")))
                 .build()
-                .unwrap_or_else(|_| reqwest::blocking::Client::new()),
+                .unwrap_or_else(|_| reqwest::Client::new()),
             unsplash_key: std::env::var("UNSPLASH_ACCESS_KEY").ok(),
             wallhaven_key: std::env::var("WALLHAVEN_API_KEY").ok(),
         }
@@ -101,7 +102,7 @@ impl WebImporter {
     }
 
     /// Search for images in a gallery
-    pub fn search(
+    pub async fn search(
         &self,
         gallery: Gallery,
         query: &str,
@@ -109,8 +110,8 @@ impl WebImporter {
         per_page: u32,
     ) -> Result<Vec<GalleryImage>> {
         match gallery {
-            Gallery::Unsplash => self.search_unsplash(query, page, per_page),
-            Gallery::Wallhaven => self.search_wallhaven(query, page, per_page),
+            Gallery::Unsplash => self.search_unsplash(query, page, per_page).await,
+            Gallery::Wallhaven => self.search_wallhaven(query, page, per_page).await,
         }
     }
 
@@ -121,7 +122,12 @@ impl WebImporter {
     }
 
     /// Search Unsplash
-    fn search_unsplash(&self, query: &str, page: u32, per_page: u32) -> Result<Vec<GalleryImage>> {
+    async fn search_unsplash(
+        &self,
+        query: &str,
+        page: u32,
+        per_page: u32,
+    ) -> Result<Vec<GalleryImage>> {
         let api_key = self.require_unsplash_key()?;
 
         let url = format!(
@@ -136,8 +142,10 @@ impl WebImporter {
             .get(&url)
             .header("Authorization", format!("Client-ID {}", api_key))
             .send()
+            .await
             .context("Failed to connect to Unsplash")?
             .json()
+            .await
             .context("Failed to parse Unsplash response")?;
 
         Ok(response
@@ -155,7 +163,7 @@ impl WebImporter {
     }
 
     /// Fetch a single Unsplash image by photo ID.
-    pub fn unsplash_photo_by_id(&self, photo_id: &str) -> Result<GalleryImage> {
+    pub async fn unsplash_photo_by_id(&self, photo_id: &str) -> Result<GalleryImage> {
         let api_key = self.require_unsplash_key()?;
         let url = format!(
             "https://api.unsplash.com/photos/{}",
@@ -167,8 +175,10 @@ impl WebImporter {
             .get(&url)
             .header("Authorization", format!("Client-ID {}", api_key))
             .send()
+            .await
             .context("Failed to connect to Unsplash")?
             .json()
+            .await
             .context("Failed to parse Unsplash response")?;
 
         Ok(GalleryImage {
@@ -182,7 +192,12 @@ impl WebImporter {
     }
 
     /// Search Wallhaven
-    fn search_wallhaven(&self, query: &str, page: u32, per_page: u32) -> Result<Vec<GalleryImage>> {
+    async fn search_wallhaven(
+        &self,
+        query: &str,
+        page: u32,
+        per_page: u32,
+    ) -> Result<Vec<GalleryImage>> {
         let mut url = format!(
             "https://wallhaven.cc/api/v1/search?q={}&page={}&categories=111&purity=100&sorting=relevance&order=desc",
             urlencoding::encode(query),
@@ -198,8 +213,10 @@ impl WebImporter {
             .client
             .get(&url)
             .send()
+            .await
             .context("Failed to connect to Wallhaven")?
             .json()
+            .await
             .context("Failed to parse Wallhaven response")?;
 
         Ok(response
@@ -218,7 +235,7 @@ impl WebImporter {
     }
 
     /// Download an image to the specified directory
-    pub fn download(&self, image: &GalleryImage, dest_dir: &Path) -> Result<PathBuf> {
+    pub async fn download(&self, image: &GalleryImage, dest_dir: &Path) -> Result<PathBuf> {
         // Create filename from ID and extension
         let extension = image
             .url
@@ -245,33 +262,41 @@ impl WebImporter {
             .client
             .get(&image.url)
             .send()
+            .await
             .context("Failed to download image")?;
 
         if !response.status().is_success() {
             anyhow::bail!("Download failed with status: {}", response.status());
         }
 
-        let bytes = response.bytes().context("Failed to read image data")?;
+        let bytes = response
+            .bytes()
+            .await
+            .context("Failed to read image data")?;
 
         // Ensure directory exists
-        std::fs::create_dir_all(dest_dir)?;
+        fs::create_dir_all(dest_dir).await?;
 
         // Write to file
-        std::fs::write(&dest_path, &bytes).context("Failed to save image")?;
+        fs::write(&dest_path, &bytes)
+            .await
+            .context("Failed to save image")?;
 
         Ok(dest_path)
     }
 
     /// Get random featured wallpapers from Wallhaven
-    pub fn featured_wallhaven(&self, count: u32) -> Result<Vec<GalleryImage>> {
+    pub async fn featured_wallhaven(&self, count: u32) -> Result<Vec<GalleryImage>> {
         let url = "https://wallhaven.cc/api/v1/search?sorting=toplist&topRange=1M&categories=111&purity=100&atleast=1920x1080";
 
         let response: WallhavenResponse = self
             .client
             .get(url)
             .send()
+            .await
             .context("Failed to connect to Wallhaven")?
             .json()
+            .await
             .context("Failed to parse Wallhaven response")?;
 
         Ok(response
