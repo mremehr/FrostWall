@@ -4,76 +4,77 @@ use crate::swww;
 use crate::utils::ColorHarmony;
 use crate::wallpaper::Wallpaper;
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 impl App {
     /// Update pairing suggestions based on currently selected wallpaper.
     pub fn update_pairing_suggestions(&mut self) {
-        self.pairing.suggestions.clear();
-
         if !self.config.pairing.enabled {
+            self.pairing.suggestions.clear();
             return;
         }
 
-        // Get selected wallpaper context (colors + AI/manual tags).
-        let (selected_path, selected_colors, selected_weights, selected_tags, selected_embedding) =
-            match self.selected_wallpaper() {
-                Some(wp) => (
-                    wp.path.clone(),
-                    wp.colors.clone(),
-                    wp.color_weights.clone(),
-                    wp.all_tags(),
-                    wp.embedding.clone(),
-                ),
-                None => return,
+        let suggestions = {
+            let Some(selected_wp) = self.selected_wallpaper() else {
+                self.pairing.suggestions.clear();
+                return;
             };
-        let selected_style_tags = extract_style_tags(&selected_tags);
 
-        // Get suggestions from pairing history.
-        let match_mode = self.config.display.match_mode;
+            let selected_tags = selected_wp.all_tags();
+            let selected_style_tags = extract_style_tags(&selected_tags);
+            let selected_embedding = selected_wp.embedding.as_deref();
+            let match_mode = self.config.display.match_mode;
 
-        // For each other screen, find suggested wallpapers.
-        for (screen_idx, screen) in self.screens.iter().enumerate() {
-            if screen_idx == self.selection.screen_idx {
-                continue;
-            }
+            let mut suggestions = Vec::new();
+            let mut seen = HashSet::new();
 
-            // Get wallpapers that match this screen.
-            let matching: Vec<_> = self
-                .cache
-                .wallpapers
-                .iter()
-                .filter(|wp| wp.matches_screen_with_mode(screen, match_mode))
-                .collect();
+            // For each other screen, find suggested wallpapers.
+            for (screen_idx, screen) in self.screens.iter().enumerate() {
+                if screen_idx == self.selection.screen_idx {
+                    continue;
+                }
 
-            // Find best match based on pairing history + color similarity.
-            let match_context = MatchContext {
-                selected_wp: &selected_path,
-                target_screen: &screen.name,
-                selected_colors: &selected_colors,
-                selected_weights: &selected_weights,
-                selected_tags: &selected_tags,
-                selected_embedding: selected_embedding.as_deref(),
-                screen_context_weight: self.config.pairing.screen_context_weight,
-                visual_weight: self.config.pairing.visual_weight,
-                harmony_weight: self.config.pairing.harmony_weight,
-                tag_weight: self.config.pairing.tag_weight,
-                semantic_weight: self.config.pairing.semantic_weight,
-                repetition_penalty_weight: self.config.pairing.repetition_penalty_weight,
-                style_mode: PairingStyleMode::Off,
-                selected_style_tags: &selected_style_tags,
-            };
-            if let Some(suggested_path) = self
-                .pairing
-                .history
-                .get_best_match(&match_context, &matching)
-            {
-                if !self.pairing.suggestions.contains(&suggested_path) {
-                    self.pairing.suggestions.push(suggested_path);
+                // Get wallpapers that match this screen.
+                let matching: Vec<_> = self
+                    .cache
+                    .wallpapers
+                    .iter()
+                    .filter(|wp| wp.matches_screen_with_mode(screen, match_mode))
+                    .collect();
+
+                // Find best match based on pairing history + color similarity.
+                let match_context = MatchContext {
+                    selected_wp: &selected_wp.path,
+                    target_screen: &screen.name,
+                    selected_colors: &selected_wp.colors,
+                    selected_weights: &selected_wp.color_weights,
+                    selected_tags: &selected_tags,
+                    selected_embedding,
+                    screen_context_weight: self.config.pairing.screen_context_weight,
+                    visual_weight: self.config.pairing.visual_weight,
+                    harmony_weight: self.config.pairing.harmony_weight,
+                    tag_weight: self.config.pairing.tag_weight,
+                    semantic_weight: self.config.pairing.semantic_weight,
+                    repetition_penalty_weight: self.config.pairing.repetition_penalty_weight,
+                    style_mode: PairingStyleMode::Off,
+                    selected_style_tags: &selected_style_tags,
+                };
+                if let Some(suggested_path) = self
+                    .pairing
+                    .history
+                    .get_best_match(&match_context, &matching)
+                {
+                    if seen.insert(suggested_path.clone()) {
+                        suggestions.push(suggested_path);
+                    }
                 }
             }
-        }
+
+            suggestions
+        };
+
+        self.pairing.suggestions = suggestions;
     }
 
     /// Check if a wallpaper is in the pairing suggestions.
@@ -101,108 +102,116 @@ impl App {
 
     /// Update pairing preview matches for all other screens.
     fn update_pairing_preview_matches(&mut self) {
-        self.pairing.preview_matches.clear();
-
         if !self.config.pairing.enabled || self.screens.len() <= 1 {
+            self.pairing.preview_matches.clear();
             return;
         }
 
-        let (selected_path, selected_colors, selected_weights, selected_tags, selected_embedding) =
-            match self.selected_wallpaper() {
-                Some(wp) => (
-                    wp.path.clone(),
-                    wp.colors.clone(),
-                    wp.color_weights.clone(),
-                    wp.all_tags(),
-                    wp.embedding.clone(),
-                ),
-                None => return,
+        let preview_matches = {
+            let Some(selected_wp) = self.selected_wallpaper() else {
+                self.pairing.preview_matches.clear();
+                return;
             };
-        let selected_style_tags = extract_style_tags(&selected_tags);
 
-        // Default weights if empty.
-        let selected_weights = if selected_weights.is_empty() {
-            vec![1.0 / selected_colors.len().max(1) as f32; selected_colors.len()]
-        } else {
-            selected_weights
-        };
+            let selected_tags = selected_wp.all_tags();
+            let selected_style_tags = extract_style_tags(&selected_tags);
+            let selected_embedding = selected_wp.embedding.as_deref();
+            let selected_colors = &selected_wp.colors;
 
-        let match_mode = self.config.display.match_mode;
-        let preview_limit = self.config.pairing.preview_match_limit.clamp(1, 50);
-        let wallpaper_by_path: HashMap<&Path, &Wallpaper> = self
-            .cache
-            .wallpapers
-            .iter()
-            .map(|wp| (wp.path.as_path(), wp))
-            .collect();
+            // Default weights if empty.
+            let selected_default_weights;
+            let selected_weights: &[f32] = if selected_wp.color_weights.is_empty() {
+                selected_default_weights =
+                    vec![1.0 / selected_colors.len().max(1) as f32; selected_colors.len()];
+                &selected_default_weights
+            } else {
+                selected_wp.color_weights.as_slice()
+            };
 
-        for (screen_idx, screen) in self.screens.iter().enumerate() {
-            if screen_idx == self.selection.screen_idx {
-                continue;
-            }
-
-            // Get wallpapers that match this screen.
-            let matching: Vec<_> = self
+            let match_mode = self.config.display.match_mode;
+            let preview_limit = self.config.pairing.preview_match_limit.clamp(1, 50);
+            let wallpaper_by_path: HashMap<&Path, &Wallpaper> = self
                 .cache
                 .wallpapers
                 .iter()
-                .filter(|wp| wp.matches_screen_with_mode(screen, match_mode))
+                .map(|wp| (wp.path.as_path(), wp))
                 .collect();
 
-            // Get top pairing matches for preview.
-            let match_context = MatchContext {
-                selected_wp: &selected_path,
-                target_screen: &screen.name,
-                selected_colors: &selected_colors,
-                selected_weights: &selected_weights,
-                selected_tags: &selected_tags,
-                selected_embedding: selected_embedding.as_deref(),
-                screen_context_weight: self.config.pairing.screen_context_weight,
-                visual_weight: self.config.pairing.visual_weight,
-                harmony_weight: self.config.pairing.harmony_weight,
-                tag_weight: self.config.pairing.tag_weight,
-                semantic_weight: self.config.pairing.semantic_weight,
-                repetition_penalty_weight: self.config.pairing.repetition_penalty_weight,
-                style_mode: self.pairing.style_mode,
-                selected_style_tags: &selected_style_tags,
-            };
-            let top_matches =
-                self.pairing
-                    .history
-                    .get_top_matches(&match_context, &matching, preview_limit);
+            let mut preview_matches = HashMap::new();
 
-            // Calculate harmony for each match.
-            let matches_with_harmony: Vec<(PathBuf, f32, ColorHarmony)> = top_matches
-                .into_iter()
-                .map(|(path, score)| {
-                    // Find the wallpaper to get its colors and weights.
-                    let harmony = wallpaper_by_path
-                        .get(path.as_path())
-                        .map(|wp| {
-                            let wp_weights = if wp.color_weights.is_empty() {
-                                vec![1.0 / wp.colors.len().max(1) as f32; wp.colors.len()]
-                            } else {
-                                wp.color_weights.clone()
-                            };
-                            let (harmony, _strength) = crate::utils::detect_harmony(
-                                &selected_colors,
-                                &selected_weights,
-                                &wp.colors,
-                                &wp_weights,
-                            );
-                            harmony
-                        })
-                        .unwrap_or(ColorHarmony::None);
-                    (path, score, harmony)
-                })
-                .collect();
+            for (screen_idx, screen) in self.screens.iter().enumerate() {
+                if screen_idx == self.selection.screen_idx {
+                    continue;
+                }
 
-            if !matches_with_harmony.is_empty() {
-                self.pairing
-                    .preview_matches
-                    .insert(screen.name.clone(), matches_with_harmony);
+                // Get wallpapers that match this screen.
+                let matching: Vec<_> = self
+                    .cache
+                    .wallpapers
+                    .iter()
+                    .filter(|wp| wp.matches_screen_with_mode(screen, match_mode))
+                    .collect();
+
+                // Get top pairing matches for preview.
+                let match_context = MatchContext {
+                    selected_wp: &selected_wp.path,
+                    target_screen: &screen.name,
+                    selected_colors,
+                    selected_weights,
+                    selected_tags: &selected_tags,
+                    selected_embedding,
+                    screen_context_weight: self.config.pairing.screen_context_weight,
+                    visual_weight: self.config.pairing.visual_weight,
+                    harmony_weight: self.config.pairing.harmony_weight,
+                    tag_weight: self.config.pairing.tag_weight,
+                    semantic_weight: self.config.pairing.semantic_weight,
+                    repetition_penalty_weight: self.config.pairing.repetition_penalty_weight,
+                    style_mode: self.pairing.style_mode,
+                    selected_style_tags: &selected_style_tags,
+                };
+                let top_matches =
+                    self.pairing
+                        .history
+                        .get_top_matches(&match_context, &matching, preview_limit);
+
+                // Calculate harmony for each match.
+                let matches_with_harmony: Vec<(PathBuf, f32, ColorHarmony)> = top_matches
+                    .into_iter()
+                    .map(|(path, score)| {
+                        // Find the wallpaper to get its colors and weights.
+                        let harmony = wallpaper_by_path
+                            .get(path.as_path())
+                            .map(|wp| {
+                                let wp_default_weights;
+                                let wp_weights: &[f32] = if wp.color_weights.is_empty() {
+                                    wp_default_weights =
+                                        vec![1.0 / wp.colors.len().max(1) as f32; wp.colors.len()];
+                                    &wp_default_weights
+                                } else {
+                                    wp.color_weights.as_slice()
+                                };
+                                let (harmony, _strength) = crate::utils::detect_harmony(
+                                    selected_colors,
+                                    selected_weights,
+                                    &wp.colors,
+                                    wp_weights,
+                                );
+                                harmony
+                            })
+                            .unwrap_or(ColorHarmony::None);
+                        (path, score, harmony)
+                    })
+                    .collect();
+
+                if !matches_with_harmony.is_empty() {
+                    preview_matches.insert(screen.name.clone(), matches_with_harmony);
+                }
             }
-        }
+
+            preview_matches
+        };
+
+        self.pairing.preview_matches = preview_matches;
     }
 
     /// Cycle through pairing preview alternatives.
