@@ -64,7 +64,7 @@ Multi-monitor wallpaper pairing that learns from your choices:
 - **Style toggle in pairing mode** - `y` cycles `Off` / `Soft` / `Strict` style matching
 - **Strict is truly strict** - In `Strict`, non-matching style candidates are filtered out (no automatic fallback to `Soft`)
 - **Position memory** - TUI remembers your browsing position per screen
-- **Session restore** - Cursor restores to the last selected wallpaper after restart
+- **Session restore** - Restores cursor per monitor and reopens last active screen after restart
 
 ### Tagging
 
@@ -345,7 +345,9 @@ hint_shown = false
 kitty_safe_thumbnails = true  # Safe half-block mode in Kitty
 
 [session]
-last_selected_wallpaper = "/home/user/Pictures/wallpapers/forest.jpg" # optional, auto-managed by TUI
+last_selected_wallpaper = "/home/user/Pictures/wallpapers/forest.jpg" # legacy fallback
+last_active_screen = "DP-2" # optional, auto-managed by TUI
+last_selected_wallpaper_by_screen = { DP-2 = "/home/user/Pictures/wallpapers/forest.jpg", HDMI-A-1 = "/home/user/Pictures/wallpapers/mountain.jpg" } # optional, auto-managed by TUI
 
 [pairing]
 enabled = true             # Enable intelligent pairing

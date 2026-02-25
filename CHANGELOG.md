@@ -2,6 +2,12 @@
 
 All notable changes to FrostWall will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+- **Session persistence** - TUI now restores selection per monitor and reopens the last active screen
+- **Protocol indicator UI** - Thumbnail protocol label is shown in header only (removed duplicate footer label)
+
 ## [0.5.0] - 2026-02-07
 
 ### Added

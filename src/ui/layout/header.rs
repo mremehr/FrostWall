@@ -148,14 +148,8 @@ pub(super) fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &FrostThe
     // Pairing preview mode - show pairing-specific help
     if app.pairing.show_preview {
         let sep = Span::styled(" │ ", Style::default().fg(theme.fg_muted));
-        let thumb_protocol = thumbnail_protocol_label(app);
 
         let help = Line::from(vec![
-            Span::styled(
-                format!("img:{}", thumb_protocol),
-                Style::default().fg(theme.fg_secondary),
-            ),
-            sep.clone(),
             Span::styled("←/→", Style::default().fg(theme.success)),
             Span::styled(" cycle", Style::default().fg(theme.fg_muted)),
             sep.clone(),
@@ -182,16 +176,10 @@ pub(super) fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &FrostThe
     draw_help_line(f, app, area, theme);
 }
 
-pub(super) fn draw_help_line(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
+pub(super) fn draw_help_line(f: &mut Frame, _app: &App, area: Rect, theme: &FrostTheme) {
     let sep = Span::styled(" │ ", Style::default().fg(theme.fg_muted));
-    let thumb_protocol = thumbnail_protocol_label(app);
 
     let help = Line::from(vec![
-        Span::styled(
-            format!("img:{}", thumb_protocol),
-            Style::default().fg(theme.fg_secondary),
-        ),
-        sep.clone(),
         Span::styled("←/→", Style::default().fg(theme.accent_primary)),
         Span::styled(" nav", Style::default().fg(theme.fg_muted)),
         sep.clone(),

@@ -3,6 +3,7 @@ use crate::wallpaper::MatchMode;
 use anyhow::Result;
 use crossterm::event::KeyCode;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -78,8 +79,15 @@ pub struct ThemeConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionConfig {
+    /// Legacy global selection used by older versions.
     #[serde(default)]
     pub last_selected_wallpaper: Option<PathBuf>,
+    /// Persist selection per monitor name so each screen restores its own cursor.
+    #[serde(default)]
+    pub last_selected_wallpaper_by_screen: HashMap<String, PathBuf>,
+    /// Persist which monitor was active when the TUI closed.
+    #[serde(default)]
+    pub last_active_screen: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
