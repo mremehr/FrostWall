@@ -8,6 +8,7 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -343,24 +344,24 @@ pub fn cmd_pywal(wallpaper_path: &Path, apply: bool) -> Result<()> {
     )?;
 
     // Find the wallpaper in cache or scan it fresh
-    let colors = cache
-        .wallpapers
-        .iter()
-        .find(|w| w.path == wallpaper_path)
-        .map(|wp| wp.colors.clone())
-        .unwrap_or_else(|| {
+    let colors: Cow<'_, [String]> =
+        if let Some(wp) = cache.wallpapers.iter().find(|w| w.path == wallpaper_path) {
+            Cow::Borrowed(wp.colors.as_slice())
+        } else {
             // Not in cache, scan the file directly
-            crate::wallpaper::Wallpaper::from_path(wallpaper_path)
-                .map(|wp| wp.colors)
-                .unwrap_or_default()
-        });
+            Cow::Owned(
+                crate::wallpaper::Wallpaper::from_path(wallpaper_path)
+                    .map(|wp| wp.colors)
+                    .unwrap_or_default(),
+            )
+        };
 
     if colors.is_empty() {
         anyhow::bail!("No colors extracted from wallpaper");
     }
 
     // Generate palette
-    let palette = generate_palette(&colors, wallpaper_path);
+    let palette = generate_palette(colors.as_ref(), wallpaper_path);
 
     // Export
     let cache_path = export_colors(&palette)?;

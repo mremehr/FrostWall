@@ -308,7 +308,6 @@ pub(super) fn draw_help_popup(f: &mut Frame, area: Rect, theme: &FrostTheme) {
 }
 
 /// Draw undo popup at bottom of screen
-
 pub(super) fn draw_undo_popup(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
     let remaining_secs = app.pairing.history.undo_remaining_secs().unwrap_or(0);
     let message = app
