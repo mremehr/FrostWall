@@ -453,11 +453,11 @@ impl Config {
         let _ = self.save(); // Save that hint was shown.
 
         Some(format!(
-            "Tip: För optimal prestanda i Kitty, lägg till i ~/.config/kitty/kitty.conf:\n\n\
+            "Tip: For optimal performance in Kitty, add this to ~/.config/kitty/kitty.conf:\n\n\
              repaint_delay {}\n\
              input_delay {}\n\
              sync_to_monitor yes\n\n\
-             Tryck valfri tangent för att fortsätta...",
+             Press any key to continue...",
             self.terminal.recommended_repaint_delay, self.terminal.recommended_input_delay
         ))
     }

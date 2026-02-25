@@ -64,6 +64,7 @@ Multi-monitor wallpaper pairing that learns from your choices:
 - **Style toggle in pairing mode** - `y` cycles `Off` / `Soft` / `Strict` style matching
 - **Strict is truly strict** - In `Strict`, non-matching style candidates are filtered out (no automatic fallback to `Soft`)
 - **Position memory** - TUI remembers your browsing position per screen
+- **Session restore** - Cursor restores to the last selected wallpaper after restart
 
 ### Tagging
 
@@ -193,8 +194,8 @@ Press `:` in TUI for vim-style commands:
 | `:screen <n>` | Switch to screen n |
 | `:go <n>` | Go to wallpaper n |
 | `:rescan` / `:scan` | Incremental rescan (preserves tags & data) |
-| `:pair-reset` | Reset pairing history |
-| `:pair-rebuild` | Rebuild affinity scores |
+| `:pair-reset` | Rebuild affinity scores from history |
+| `:pair-rebuild` | Rebuild affinity scores from history |
 | `:help` / `:h` | Show help |
 | `:q` / `:quit` | Quit |
 
@@ -343,6 +344,9 @@ recommended_input_delay = 1
 hint_shown = false
 kitty_safe_thumbnails = true  # Safe half-block mode in Kitty
 
+[session]
+last_selected_wallpaper = "/home/user/Pictures/wallpapers/forest.jpg" # optional, auto-managed by TUI
+
 [pairing]
 enabled = true             # Enable intelligent pairing
 auto_apply = false         # Auto-apply best suggestion to other screens
@@ -429,27 +433,48 @@ Style mode behavior:
 
 ```
 src/
-  main.rs        # CLI entry point (clap)
-  app.rs         # TUI state & event loop
-  screen.rs      # Screen detection (niri/wlr-randr)
-  wallpaper.rs   # Wallpaper scanning, caching, matching logic
-  swww.rs        # swww daemon interface
-  thumbnail.rs   # SIMD thumbnail generation & disk cache
-  pywal.rs       # pywal color export
-  profile.rs     # Profile management
-  pairing.rs     # Intelligent wallpaper pairing & history
-  collections.rs # Wallpaper collections/presets
-  timeprofile.rs # Time-based wallpaper profiles
-  webimport.rs   # Web gallery import (Unsplash/Wallhaven)
-  utils.rs       # Color utilities and LAB matching
-  watch.rs       # Watch daemon with inotify
-  init.rs        # Interactive setup wizard
+  main.rs              # CLI entry point (clap)
+  app.rs               # App state container + module wiring
+  screen.rs            # Screen detection (niri/wlr-randr)
+  wallpaper.rs         # Wallpaper types + module exports
+  pairing.rs           # Pairing types + module exports
+  swww.rs              # swww daemon interface
+  thumbnail.rs         # SIMD thumbnail generation & disk cache
+  pywal.rs             # pywal color export
+  profile.rs           # Profile management
+  collections.rs       # Wallpaper collections/presets
+  timeprofile.rs       # Time-based wallpaper profiles
+  webimport.rs         # Web gallery import (Unsplash/Wallhaven)
+  utils.rs             # Color utilities and LAB matching
+  watch.rs             # Watch daemon with inotify
+  init.rs              # Interactive setup wizard
   clip.rs              # CLIP auto-tagging (optional feature)
-  clip_embeddings_bin.rs  # Binary CLIP text embedding loader
+  clip_embeddings_bin.rs # Binary CLIP text embedding loader
+  app/
+    runtime.rs         # Event loop + terminal lifecycle
+    navigation.rs      # Wallpaper/screen cursor movement + persistence hooks
+    commands.rs        # Vim-style command parser/dispatch
+    actions.rs         # Apply/random/undo behaviors
+    filters.rs         # Sort/tag/color filter state updates
+    thumbnails.rs      # Thumbnail request queue + in-memory cache
+    pairing_ui.rs      # Pairing preview orchestration
+    config.rs          # Config schema + load/save
+  wallpaper/
+    cache.rs           # Scan/load/save cache paths + metadata merge
+    model.rs           # Wallpaper model helpers (tags/matching/sort)
+  pairing/
+    history.rs         # Persistent pairing history + affinity rebuild
+    scoring.rs         # Ranking/scoring helpers
+    style_tags.rs      # Style/content tag normalization
   ui/
-    mod.rs       # UI module exports
-    theme.rs     # Frost theme (light/dark auto-detection)
-    layout.rs    # TUI layout & rendering
+    mod.rs              # UI module exports
+    theme.rs            # Frost theme (light/dark auto-detection)
+    layout.rs           # Main frame composition
+    layout/
+      header.rs         # Header/footer/error rendering
+      carousel.rs       # Wallpaper carousel rendering
+      pairing.rs        # Pairing preview panel rendering
+      popups.rs         # Help/color/undo popups
 ```
 
 ### Data Flow
