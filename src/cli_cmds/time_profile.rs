@@ -8,6 +8,7 @@ pub async fn cmd_time_profile(action: TimeProfileAction, wallpaper_dir: &Path) -
     use timeprofile::TimePeriod;
 
     let mut config = app::Config::load()?;
+    let recursive = config.wallpaper.recursive;
 
     match action {
         TimeProfileAction::Status => {
@@ -50,7 +51,8 @@ pub async fn cmd_time_profile(action: TimeProfileAction, wallpaper_dir: &Path) -
             println!("Time-based profiles disabled.");
         }
         TimeProfileAction::Preview { limit } => {
-            let cache = wallpaper::WallpaperCache::load_or_scan(wallpaper_dir)?;
+            let cache =
+                wallpaper::WallpaperCache::load_or_scan_recursive(wallpaper_dir, recursive)?;
             let period = TimePeriod::current();
 
             println!(
@@ -84,7 +86,8 @@ pub async fn cmd_time_profile(action: TimeProfileAction, wallpaper_dir: &Path) -
             }
         }
         TimeProfileAction::Apply => {
-            let cache = wallpaper::WallpaperCache::load_or_scan(wallpaper_dir)?;
+            let cache =
+                wallpaper::WallpaperCache::load_or_scan_recursive(wallpaper_dir, recursive)?;
             let screens = screen::detect_screens().await?;
             let transition = config.transition();
             let period = TimePeriod::current();

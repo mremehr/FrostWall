@@ -106,6 +106,12 @@ pub struct Wallpaper {
 /// Current cache format version — bump when the serialized shape changes
 const CACHE_VERSION: u32 = 1;
 
+#[derive(Debug, Clone, Copy)]
+enum CacheLoadMode {
+    Full,
+    MetadataOnly,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WallpaperCache {
     /// Cache format version for forward-compatible migration
@@ -178,7 +184,7 @@ impl Wallpaper {
         let pixels: Vec<_> = thumb.to_rgb8().pixels().cloned().collect();
 
         let lab: Vec<Lab> = pixels
-            .par_iter()
+            .iter()
             .map(|p| {
                 let rgb = Srgb::new(
                     p.0[0] as f32 / 255.0,
@@ -383,42 +389,19 @@ impl WallpaperCache {
             .join("wallpaper_cache.json")
     }
 
-    /// Load cached wallpapers or scan the directory if cache is invalid.
-    pub fn load_or_scan(source_dir: &Path) -> Result<Self> {
-        Self::load_or_scan_recursive(source_dir, false)
-    }
-
-    /// Load cache for AI operations without forcing color extraction.
-    /// Falls back to metadata-only scan when no valid cache exists.
-    pub fn load_or_scan_for_ai(source_dir: &Path) -> Result<Self> {
-        Self::load_or_scan_for_ai_recursive(source_dir, false)
-    }
-
     pub fn load_or_scan_recursive(source_dir: &Path, recursive: bool) -> Result<Self> {
-        let cache_path = Self::cache_path();
-
-        if cache_path.exists() {
-            let data = fs::read_to_string(&cache_path)?;
-            if let Ok(cache) = serde_json::from_str::<WallpaperCache>(&data) {
-                if cache.version != CACHE_VERSION {
-                    eprintln!(
-                        "Cache format changed (v{} -> v{}), rescanning...",
-                        cache.version, CACHE_VERSION
-                    );
-                    return Self::scan_recursive(source_dir, recursive);
-                }
-                // Verify source dir matches and files still exist
-                if cache.source_dir == source_dir && cache.validate() {
-                    return Ok(cache);
-                }
-            }
-        }
-
-        // Scan fresh
-        Self::scan_recursive(source_dir, recursive)
+        Self::load_or_scan_with_mode(source_dir, recursive, CacheLoadMode::Full)
     }
 
     pub fn load_or_scan_for_ai_recursive(source_dir: &Path, recursive: bool) -> Result<Self> {
+        Self::load_or_scan_with_mode(source_dir, recursive, CacheLoadMode::MetadataOnly)
+    }
+
+    fn load_or_scan_with_mode(
+        source_dir: &Path,
+        recursive: bool,
+        mode: CacheLoadMode,
+    ) -> Result<Self> {
         let cache_path = Self::cache_path();
 
         if cache_path.exists() {
@@ -429,20 +412,28 @@ impl WallpaperCache {
                         "Cache format changed (v{} -> v{}), rescanning...",
                         cache.version, CACHE_VERSION
                     );
-                    return Self::scan_metadata_only_recursive(source_dir, recursive);
+                    return Self::scan_with_mode(source_dir, recursive, mode);
                 }
-                // For AI tagging we only need metadata/path validity, not extracted color palettes.
-                if cache.source_dir == source_dir && cache.validate_for_ai() {
+                let valid = match mode {
+                    CacheLoadMode::Full => cache.validate(),
+                    CacheLoadMode::MetadataOnly => cache.validate_for_ai(),
+                };
+                if cache.source_dir == source_dir && valid {
                     return Ok(cache);
                 }
             }
         }
 
-        Self::scan_metadata_only_recursive(source_dir, recursive)
+        Self::scan_with_mode(source_dir, recursive, mode)
     }
 
-    pub fn scan(source_dir: &Path) -> Result<Self> {
-        Self::scan_recursive(source_dir, false)
+    fn scan_with_mode(source_dir: &Path, recursive: bool, mode: CacheLoadMode) -> Result<Self> {
+        match mode {
+            CacheLoadMode::Full => Self::scan_recursive(source_dir, recursive),
+            CacheLoadMode::MetadataOnly => {
+                Self::scan_metadata_only_recursive(source_dir, recursive)
+            }
+        }
     }
 
     pub fn scan_recursive(source_dir: &Path, recursive: bool) -> Result<Self> {
@@ -801,7 +792,11 @@ impl WallpaperCache {
             return None;
         }
 
-        let current = self.screen_indices.get(&screen.name).copied().unwrap_or(0);
+        let current = self
+            .screen_indices
+            .get(&screen.name)
+            .copied()
+            .unwrap_or_else(|| matching.len().saturating_sub(1));
         let next = (current + 1) % matching.len();
         self.screen_indices.insert(screen.name.clone(), next);
 
@@ -898,6 +893,22 @@ mod tests {
     fn test_wallpaper(width: u32, height: u32) -> Wallpaper {
         Wallpaper {
             path: PathBuf::from("/test/fake.jpg"),
+            width,
+            height,
+            aspect_category: Wallpaper::categorize_aspect(width, height),
+            colors: vec![],
+            color_weights: vec![],
+            tags: vec![],
+            auto_tags: vec![],
+            embedding: None,
+            file_size: 0,
+            modified_at: 0,
+        }
+    }
+
+    fn named_wallpaper(name: &str, width: u32, height: u32) -> Wallpaper {
+        Wallpaper {
+            path: PathBuf::from(format!("/test/{name}.jpg")),
             width,
             height,
             aspect_category: Wallpaper::categorize_aspect(width, height),
@@ -1209,5 +1220,45 @@ mod tests {
         assert!(wp.primary_color().is_none());
         wp.colors = vec!["#FF0000".into(), "#00FF00".into()];
         assert_eq!(wp.primary_color(), Some("#FF0000"));
+    }
+
+    #[test]
+    fn test_next_for_screen_starts_from_first_matching_wallpaper() {
+        let screen = Screen::new("DP-1".into(), 1920, 1080);
+        let first = named_wallpaper("first", 1920, 1080);
+        let second = named_wallpaper("second", 1920, 1080);
+
+        let mut cache = WallpaperCache {
+            version: CACHE_VERSION,
+            wallpapers: vec![first, second],
+            source_dir: PathBuf::from("/test"),
+            screen_indices: HashMap::new(),
+            recursive: false,
+        };
+
+        let selected = cache
+            .next_for_screen(&screen)
+            .expect("expected a matching wallpaper");
+        assert_eq!(selected.path, PathBuf::from("/test/first.jpg"));
+    }
+
+    #[test]
+    fn test_prev_for_screen_starts_from_last_matching_wallpaper() {
+        let screen = Screen::new("DP-1".into(), 1920, 1080);
+        let first = named_wallpaper("first", 1920, 1080);
+        let second = named_wallpaper("second", 1920, 1080);
+
+        let mut cache = WallpaperCache {
+            version: CACHE_VERSION,
+            wallpapers: vec![first, second],
+            source_dir: PathBuf::from("/test"),
+            screen_indices: HashMap::new(),
+            recursive: false,
+        };
+
+        let selected = cache
+            .prev_for_screen(&screen)
+            .expect("expected a matching wallpaper");
+        assert_eq!(selected.path, PathBuf::from("/test/second.jpg"));
     }
 }

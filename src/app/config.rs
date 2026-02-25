@@ -28,6 +28,8 @@ pub struct Config {
     pub time_profiles: crate::timeprofile::TimeProfiles,
     #[serde(default)]
     pub terminal: TerminalConfig,
+    #[serde(default)]
+    pub session: SessionConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +74,12 @@ fn default_preload_count() -> usize {
 pub struct ThemeConfig {
     pub mode: String, // "auto", "light", "dark"
     pub check_interval_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SessionConfig {
+    #[serde(default)]
+    pub last_selected_wallpaper: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

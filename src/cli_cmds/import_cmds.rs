@@ -1,11 +1,110 @@
 use anyhow::Result;
 use std::path::Path;
 
+use crate::webimport::{Gallery, GalleryImage, WebImporter};
 use crate::ImportAction;
 
-pub fn cmd_import(action: ImportAction, wallpaper_dir: &Path) -> Result<()> {
-    use crate::webimport::{Gallery, WebImporter};
+fn parse_prefixed_unsplash_id(value: &str) -> Option<&str> {
+    value
+        .strip_prefix("unsplash_")
+        .or_else(|| value.strip_prefix("unsplash:"))
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+}
 
+fn unsplash_id_from_url(url: &str) -> Option<String> {
+    for marker in ["/photos/", "/download/"] {
+        if let Some((_, tail)) = url.split_once(marker) {
+            let id = tail
+                .split(['/', '?', '#'])
+                .next()
+                .unwrap_or("")
+                .trim_matches('/');
+            if !id.is_empty() {
+                return Some(id.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn sanitize_filename_token(value: &str) -> String {
+    let mut sanitized: String = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    if sanitized.is_empty() {
+        return "unsplash".to_string();
+    }
+    if sanitized.len() > 64 {
+        sanitized.truncate(64);
+    }
+    sanitized
+}
+
+fn direct_unsplash_image(url: &str) -> GalleryImage {
+    let tail = url
+        .rsplit('/')
+        .next()
+        .unwrap_or("unsplash")
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("unsplash");
+    let id = sanitize_filename_token(tail);
+    GalleryImage {
+        id,
+        url: url.to_string(),
+        width: 0,
+        height: 0,
+        author: None,
+        source: Gallery::Unsplash,
+    }
+}
+
+fn normalize_wallhaven_id(value: &str) -> Option<String> {
+    let trimmed = value.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let tail = trimmed.rsplit('/').next().unwrap_or(trimmed);
+    let without_query = tail.split(['?', '#']).next().unwrap_or(tail);
+    let without_prefix = without_query
+        .strip_prefix("wallhaven-")
+        .unwrap_or(without_query);
+    let id = without_prefix.split('.').next().unwrap_or(without_prefix);
+
+    if id.len() < 2 || !id.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+        return None;
+    }
+
+    Some(id.to_ascii_lowercase())
+}
+
+fn wallhaven_image_url(id: &str, extension: &str) -> String {
+    let prefix = &id[..2];
+    format!("https://w.wallhaven.cc/full/{prefix}/wallhaven-{id}.{extension}")
+}
+
+fn wallhaven_image_from_id(id: String, extension: &str) -> GalleryImage {
+    GalleryImage {
+        id: id.clone(),
+        url: wallhaven_image_url(&id, extension),
+        width: 0,
+        height: 0,
+        author: None,
+        source: Gallery::Wallhaven,
+    }
+}
+
+pub fn cmd_import(action: ImportAction, wallpaper_dir: &Path) -> Result<()> {
     let importer = WebImporter::new();
 
     match action {
@@ -38,8 +137,11 @@ pub fn cmd_import(action: ImportAction, wallpaper_dir: &Path) -> Result<()> {
                 );
             }
 
-            println!("\nDownload with: frostwall import download <id>");
-            println!("Or download all with: frostwall import download unsplash_<id>");
+            println!("\nDownload with: frostwall import download unsplash_<id>");
+            println!(
+                "  e.g.: frostwall import download unsplash_{}",
+                results[0].id
+            );
         }
         ImportAction::Wallhaven { query, count } => {
             println!("Searching Wallhaven for \"{}\"...", query);
@@ -76,46 +178,36 @@ pub fn cmd_import(action: ImportAction, wallpaper_dir: &Path) -> Result<()> {
         }
         ImportAction::Download { url } => {
             // Determine source from URL/ID
-            let image = if url.starts_with("http") {
-                // Full URL - try to determine source
-                if url.contains("unsplash.com") {
-                    println!("Direct Unsplash URLs require the search command first.");
-                    return Ok(());
+            let image = if let Some(photo_id) = parse_prefixed_unsplash_id(&url) {
+                importer.unsplash_photo_by_id(photo_id)?
+            } else if url.starts_with("http") {
+                if url.contains("images.unsplash.com") {
+                    direct_unsplash_image(&url)
+                } else if url.contains("unsplash.com") {
+                    let Some(photo_id) = unsplash_id_from_url(&url) else {
+                        println!("Could not parse Unsplash photo ID from URL.");
+                        println!("Use format: https://unsplash.com/photos/<id>");
+                        return Ok(());
+                    };
+                    importer.unsplash_photo_by_id(&photo_id)?
                 } else if url.contains("wallhaven.cc") || url.contains("w.wallhaven") {
-                    // Extract ID from Wallhaven URL
-                    let id = url.rsplit('/').next().unwrap_or(&url);
-                    let id = id.split('.').next().unwrap_or(id);
-                    crate::webimport::GalleryImage {
-                        id: id.to_string(),
-                        url: format!(
-                            "https://w.wallhaven.cc/full/{}/wallhaven-{}.jpg",
-                            &id[..2.min(id.len())],
-                            id
-                        ),
-                        width: 0,
-                        height: 0,
-                        author: None,
-                        source: Gallery::Wallhaven,
-                    }
+                    let Some(id) = normalize_wallhaven_id(&url) else {
+                        println!("Invalid Wallhaven URL: {}", url);
+                        return Ok(());
+                    };
+                    wallhaven_image_from_id(id, "jpg")
                 } else {
                     println!("Unknown URL source. Supported: Unsplash, Wallhaven");
                     return Ok(());
                 }
             } else {
-                // Assume Wallhaven ID
-                let full_url = format!(
-                    "https://w.wallhaven.cc/full/{}/wallhaven-{}.jpg",
-                    &url[..2.min(url.len())],
-                    url
-                );
-                crate::webimport::GalleryImage {
-                    id: url.clone(),
-                    url: full_url,
-                    width: 0,
-                    height: 0,
-                    author: None,
-                    source: Gallery::Wallhaven,
-                }
+                // Assume Wallhaven ID unless explicitly prefixed for Unsplash.
+                let Some(id) = normalize_wallhaven_id(&url) else {
+                    println!("Unrecognized ID format: {}", url);
+                    println!("Use `unsplash_<id>` for Unsplash or a Wallhaven ID/URL.");
+                    return Ok(());
+                };
+                wallhaven_image_from_id(id, "jpg")
             };
 
             println!("Downloading {}...", image.id);
@@ -129,9 +221,8 @@ pub fn cmd_import(action: ImportAction, wallpaper_dir: &Path) -> Result<()> {
                     // Try alternative URL formats for Wallhaven
                     if image.source == Gallery::Wallhaven {
                         // Try PNG format
-                        let png_url = image.url.replace(".jpg", ".png");
-                        let png_image = crate::webimport::GalleryImage {
-                            url: png_url,
+                        let png_image = GalleryImage {
+                            url: wallhaven_image_url(&image.id, "png"),
                             ..image.clone()
                         };
                         if let Ok(path) = importer.download(&png_image, wallpaper_dir) {
@@ -148,4 +239,51 @@ pub fn cmd_import(action: ImportAction, wallpaper_dir: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_prefixed_unsplash_id_supports_both_prefixes() {
+        assert_eq!(
+            parse_prefixed_unsplash_id("unsplash_abc123"),
+            Some("abc123")
+        );
+        assert_eq!(parse_prefixed_unsplash_id("unsplash:xyz"), Some("xyz"));
+        assert_eq!(parse_prefixed_unsplash_id("abc123"), None);
+    }
+
+    #[test]
+    fn unsplash_id_from_url_parses_photo_urls() {
+        assert_eq!(
+            unsplash_id_from_url("https://unsplash.com/photos/AbCdEf12345"),
+            Some("AbCdEf12345".to_string())
+        );
+        assert_eq!(
+            unsplash_id_from_url("https://unsplash.com/photos/AbCdEf12345/download?force=true"),
+            Some("AbCdEf12345".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_wallhaven_id_handles_id_and_url() {
+        assert_eq!(normalize_wallhaven_id("w8x7y9"), Some("w8x7y9".to_string()));
+        assert_eq!(
+            normalize_wallhaven_id("https://wallhaven.cc/w/w8x7y9"),
+            Some("w8x7y9".to_string())
+        );
+        assert_eq!(
+            normalize_wallhaven_id("https://w.wallhaven.cc/full/w8/wallhaven-w8x7y9.jpg"),
+            Some("w8x7y9".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_wallhaven_id_rejects_invalid_values() {
+        assert_eq!(normalize_wallhaven_id(""), None);
+        assert_eq!(normalize_wallhaven_id("åäö"), None);
+        assert_eq!(normalize_wallhaven_id("x"), None);
+    }
 }

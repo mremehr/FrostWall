@@ -73,6 +73,7 @@ pub async fn run_tui(wallpaper_dir: PathBuf) -> Result<()> {
     )?;
     terminal.show_cursor()?;
 
+    app.persist_last_selection();
     app.cache.save()?;
     app.config.save()?;
 

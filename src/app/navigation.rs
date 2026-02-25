@@ -92,4 +92,50 @@ impl App {
             self.update_pairing_suggestions();
         }
     }
+
+    /// Restore the previously selected wallpaper from persisted session state.
+    pub fn restore_last_selection(&mut self) {
+        let Some(saved_path) = self.config.session.last_selected_wallpaper.clone() else {
+            return;
+        };
+
+        if self.screens.is_empty() {
+            return;
+        }
+
+        let original_screen_idx = self
+            .selection
+            .screen_idx
+            .min(self.screens.len().saturating_sub(1));
+
+        for screen_idx in 0..self.screens.len() {
+            self.selection.screen_idx = screen_idx;
+            self.update_filtered_wallpapers();
+
+            if let Some(pos) = self
+                .selection
+                .filtered_wallpapers
+                .iter()
+                .position(|&cache_idx| {
+                    self.cache
+                        .wallpapers
+                        .get(cache_idx)
+                        .map(|wp| wp.path == saved_path)
+                        .unwrap_or(false)
+                })
+            {
+                self.selection.wallpaper_idx = pos;
+                return;
+            }
+        }
+
+        self.selection.screen_idx = original_screen_idx;
+        self.update_filtered_wallpapers();
+    }
+
+    /// Persist the currently selected wallpaper so selection survives restart.
+    pub fn persist_last_selection(&mut self) {
+        self.config.session.last_selected_wallpaper =
+            self.selected_wallpaper().map(|wp| wp.path.clone());
+    }
 }

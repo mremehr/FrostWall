@@ -54,6 +54,7 @@ pub fn parse_interval(s: &str) -> Option<Duration> {
 /// Run the watch daemon
 pub async fn run_watch(watch_config: WatchConfig) -> Result<()> {
     let config = Config::load()?;
+    let recursive = config.wallpaper.recursive;
     let wallpaper_dir = config.wallpaper_dir();
 
     println!("❄️  FrostWall Watch Daemon");
@@ -71,7 +72,7 @@ pub async fn run_watch(watch_config: WatchConfig) -> Result<()> {
     ctrlc_handler(running_clone);
 
     // Initial scan
-    let mut cache = WallpaperCache::load_or_scan(&wallpaper_dir)?;
+    let mut cache = WallpaperCache::load_or_scan_recursive(&wallpaper_dir, recursive)?;
     println!("✓ Loaded {} wallpapers", cache.wallpapers.len());
 
     // Set up file system watcher
@@ -88,7 +89,12 @@ pub async fn run_watch(watch_config: WatchConfig) -> Result<()> {
             NotifyConfig::default(),
         ) {
             Ok(mut w) => {
-                if let Err(e) = w.watch(&wallpaper_dir, RecursiveMode::NonRecursive) {
+                let mode = if recursive {
+                    RecursiveMode::Recursive
+                } else {
+                    RecursiveMode::NonRecursive
+                };
+                if let Err(e) = w.watch(&wallpaper_dir, mode) {
                     eprintln!("⚠ Could not watch directory: {}", e);
                 } else {
                     println!("✓ Watching for file changes");
@@ -138,7 +144,7 @@ pub async fn run_watch(watch_config: WatchConfig) -> Result<()> {
         // Reload cache if dirty
         if cache_dirty {
             println!("🔄 Rescanning wallpaper directory...");
-            match WallpaperCache::scan(&wallpaper_dir) {
+            match WallpaperCache::scan_recursive(&wallpaper_dir, recursive) {
                 Ok(new_cache) => {
                     let old_count = cache.wallpapers.len();
                     let new_count = new_cache.wallpapers.len();

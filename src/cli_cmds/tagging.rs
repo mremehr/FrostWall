@@ -2,10 +2,12 @@ use anyhow::Result;
 use std::path::Path;
 
 use crate::TagAction;
-use crate::{utils, wallpaper};
+use crate::{app, utils, wallpaper};
 
 pub fn cmd_tag(action: TagAction, wallpaper_dir: &Path) -> Result<()> {
-    let mut cache = wallpaper::WallpaperCache::load_or_scan_for_ai(wallpaper_dir)?;
+    let recursive = app::Config::load()?.wallpaper.recursive;
+    let mut cache =
+        wallpaper::WallpaperCache::load_or_scan_for_ai_recursive(wallpaper_dir, recursive)?;
 
     match action {
         TagAction::List => {
@@ -54,7 +56,8 @@ pub fn cmd_tag(action: TagAction, wallpaper_dir: &Path) -> Result<()> {
 }
 
 pub fn cmd_similar(wallpaper_dir: &Path, target_path: &Path, limit: usize) -> Result<()> {
-    let cache = wallpaper::WallpaperCache::load_or_scan(wallpaper_dir)?;
+    let recursive = app::Config::load()?.wallpaper.recursive;
+    let cache = wallpaper::WallpaperCache::load_or_scan_recursive(wallpaper_dir, recursive)?;
 
     // Find the target wallpaper
     let target = cache

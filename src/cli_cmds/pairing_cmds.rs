@@ -39,7 +39,10 @@ pub fn cmd_pair(action: PairAction, wallpaper_dir: &Path) -> Result<()> {
         }
         PairAction::Suggest { path } => {
             let history = pairing::PairingHistory::load(config.pairing.max_history_records)?;
-            let cache = wallpaper::WallpaperCache::load_or_scan(wallpaper_dir)?;
+            let cache = wallpaper::WallpaperCache::load_or_scan_recursive(
+                wallpaper_dir,
+                config.wallpaper.recursive,
+            )?;
 
             // Find wallpapers with affinity to the given path
             let mut suggestions: Vec<_> = cache

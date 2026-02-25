@@ -161,7 +161,7 @@ pub async fn run_init() -> Result<()> {
 
     if scan_now {
         println!("\nScanning {}...", expanded_dir.display());
-        match crate::wallpaper::WallpaperCache::scan(&expanded_dir) {
+        match crate::wallpaper::WallpaperCache::scan_recursive(&expanded_dir, recursive) {
             Ok(cache) => {
                 cache.save()?;
                 let stats = cache.stats();

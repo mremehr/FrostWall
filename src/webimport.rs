@@ -114,12 +114,15 @@ impl WebImporter {
         }
     }
 
+    fn require_unsplash_key(&self) -> Result<&str> {
+        self.unsplash_key
+            .as_deref()
+            .context("Unsplash API key required. Set UNSPLASH_ACCESS_KEY environment variable.")
+    }
+
     /// Search Unsplash
     fn search_unsplash(&self, query: &str, page: u32, per_page: u32) -> Result<Vec<GalleryImage>> {
-        let api_key = self
-            .unsplash_key
-            .as_ref()
-            .context("Unsplash API key required. Set UNSPLASH_ACCESS_KEY environment variable.")?;
+        let api_key = self.require_unsplash_key()?;
 
         let url = format!(
             "https://api.unsplash.com/search/photos?query={}&page={}&per_page={}&orientation=landscape",
@@ -149,6 +152,33 @@ impl WebImporter {
                 source: Gallery::Unsplash,
             })
             .collect())
+    }
+
+    /// Fetch a single Unsplash image by photo ID.
+    pub fn unsplash_photo_by_id(&self, photo_id: &str) -> Result<GalleryImage> {
+        let api_key = self.require_unsplash_key()?;
+        let url = format!(
+            "https://api.unsplash.com/photos/{}",
+            urlencoding::encode(photo_id)
+        );
+
+        let photo: UnsplashPhoto = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Client-ID {}", api_key))
+            .send()
+            .context("Failed to connect to Unsplash")?
+            .json()
+            .context("Failed to parse Unsplash response")?;
+
+        Ok(GalleryImage {
+            id: photo.id,
+            url: format!("{}?w=3840&q=85", photo.urls.raw),
+            width: photo.width,
+            height: photo.height,
+            author: Some(photo.user.name),
+            source: Gallery::Unsplash,
+        })
     }
 
     /// Search Wallhaven

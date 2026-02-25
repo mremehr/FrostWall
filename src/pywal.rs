@@ -333,9 +333,10 @@ fn blend(hex1: &str, hex2: &str) -> String {
 pub fn cmd_pywal(wallpaper_path: &Path, apply: bool) -> Result<()> {
     use crate::wallpaper::WallpaperCache;
 
-    // Load cache to get colors
-    let cache_dir = wallpaper_path.parent().unwrap_or(Path::new("."));
-    let cache = WallpaperCache::load_or_scan(cache_dir)?;
+    // Load configured cache to reuse already extracted palettes when available.
+    let config = crate::app::Config::load()?;
+    let source_dir = config.wallpaper_dir();
+    let cache = WallpaperCache::load_or_scan_recursive(&source_dir, config.wallpaper.recursive)?;
 
     // Find the wallpaper in cache or scan it fresh
     let colors = cache

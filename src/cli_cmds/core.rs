@@ -1,11 +1,12 @@
 use anyhow::Result;
 use std::path::Path;
 
-use crate::{screen, swww, wallpaper};
+use crate::{app, screen, swww, wallpaper};
 
 pub async fn cmd_random(wallpaper_dir: &Path) -> Result<()> {
+    let recursive = app::Config::load()?.wallpaper.recursive;
     let screens = screen::detect_screens().await?;
-    let cache = wallpaper::WallpaperCache::load_or_scan(wallpaper_dir)?;
+    let cache = wallpaper::WallpaperCache::load_or_scan_for_ai_recursive(wallpaper_dir, recursive)?;
 
     if cache.wallpapers.is_empty() {
         eprintln!("No wallpapers found in: {}", wallpaper_dir.display());
@@ -24,8 +25,10 @@ pub async fn cmd_random(wallpaper_dir: &Path) -> Result<()> {
 }
 
 pub async fn cmd_next(wallpaper_dir: &Path) -> Result<()> {
+    let recursive = app::Config::load()?.wallpaper.recursive;
     let screens = screen::detect_screens().await?;
-    let mut cache = wallpaper::WallpaperCache::load_or_scan_for_ai(wallpaper_dir)?;
+    let mut cache =
+        wallpaper::WallpaperCache::load_or_scan_for_ai_recursive(wallpaper_dir, recursive)?;
 
     if cache.wallpapers.is_empty() {
         eprintln!("No wallpapers found in: {}", wallpaper_dir.display());
@@ -45,8 +48,10 @@ pub async fn cmd_next(wallpaper_dir: &Path) -> Result<()> {
 }
 
 pub async fn cmd_prev(wallpaper_dir: &Path) -> Result<()> {
+    let recursive = app::Config::load()?.wallpaper.recursive;
     let screens = screen::detect_screens().await?;
-    let mut cache = wallpaper::WallpaperCache::load_or_scan_for_ai(wallpaper_dir)?;
+    let mut cache =
+        wallpaper::WallpaperCache::load_or_scan_for_ai_recursive(wallpaper_dir, recursive)?;
 
     if cache.wallpapers.is_empty() {
         eprintln!("No wallpapers found in: {}", wallpaper_dir.display());
@@ -79,8 +84,9 @@ pub async fn cmd_screens() -> Result<()> {
 }
 
 pub async fn cmd_scan(wallpaper_dir: &Path) -> Result<()> {
+    let recursive = app::Config::load()?.wallpaper.recursive;
     println!("Scanning {}...", wallpaper_dir.display());
-    let cache = wallpaper::WallpaperCache::scan(wallpaper_dir)?;
+    let cache = wallpaper::WallpaperCache::scan_recursive(wallpaper_dir, recursive)?;
     cache.save()?;
 
     let stats = cache.stats();

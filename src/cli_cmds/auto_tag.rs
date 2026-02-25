@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::Path;
 
-use crate::wallpaper;
+use crate::{app, wallpaper};
 
 pub async fn cmd_auto_tag(
     wallpaper_dir: &Path,
@@ -16,7 +16,9 @@ pub async fn cmd_auto_tag(
 
     let mut tagger = ClipTagger::new().await?;
 
-    let mut cache = wallpaper::WallpaperCache::load_or_scan_for_ai(wallpaper_dir)?;
+    let recursive = app::Config::load()?.wallpaper.recursive;
+    let mut cache =
+        wallpaper::WallpaperCache::load_or_scan_for_ai_recursive(wallpaper_dir, recursive)?;
 
     let to_process: Vec<usize> = cache
         .wallpapers

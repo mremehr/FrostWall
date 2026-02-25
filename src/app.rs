@@ -189,7 +189,10 @@ impl App {
     /// Detect connected screens and refresh the wallpaper filter.
     pub async fn init_screens(&mut self) -> Result<()> {
         self.screens = screen::detect_screens().await?;
+        self.selection.screen_idx = 0;
         self.update_filtered_wallpapers();
+        self.restore_last_selection();
+        self.update_pairing_suggestions();
         Ok(())
     }
 }

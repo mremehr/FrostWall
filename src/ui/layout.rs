@@ -9,6 +9,7 @@ use ratatui::{
     Frame,
 };
 use ratatui_image::{picker::ProtocolType, StatefulImage};
+use std::collections::HashMap;
 
 const THUMBNAIL_WIDTH: u16 = 48;
 const THUMBNAIL_HEIGHT: u16 = 28;
@@ -378,6 +379,15 @@ fn draw_pairing_panel(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostThe
         return;
     }
 
+    // Build once to avoid repeated O(n) scans for each preview row.
+    let cache_index_by_path: HashMap<&std::path::Path, usize> = app
+        .cache
+        .wallpapers
+        .iter()
+        .enumerate()
+        .map(|(idx, wp)| (wp.path.as_path(), idx))
+        .collect();
+
     // Collect preview data: (screen_name, cache_idx, filename, harmony)
     let preview_data: Vec<(String, Option<usize>, String, ColorHarmony)> = app
         .pairing
@@ -386,7 +396,7 @@ fn draw_pairing_panel(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostThe
         .map(|(screen_name, matches)| {
             let idx = preview_idx.min(matches.len().saturating_sub(1));
             if let Some((path, _, harmony)) = matches.get(idx) {
-                let cache_idx = app.cache.wallpapers.iter().position(|wp| &wp.path == path);
+                let cache_idx = cache_index_by_path.get(path.as_path()).copied();
                 let filename = path
                     .file_stem()
                     .and_then(|n| n.to_str())
@@ -844,13 +854,15 @@ fn fit_aspect(max_w: u16, max_h: u16, aspect_w: u32, aspect_h: u32) -> (u16, u16
 }
 
 fn draw_color_palette(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
-    // Get colors from selected wallpaper
-    let colors = app
-        .selected_wallpaper()
-        .map(|wp| wp.colors.clone())
-        .unwrap_or_default();
+    let Some(wp) = app.selected_wallpaper() else {
+        let text = Paragraph::new("No color data")
+            .style(Style::default().fg(theme.fg_muted))
+            .alignment(Alignment::Center);
+        f.render_widget(text, area);
+        return;
+    };
 
-    if colors.is_empty() {
+    if wp.colors.is_empty() {
         let text = Paragraph::new("No color data")
             .style(Style::default().fg(theme.fg_muted))
             .alignment(Alignment::Center);
@@ -864,36 +876,30 @@ fn draw_color_palette(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) 
         Style::default().fg(theme.fg_secondary),
     )];
 
-    for (i, color_hex) in colors.iter().enumerate() {
+    for (i, color_hex) in wp.colors.iter().enumerate() {
         // Parse hex color
         if let Some(color) = parse_hex_color(color_hex) {
             // Color block using background color
             spans.push(Span::styled("  █████  ", Style::default().fg(color)));
             spans.push(Span::styled(color_hex, Style::default().fg(theme.fg_muted)));
 
-            if i < colors.len() - 1 {
+            if i < wp.colors.len() - 1 {
                 spans.push(Span::styled(" ", Style::default()));
             }
         }
     }
 
-    // Get tags too
-    let tags = app
-        .selected_wallpaper()
-        .map(|wp| wp.tags.clone())
-        .unwrap_or_default();
-
-    if !tags.is_empty() {
+    if !wp.tags.is_empty() {
         spans.push(Span::styled(
             "  │  Tags: ",
             Style::default().fg(theme.fg_secondary),
         ));
-        for (i, tag) in tags.iter().enumerate() {
+        for (i, tag) in wp.tags.iter().enumerate() {
             spans.push(Span::styled(
                 format!("#{}", tag),
                 Style::default().fg(theme.accent_highlight),
             ));
-            if i < tags.len() - 1 {
+            if i < wp.tags.len() - 1 {
                 spans.push(Span::styled(" ", Style::default()));
             }
         }
