@@ -137,10 +137,10 @@ fn render(area: Rect, rect: Rect, buf: &mut Buffer, id: u32, seq: &mut Option<St
             // Add entire row with positions
             add_placeholder(&mut symbol, x, y, high_id);
             // Skip or something may overwrite it
-            buf.get_mut(area.left() + x, area.top() + y).set_skip(true);
+            buf[(area.left() + x, area.top() + y)].set_skip(true);
         }
         symbol.push_str("\x1b[0m"); // Stop messing with styles now.
-        buf.get_mut(area.left(), area.top() + y).set_symbol(&symbol);
+        buf[(area.left(), area.top() + y)].set_symbol(&symbol);
     }
 }
 

@@ -80,7 +80,7 @@ impl Protocol for Halfblocks {
                 continue;
             }
 
-            buf.get_mut(area.x + x, area.y + y)
+            buf[(area.x + x, area.y + y)]
                 .set_fg(hb.upper)
                 .set_bg(hb.lower)
                 .set_char('▀');
