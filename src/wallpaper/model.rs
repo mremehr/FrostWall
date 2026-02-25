@@ -53,19 +53,18 @@ impl Wallpaper {
 
         let img = image::open(&self.path).context("Failed to open image")?;
         let thumb = img.resize(THUMBNAIL_SIZE, THUMBNAIL_SIZE, FilterType::Triangle);
-        let pixels: Vec<_> = thumb.to_rgb8().pixels().cloned().collect();
-
-        let lab: Vec<Lab> = pixels
-            .iter()
-            .map(|p| {
-                let rgb = Srgb::new(
-                    p.0[0] as f32 / 255.0,
-                    p.0[1] as f32 / 255.0,
-                    p.0[2] as f32 / 255.0,
-                );
-                rgb.into_color()
-            })
-            .collect();
+        let thumb_rgb = thumb.to_rgb8();
+        let mut lab: Vec<Lab> =
+            Vec::with_capacity((thumb_rgb.width() * thumb_rgb.height()) as usize);
+        lab.extend(thumb_rgb.pixels().map(|p| {
+            let rgb = Srgb::new(
+                p.0[0] as f32 / 255.0,
+                p.0[1] as f32 / 255.0,
+                p.0[2] as f32 / 255.0,
+            );
+            let lab_color: Lab = rgb.into_color();
+            lab_color
+        }));
 
         let result = get_kmeans_hamerly(
             K,
