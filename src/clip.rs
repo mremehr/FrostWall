@@ -262,12 +262,14 @@ impl ModelManager {
         let total_size = response.content_length().unwrap_or(0);
 
         let pb = ProgressBar::new(total_size);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                .unwrap()
-                .progress_chars("#>-"),
-        );
+        if let Ok(style) = ProgressStyle::default_bar()
+            .template(
+                "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})",
+            )
+            .map(|style| style.progress_chars("#>-"))
+        {
+            pb.set_style(style);
+        }
 
         let mut file = std::fs::File::create(dest)?;
         let mut stream = response.bytes_stream();
