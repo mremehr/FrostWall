@@ -24,6 +24,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "clip")]
+use crate::app::Config;
+#[cfg(feature = "clip")]
 use crate::clip_embeddings_bin::{category_embeddings, EMBEDDING_DIM};
 
 /// CLIP image input size (ViT-B/32)
@@ -37,15 +39,15 @@ pub struct AutoTag {
     pub confidence: f32,
 }
 
-/// Model URLs from HuggingFace
-/// Using Qdrant's model which outputs proper 512-dim projected embeddings
+/// Default model URL from HuggingFace.
+/// Uses Qdrant's model which outputs proper 512-dim projected embeddings.
 #[cfg(feature = "clip")]
-const VISUAL_MODEL_URL: &str =
+const DEFAULT_VISUAL_MODEL_URL: &str =
     "https://huggingface.co/Qdrant/clip-ViT-B-32-vision/resolve/main/model.onnx";
 
-/// SHA256 checksum for the visual model (Qdrant/clip-ViT-B-32-vision)
+/// SHA256 checksum for the default visual model (Qdrant/clip-ViT-B-32-vision).
 #[cfg(feature = "clip")]
-const VISUAL_MODEL_SHA256: &str =
+const DEFAULT_VISUAL_MODEL_SHA256: &str =
     "c68d3d9a200ddd2a8c8a5510b576d4c94d1ae383bf8b36dd8c084f94e1fb4d63";
 
 /// Extra categories tuned for this wallpaper library.
@@ -153,16 +155,48 @@ const LIBRARY_CATEGORY_MIXES: &[(&str, &[(&str, f32)])] = &[
 #[cfg(feature = "clip")]
 pub struct ModelManager {
     cache_dir: PathBuf,
+    visual_model_url: String,
+    visual_model_sha256: Option<String>,
 }
 
 #[cfg(feature = "clip")]
 impl ModelManager {
-    pub fn new() -> Self {
+    pub fn new(config: &Config) -> Self {
         let cache_dir = directories::ProjectDirs::from("com", "mrmattias", "frostwall")
             .map(|dirs| dirs.cache_dir().join("models"))
             .unwrap_or_else(|| PathBuf::from("/tmp/frostwall/models"));
 
-        Self { cache_dir }
+        let configured_url = config
+            .clip
+            .visual_model_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .map(str::to_string);
+        let visual_model_url = configured_url
+            .clone()
+            .unwrap_or_else(|| DEFAULT_VISUAL_MODEL_URL.to_string());
+
+        let visual_model_sha256 = config
+            .clip
+            .visual_model_sha256
+            .as_deref()
+            .map(str::trim)
+            .filter(|hash| !hash.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                if configured_url.is_none() || visual_model_url == DEFAULT_VISUAL_MODEL_URL {
+                    Some(DEFAULT_VISUAL_MODEL_SHA256.to_string())
+                } else {
+                    None
+                }
+            });
+
+        Self {
+            cache_dir,
+            visual_model_url,
+            visual_model_sha256,
+        }
     }
 
     fn visual_model_path(&self) -> PathBuf {
@@ -173,23 +207,34 @@ impl ModelManager {
         std::fs::create_dir_all(&self.cache_dir)?;
 
         let visual_path = self.visual_model_path();
+        let expected_sha256 = self.visual_model_sha256.as_deref();
+        let checksum_enabled = expected_sha256.is_some();
+        if !checksum_enabled {
+            eprintln!(
+                "WARNING: CLIP model checksum verification is disabled (custom URL without SHA256)"
+            );
+        }
 
         if visual_path.exists() {
-            if !Self::verify_checksum(&visual_path, VISUAL_MODEL_SHA256)? {
-                eprintln!("WARNING: Model checksum mismatch — re-downloading...");
-                std::fs::remove_file(&visual_path)?;
-                self.download_model(VISUAL_MODEL_URL, &visual_path, "visual encoder")
-                    .await?;
-                if !Self::verify_checksum(&visual_path, VISUAL_MODEL_SHA256)? {
-                    anyhow::bail!("Downloaded model failed checksum verification");
+            if let Some(expected) = expected_sha256 {
+                if !Self::verify_checksum(&visual_path, expected)? {
+                    eprintln!("WARNING: Model checksum mismatch — re-downloading...");
+                    std::fs::remove_file(&visual_path)?;
+                    self.download_model(&self.visual_model_url, &visual_path, "visual encoder")
+                        .await?;
+                    if !Self::verify_checksum(&visual_path, expected)? {
+                        anyhow::bail!("Downloaded model failed checksum verification");
+                    }
                 }
             }
         } else {
-            self.download_model(VISUAL_MODEL_URL, &visual_path, "visual encoder")
+            self.download_model(&self.visual_model_url, &visual_path, "visual encoder")
                 .await?;
-            if !Self::verify_checksum(&visual_path, VISUAL_MODEL_SHA256)? {
-                std::fs::remove_file(&visual_path)?;
-                anyhow::bail!("Downloaded model failed checksum verification");
+            if let Some(expected) = expected_sha256 {
+                if !Self::verify_checksum(&visual_path, expected)? {
+                    std::fs::remove_file(&visual_path)?;
+                    anyhow::bail!("Downloaded model failed checksum verification");
+                }
             }
         }
 
@@ -258,8 +303,8 @@ pub struct ClipAnalysis {
 #[cfg(feature = "clip")]
 impl ClipTagger {
     /// Create a new tagger by loading ONNX models
-    pub async fn new() -> Result<Self> {
-        let model_manager = ModelManager::new();
+    pub async fn new(config: &Config) -> Result<Self> {
+        let model_manager = ModelManager::new(config);
         let visual_path = model_manager.ensure_models().await?;
 
         eprintln!("Loading CLIP visual model...");

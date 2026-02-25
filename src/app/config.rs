@@ -145,6 +145,12 @@ pub struct ClipConfig {
     pub show_in_filter: bool,
     /// Cache embeddings for similarity search
     pub cache_embeddings: bool,
+    /// Optional override URL for the CLIP visual ONNX model
+    #[serde(default)]
+    pub visual_model_url: Option<String>,
+    /// Optional SHA256 for custom visual model URL
+    #[serde(default)]
+    pub visual_model_sha256: Option<String>,
 }
 
 /// Configuration for intelligent wallpaper pairing
@@ -306,6 +312,8 @@ impl Default for ClipConfig {
             threshold: 0.25,
             show_in_filter: true,
             cache_embeddings: true,
+            visual_model_url: None,
+            visual_model_sha256: None,
         }
     }
 }

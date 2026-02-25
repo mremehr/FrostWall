@@ -366,6 +366,8 @@ enabled = false           # CLIP auto-tagging opt-in flag (used for status hints
 threshold = 0.25
 show_in_filter = true
 cache_embeddings = true
+# visual_model_url = "https://huggingface.co/.../model.onnx"   # optional custom model URL
+# visual_model_sha256 = "<sha256-hex>"                         # recommended with custom URL
 
 [time_profiles]
 enabled = false            # Enable time-based wallpaper selection

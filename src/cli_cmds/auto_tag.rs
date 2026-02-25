@@ -14,9 +14,9 @@ pub async fn cmd_auto_tag(
 
     println!("Initializing CLIP model...");
 
-    let mut tagger = ClipTagger::new().await?;
-
-    let recursive = app::Config::load()?.wallpaper.recursive;
+    let config = app::Config::load()?;
+    let mut tagger = ClipTagger::new(&config).await?;
+    let recursive = config.wallpaper.recursive;
     let mut cache = wallpaper::WallpaperCache::load_or_scan(
         wallpaper_dir,
         recursive,
