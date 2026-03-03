@@ -7,8 +7,12 @@ All notable changes to FrostWall will be documented in this file.
 ### Changed
 - **Session persistence** - TUI now restores selection per monitor and reopens the last active screen
 - **Protocol indicator UI** - Thumbnail protocol label is shown in header only (removed duplicate footer label)
-- **Adaptive carousel layout** - Thumbnail row now uses aspect-aware slot widths and prefers 5 visible items, falling back to 3 on narrow terminals
+- **Adaptive carousel layout** - Thumbnail row now uses aspect-aware slot sizing, centered selection, edge fade, and stronger portrait/square balancing
 - **Aspect grouping toggle** - New `a` key and `:aspect [toggle|on|off]` command to group wallpapers by `Ultrawide -> Landscape -> Square -> Portrait`, persisted via `[display].aspect_sort`
+- **Thumbnail quality defaults** - Default thumbnail cache raised to `2560x1920` (quality `92`) for clearer large previews
+- **Thumbnail flow ordering** - Request/event coalescing now preserves priority order while deduping by generation/cache index
+- **Render loop efficiency** - Tick no longer forces redraw unless UI state changed; thumbnail bursts are throttled to ~60 FPS
+- **Perf instrumentation** - Optional runtime/worker profiling via `FROSTWALL_PERF=1`
 
 ## [0.5.0] - 2026-02-07
 

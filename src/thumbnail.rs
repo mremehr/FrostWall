@@ -7,9 +7,11 @@ use std::hash::{Hash, Hasher};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
-// Higher resolution for crisp thumbnails
-pub const THUMB_WIDTH: u32 = 800;
-pub const THUMB_HEIGHT: u32 = 600;
+// Higher resolution for crisp thumbnails and better fill in larger carousel slots.
+pub const THUMB_WIDTH: u32 = 2560;
+pub const THUMB_HEIGHT: u32 = 1920;
+pub const MIN_THUMB_WIDTH: u32 = 2560;
+pub const MIN_THUMB_HEIGHT: u32 = 1920;
 
 // JPEG quality (0-100) - 92 is high quality with good compression
 const JPEG_QUALITY: u8 = 92;
@@ -29,8 +31,7 @@ impl ThumbnailCache {
     }
 
     pub fn new_with_settings(width: u32, height: u32, quality: u8) -> Self {
-        let width = width.max(32);
-        let height = height.max(32);
+        let (width, height) = effective_thumbnail_bounds(width, height);
         let quality = quality.clamp(1, 100);
         let cache_dir = directories::ProjectDirs::from("com", "mrmattias", "frostwall")
             .map(|dirs| dirs.cache_dir().to_path_buf())
@@ -158,6 +159,14 @@ impl ThumbnailCache {
             UNSHARP_THRESHOLD,
         ))
     }
+}
+
+/// Clamp thumbnail bounds to a quality floor that still allows large carousel tiles to scale well.
+pub fn effective_thumbnail_bounds(width: u32, height: u32) -> (u32, u32) {
+    (
+        width.max(MIN_THUMB_WIDTH).max(32),
+        height.max(MIN_THUMB_HEIGHT).max(32),
+    )
 }
 
 impl Default for ThumbnailCache {

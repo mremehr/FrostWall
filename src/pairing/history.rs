@@ -640,13 +640,16 @@ impl PairingHistory {
         }
     }
 
-    /// Clear undo state (called when timeout expires)
-    pub fn clear_expired_undo(&mut self) {
+    /// Clear undo state (called when timeout expires).
+    /// Returns true when state changed.
+    pub fn clear_expired_undo(&mut self) -> bool {
         if let Some(state) = &self.undo_state {
             if state.started_at.elapsed() >= state.duration {
                 self.undo_state = None;
+                return true;
             }
         }
+        false
     }
 
     /// Get remaining undo time in seconds

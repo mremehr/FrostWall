@@ -47,7 +47,7 @@ The killer feature: press `p` to enter pairing mode and see a split-view with:
 
 - **Real thumbnails** - See actual images, not just filenames
 - **Multiple alternatives** - Cycle through top matches (`preview_match_limit`, default 10)
-- **Equal thumbnail slots** - Preview thumbnails share the same slot size; aspect is preserved
+- **Adaptive preview slots** - Aspect-aware sizing keeps portrait/square/ultrawide previews balanced
 - **Responsive layout** - Pairing preview scales live when terminal window is resized
 - **Color-based suggestions** - Matches based on LAB color similarity
 - **History learning** - Remembers which wallpapers you pair together
@@ -170,7 +170,7 @@ Uses LAB color space for perceptually accurate matching.
 
 Interactive terminal interface with:
 - Real image thumbnails via ratatui-image (Kitty/Sixel protocols)
-- Aspect-aware carousel (adaptive 3/5 thumbnails with centered selection)
+- Aspect-aware carousel (prefers 5 visible thumbnails with centered selection, dynamic slot sizing, and edge fade)
 - Live screen switching (Tab/Shift+Tab)
 - **Visual pairing preview** (`p` key) with split-view thumbnails
 - Aspect grouping toggle (`a` key) for ordering by `Ultrawide -> Landscape -> Square -> Portrait`
@@ -278,7 +278,9 @@ Control how wallpapers fit the screen:
 - **Dominant color extraction** - k-means clustering extracts 5 primary colors per wallpaper
 - **LAB color space** - Perceptually accurate color matching (Delta-E/CIE76)
 - **2-phase scanning** - Fast header scan, then parallel color extraction
-- **Thumbnail caching** - SIMD-accelerated (fast_image_resize) with disk cache
+- **High-resolution thumbnail caching** - SIMD-accelerated disk cache (default `2560x1920`, quality `92`)
+- **Event flow optimization** - Thumbnail requests/events are deduped, generation-filtered, and priority-ordered
+- **Burst-aware redraw throttling** - Thumbnail-heavy bursts are capped to ~60 FPS to reduce CPU spikes
 - **Transition effects** - Fade, wipe, grow, center, outer via swww
 - **TOML configuration** - Customize paths, keybindings, transitions
 
@@ -331,11 +333,11 @@ duration = 1.0
 fps = 60
 
 [thumbnails]
-width = 800
-height = 600
+width = 2560
+height = 1920
 quality = 92
 grid_columns = 3
-preload_count = 3
+preload_count = 20
 
 [theme]
 mode = "auto"              # auto, light, dark
@@ -505,11 +507,23 @@ src/
 5. **Preview**: Split-view shows selected wallpaper + thumbnail suggestions
 6. **Apply**: Call `swww img` with transition parameters for all screens
 
+### Performance Profiling
+
+Enable runtime + thumbnail-worker perf logs:
+
+```bash
+env FROSTWALL_PERF=1 /path/to/frostwall
+```
+
+You will see periodic logs like:
+- `[perf][runtime]` - draw time, batch/event counts, event processing time
+- `[perf][thumb-worker]` - thumbnail decode latency, batch size, failure count
+
 ### Cache Locations
 
 - **Config**: `~/.config/frostwall/config.toml`
 - **Wallpaper metadata**: `~/.cache/frostwall/wallpaper_cache.json`
-- **Thumbnails**: `~/.cache/frostwall/thumbs_v2/`
+- **Thumbnails**: `~/.cache/frostwall/thumbs_v3_<width>x<height>_q<quality>/`
 - **Pairing history**: `~/.cache/frostwall/pairing_history.json`
 - **Collections**: `~/.local/share/frostwall/collections.json`
 

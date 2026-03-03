@@ -58,8 +58,9 @@ impl App {
     }
 
     /// Check and clear expired undo window.
-    pub fn tick_undo(&mut self) {
-        self.pairing.history.clear_expired_undo();
+    /// Returns true when undo UI state changed and a redraw is needed.
+    pub fn tick_undo(&mut self) -> bool {
+        self.pairing.history.clear_expired_undo()
     }
 
     /// Pick a random wallpaper from the filtered list and apply it.

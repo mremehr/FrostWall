@@ -9,6 +9,7 @@ use ratatui_image::{
 use std::sync::mpsc::SyncSender;
 
 const THUMBNAIL_MAX_IN_FLIGHT_MULTIPLIER: usize = 2;
+const CAROUSEL_VISIBLE_TARGET: usize = 5;
 
 impl App {
     /// Request a thumbnail to be loaded in background.
@@ -49,7 +50,12 @@ impl App {
     ///
     /// Capped to keep memory usage predictable during long sessions.
     fn max_thumbnail_cache(&self) -> usize {
-        let cols = self.config.thumbnails.grid_columns.max(1);
+        let cols = self
+            .config
+            .thumbnails
+            .grid_columns
+            .max(CAROUSEL_VISIBLE_TARGET)
+            .max(1);
         let preload = self.config.thumbnails.preload_count;
         let warm_window = cols.saturating_add(preload.saturating_mul(2));
         let target = (cols * THUMBNAIL_CACHE_MULTIPLIER).max(warm_window.saturating_mul(2));
@@ -57,7 +63,12 @@ impl App {
     }
 
     fn max_in_flight_thumbnail_requests(&self) -> usize {
-        let cols = self.config.thumbnails.grid_columns.max(1);
+        let cols = self
+            .config
+            .thumbnails
+            .grid_columns
+            .max(CAROUSEL_VISIBLE_TARGET)
+            .max(1);
         (cols * THUMBNAIL_MAX_IN_FLIGHT_MULTIPLIER).clamp(6, 12)
     }
 
@@ -246,7 +257,8 @@ mod tests {
         app.config.thumbnails.preload_count = 1;
 
         app.config.thumbnails.grid_columns = 1;
-        assert_eq!(app.max_thumbnail_cache(), 24);
+        // Carousel shows up to 5 thumbnails, so effective columns are at least 5.
+        assert_eq!(app.max_thumbnail_cache(), 40);
 
         app.config.thumbnails.grid_columns = 1_000;
         assert_eq!(app.max_thumbnail_cache(), 200);
@@ -258,8 +270,8 @@ mod tests {
         app.config.thumbnails.grid_columns = 3;
         app.config.thumbnails.preload_count = 20;
 
-        // visible(3) + preload behind/ahead(40) = 43; keep extra headroom => 86
-        assert_eq!(app.max_thumbnail_cache(), 86);
+        // effective visible(5) + preload behind/ahead(40) = 45; headroom => 90
+        assert_eq!(app.max_thumbnail_cache(), 90);
     }
 
     #[test]

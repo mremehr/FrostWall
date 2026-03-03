@@ -283,8 +283,8 @@ impl Default for TransitionConfig {
 impl Default for ThumbnailConfig {
     fn default() -> Self {
         Self {
-            width: 800,
-            height: 600,
+            width: 2560,
+            height: 1920,
             quality: 92,
             grid_columns: 3,
             preload_count: 20,
