@@ -170,9 +170,10 @@ Uses LAB color space for perceptually accurate matching.
 
 Interactive terminal interface with:
 - Real image thumbnails via ratatui-image (Kitty/Sixel protocols)
-- Carousel navigation with selection highlighting
+- Aspect-aware carousel (adaptive 3/5 thumbnails with centered selection)
 - Live screen switching (Tab/Shift+Tab)
 - **Visual pairing preview** (`p` key) with split-view thumbnails
+- Aspect grouping toggle (`a` key) for ordering by `Ultrawide -> Landscape -> Square -> Portrait`
 - Instant wallpaper application with animated transitions
 - Auto-detects terminal theme (Frostglow Light / Deep Cracked Ice Dark)
 - **Vim-style command mode** (`:` key)
@@ -191,6 +192,7 @@ Press `:` in TUI for vim-style commands:
 | `:img [toggle|hb|kitty]` | Toggle/set thumbnail protocol |
 | `:similar` / `:sim` | Find similar wallpapers |
 | `:sort name/date/size` | Change sort mode |
+| `:aspect [toggle/on/off]` | Toggle aspect grouping in carousel |
 | `:screen <n>` | Switch to screen n |
 | `:go <n>` | Go to wallpaper n |
 | `:rescan` / `:scan` | Incremental rescan (preserves tags & data) |

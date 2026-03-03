@@ -86,6 +86,7 @@ impl Default for UiState {
 /// Filter and sort state.
 pub struct FilterState {
     pub sort_mode: SortMode,
+    pub aspect_sort_enabled: bool,
     pub active_tag: Option<String>,
     pub active_color: Option<String>,
     pub available_colors: Vec<String>,
@@ -96,6 +97,7 @@ impl Default for FilterState {
     fn default() -> Self {
         Self {
             sort_mode: SortMode::Name,
+            aspect_sort_enabled: false,
             active_tag: None,
             active_color: None,
             available_colors: Vec::new(),

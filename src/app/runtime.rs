@@ -391,6 +391,7 @@ fn run_app<B: ratatui::backend::Backend>(
                             KeyCode::Char(':') => app.enter_command_mode(),
                             KeyCode::Char('?') => app.toggle_help(),
                             KeyCode::Char('s') => app.toggle_sort_mode(),
+                            KeyCode::Char('a') | KeyCode::Char('A') => app.toggle_aspect_sort(),
                             KeyCode::Char('c') => app.toggle_colors(),
                             KeyCode::Char('C') => app.toggle_color_picker(),
                             KeyCode::Char('p') => app.toggle_pairing_preview(),

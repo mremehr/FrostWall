@@ -46,6 +46,11 @@ pub(super) fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &FrostThe
     let match_mode = app.config.display.match_mode.display_name();
     let resize_mode = app.config.display.resize_mode.display_name();
     let sort_mode = app.filters.sort_mode.display_name();
+    let aspect_sort = if app.filters.aspect_sort_enabled {
+        "asp:on"
+    } else {
+        "asp:off"
+    };
     let thumb_protocol = thumbnail_protocol_label(app);
 
     let mut header_spans = vec![Span::styled(
@@ -74,6 +79,15 @@ pub(super) fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &FrostThe
         Span::styled(
             format!("[⇅{}]", sort_mode),
             Style::default().fg(theme.fg_secondary),
+        ),
+        Span::styled(" ", Style::default()),
+        Span::styled(
+            format!("[{}]", aspect_sort),
+            Style::default().fg(if app.filters.aspect_sort_enabled {
+                theme.accent_highlight
+            } else {
+                theme.fg_muted
+            }),
         ),
         Span::styled(" ", Style::default()),
         Span::styled(
@@ -194,6 +208,9 @@ pub(super) fn draw_help_line(f: &mut Frame, _app: &App, area: Rect, theme: &Fros
         sep.clone(),
         Span::styled("?", Style::default().fg(theme.accent_primary)),
         Span::styled(" help", Style::default().fg(theme.fg_muted)),
+        sep.clone(),
+        Span::styled("a", Style::default().fg(theme.accent_primary)),
+        Span::styled(" aspect", Style::default().fg(theme.fg_muted)),
         sep.clone(),
         Span::styled("i", Style::default().fg(theme.accent_primary)),
         Span::styled(" img", Style::default().fg(theme.fg_muted)),

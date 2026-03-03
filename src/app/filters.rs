@@ -1,5 +1,16 @@
 use super::App;
+use crate::screen::AspectCategory;
 use crate::wallpaper::SortMode;
+use std::cmp::Ordering;
+
+fn aspect_sort_rank(aspect: AspectCategory) -> u8 {
+    match aspect {
+        AspectCategory::Ultrawide => 0,
+        AspectCategory::Landscape => 1,
+        AspectCategory::Square => 2,
+        AspectCategory::Portrait => 3,
+    }
+}
 
 impl App {
     /// Recompute the filtered wallpaper list based on screen, tag, and color filters.
@@ -74,16 +85,39 @@ impl App {
         self.apply_sort();
     }
 
+    /// Toggle grouping by aspect category.
+    pub fn toggle_aspect_sort(&mut self) {
+        self.filters.aspect_sort_enabled = !self.filters.aspect_sort_enabled;
+        self.apply_sort();
+        self.ui.status_message = Some(format!(
+            "Aspect sort: {} (ultrawide→landscape→square→portrait)",
+            if self.filters.aspect_sort_enabled {
+                "ON"
+            } else {
+                "OFF"
+            }
+        ));
+    }
+
     /// Apply current sort mode to filtered wallpapers.
     fn apply_sort(&mut self) {
         let cache = &self.cache;
         let sort_mode = self.filters.sort_mode;
+        let aspect_sort_enabled = self.filters.aspect_sort_enabled;
 
         self.selection.filtered_wallpapers.sort_by(|&a, &b| {
             let wp_a = &cache.wallpapers[a];
             let wp_b = &cache.wallpapers[b];
 
-            match sort_mode {
+            if aspect_sort_enabled {
+                let aspect_order = aspect_sort_rank(wp_a.aspect_category)
+                    .cmp(&aspect_sort_rank(wp_b.aspect_category));
+                if aspect_order != Ordering::Equal {
+                    return aspect_order;
+                }
+            }
+
+            let primary = match sort_mode {
                 SortMode::Name => wp_a.path.cmp(&wp_b.path),
                 SortMode::Size => {
                     // Use cached file_size (no filesystem calls).
@@ -93,7 +127,9 @@ impl App {
                     // Use cached modified_at (no filesystem calls).
                     wp_b.modified_at.cmp(&wp_a.modified_at) // Newest first.
                 }
-            }
+            };
+
+            primary.then_with(|| wp_a.path.cmp(&wp_b.path))
         });
 
         // Reset selection after sort.

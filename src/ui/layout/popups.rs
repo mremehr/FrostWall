@@ -224,6 +224,13 @@ pub(super) fn draw_help_popup(f: &mut Frame, area: Rect, theme: &FrostTheme) {
             ),
         ]),
         Line::from(vec![
+            Span::styled("  :aspect ", Style::default().fg(theme.accent_primary)),
+            Span::styled(
+                " Aspect grouping (on/off)",
+                Style::default().fg(theme.fg_secondary),
+            ),
+        ]),
+        Line::from(vec![
             Span::styled("  :rescan ", Style::default().fg(theme.accent_primary)),
             Span::styled(
                 " Rescan wallpaper dir",
@@ -258,6 +265,13 @@ pub(super) fn draw_help_popup(f: &mut Frame, area: Rect, theme: &FrostTheme) {
         Line::from(vec![
             Span::styled("  s       ", Style::default().fg(theme.accent_primary)),
             Span::styled("Toggle sort mode", Style::default().fg(theme.fg_secondary)),
+        ]),
+        Line::from(vec![
+            Span::styled("  a       ", Style::default().fg(theme.accent_primary)),
+            Span::styled(
+                "Toggle aspect grouping",
+                Style::default().fg(theme.fg_secondary),
+            ),
         ]),
         Line::from(vec![
             Span::styled("  c       ", Style::default().fg(theme.accent_primary)),

@@ -10,6 +10,7 @@ enum Command<'a> {
     Apply,
     Image(&'a str),
     Sort(&'a str),
+    Aspect(&'a str),
     Similar,
     Rescan,
     Help,
@@ -38,6 +39,7 @@ fn parse_command(input: &str) -> Option<Command<'_>> {
         "a" | "apply" => Command::Apply,
         "img" | "image" => Command::Image(args),
         "sort" => Command::Sort(args),
+        "aspect" | "asp" => Command::Aspect(args),
         "similar" | "sim" => Command::Similar,
         "rescan" | "scan" => Command::Rescan,
         "h" | "help" => Command::Help,
@@ -166,6 +168,29 @@ impl App {
                 }
             },
 
+            Command::Aspect(args) => match args.to_ascii_lowercase().as_str() {
+                "" | "toggle" => self.toggle_aspect_sort(),
+                "on" | "1" | "true" => {
+                    if !self.filters.aspect_sort_enabled {
+                        self.toggle_aspect_sort();
+                    } else {
+                        self.ui.status_message = Some(
+                            "Aspect sort: ON (ultrawide→landscape→square→portrait)".to_string(),
+                        );
+                    }
+                }
+                "off" | "0" | "false" => {
+                    if self.filters.aspect_sort_enabled {
+                        self.toggle_aspect_sort();
+                    } else {
+                        self.ui.status_message = Some("Aspect sort: OFF".to_string());
+                    }
+                }
+                _ => {
+                    self.ui.status_message = Some("Usage: :aspect [toggle|on|off]".to_string());
+                }
+            },
+
             Command::Similar => {
                 self.find_and_select_similar();
             }
@@ -281,6 +306,7 @@ mod tests {
         assert_eq!(parse_command("pair-reset"), Some(Command::PairRebuild));
         assert_eq!(parse_command("pair-rebuild"), Some(Command::PairRebuild));
         assert_eq!(parse_command("sim"), Some(Command::Similar));
+        assert_eq!(parse_command("asp on"), Some(Command::Aspect("on")));
     }
 
     #[test]
