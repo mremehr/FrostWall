@@ -2,7 +2,6 @@ use crate::swww::ResizeMode;
 use crate::wallpaper::MatchMode;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -84,13 +83,10 @@ impl ProfileManager {
     }
 
     pub fn create(&mut self, name: &str) -> &mut Profile {
-        match self.profiles.entry(name.to_string()) {
-            Entry::Occupied(mut occupied) => {
-                occupied.insert(Profile::new(name));
-                occupied.into_mut()
-            }
-            Entry::Vacant(vacant) => vacant.insert(Profile::new(name)),
-        }
+        self.profiles
+            .entry(name.to_string())
+            .and_modify(|p| *p = Profile::new(name))
+            .or_insert_with(|| Profile::new(name))
     }
 
     pub fn delete(&mut self, name: &str) -> bool {

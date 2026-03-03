@@ -721,11 +721,7 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
             Style::default()
                 .fg(border_color)
                 .add_modifier(Modifier::BOLD)
-        } else if fade_level >= 2 && !is_selected {
-            Style::default()
-                .fg(border_color)
-                .add_modifier(Modifier::DIM)
-        } else if fade_level == 1 && !is_selected {
+        } else if fade_level >= 1 && !is_selected {
             Style::default()
                 .fg(border_color)
                 .add_modifier(Modifier::DIM)

@@ -246,6 +246,31 @@ mod tests {
         assert!(!history.can_undo());
     }
 
+    #[test]
+    fn test_arm_undo_enables_and_restores_previous_wallpapers() {
+        let mut history = PairingHistory::new(100);
+        let mut previous = std::collections::HashMap::new();
+        previous.insert("DP-1".to_string(), PathBuf::from("/test/old.jpg"));
+
+        history.arm_undo(previous.clone(), 5, "Pairing applied");
+
+        assert!(history.can_undo());
+        assert_eq!(history.undo_message(), Some("Pairing applied"));
+        assert_eq!(history.do_undo(), Some(previous));
+    }
+
+    #[test]
+    fn test_arm_undo_with_zero_duration_disables_undo() {
+        let mut history = PairingHistory::new(100);
+        let mut previous = std::collections::HashMap::new();
+        previous.insert("DP-1".to_string(), PathBuf::from("/test/old.jpg"));
+
+        history.arm_undo(previous, 0, "No undo");
+
+        assert!(!history.can_undo());
+        assert!(history.undo_message().is_none());
+    }
+
     fn test_pairing_wallpaper(
         path: &str,
         colors: &[&str],

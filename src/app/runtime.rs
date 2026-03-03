@@ -244,7 +244,10 @@ pub async fn run_tui(wallpaper_dir: PathBuf) -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    app.init_screens().await?;
+    if let Err(err) = app.init_screens().await {
+        let _ = restore_terminal(&mut terminal);
+        return Err(err);
+    }
 
     // Set up channels for background thumbnail loading.
     // Bounded queue prevents unlimited backlog during rapid scrolling.
@@ -272,6 +275,16 @@ pub async fn run_tui(wallpaper_dir: PathBuf) -> Result<()> {
 
     let res = run_app(&mut terminal, &mut app, event_rx);
 
+    restore_terminal(&mut terminal)?;
+
+    app.persist_last_selection();
+    app.cache.save()?;
+    app.config.save()?;
+
+    res
+}
+
+fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -279,12 +292,7 @@ pub async fn run_tui(wallpaper_dir: PathBuf) -> Result<()> {
         crossterm::event::DisableMouseCapture
     )?;
     terminal.show_cursor()?;
-
-    app.persist_last_selection();
-    app.cache.save()?;
-    app.config.save()?;
-
-    res
+    Ok(())
 }
 
 /// Background thread that loads thumbnails using fast_image_resize.
@@ -692,8 +700,8 @@ fn run_app<B: ratatui::backend::Backend>(
                     redraw_from_events = true;
                 }
                 AppEvent::Tick => {
-                    // Check for expired undo window.
-                    if app.tick_undo() {
+                    // Check for expired undo window and debounced pairing refresh.
+                    if app.tick_undo() || app.update_pairing_suggestions_if_due() {
                         pending_thumbnail_redraw = false;
                         redraw_from_events = true;
                     }

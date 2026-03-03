@@ -60,34 +60,39 @@ pub fn cmd_tag(action: TagAction, wallpaper_dir: &Path) -> Result<()> {
 
 pub fn cmd_similar(wallpaper_dir: &Path, target_path: &Path, limit: usize) -> Result<()> {
     let recursive = app::Config::load()?.wallpaper.recursive;
-    let cache = wallpaper::WallpaperCache::load_or_scan(
+    let mut cache = wallpaper::WallpaperCache::load_or_scan(
         wallpaper_dir,
         recursive,
         wallpaper::CacheLoadMode::Full,
     )?;
+    cache.ensure_similarity_profiles();
 
     // Find the target wallpaper
-    let target = cache
+    let target_idx = cache
         .wallpapers
         .iter()
-        .find(|wp| wp.path == target_path)
+        .enumerate()
+        .find(|(_, wp)| wp.path == target_path)
         .or_else(|| {
             // Try matching by filename
             let target_name = target_path.file_name();
             cache
                 .wallpapers
                 .iter()
-                .find(|wp| wp.path.file_name() == target_name)
+                .enumerate()
+                .find(|(_, wp)| wp.path.file_name() == target_name)
         });
 
-    let target = match target {
-        Some(t) => t,
+    let target_idx = match target_idx {
+        Some((idx, _)) => idx,
         None => {
             println!("Wallpaper not found in cache: {}", target_path.display());
             println!("Run 'frostwall scan' first to index wallpapers.");
             return Ok(());
         }
     };
+    let target = &cache.wallpapers[target_idx];
+    let target_profile = &cache.similarity_profiles[target_idx];
 
     if target.colors.is_empty() {
         println!("No color data for this wallpaper. Run 'frostwall scan' to extract colors.");
@@ -97,16 +102,21 @@ pub fn cmd_similar(wallpaper_dir: &Path, target_path: &Path, limit: usize) -> Re
     println!("Finding similar wallpapers to: {}", target.path.display());
     println!();
 
-    // Build list of (index, colors) excluding target
-    let wallpaper_colors: Vec<(usize, &[String])> = cache
-        .wallpapers
-        .iter()
-        .enumerate()
-        .filter(|(_, wp)| wp.path != target.path && !wp.colors.is_empty())
-        .map(|(i, wp)| (i, wp.colors.as_slice()))
-        .collect();
+    let similar = utils::find_similar_wallpapers_with_profiles_iter(
+        &target.colors,
+        target_profile,
+        cache.wallpapers.iter().enumerate().filter_map(|(i, wp)| {
+            if i == target_idx || wp.colors.is_empty() {
+                return None;
+            }
 
-    let similar = utils::find_similar_wallpapers(&target.colors, &wallpaper_colors, limit);
+            cache
+                .similarity_profiles
+                .get(i)
+                .map(|profile| (i, wp.colors.as_slice(), profile))
+        }),
+        limit,
+    );
 
     if similar.is_empty() {
         println!("No similar wallpapers found.");

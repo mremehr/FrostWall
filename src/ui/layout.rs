@@ -22,7 +22,7 @@ const THUMBNAIL_WIDTH: u16 = 48;
 const THUMBNAIL_HEIGHT: u16 = 28;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
-    let theme = app.ui.theme.clone();
+    let theme = app.ui.theme;
     let area = f.area();
 
     // Check if a popup is showing (need to skip image rendering)

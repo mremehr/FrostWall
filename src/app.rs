@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::mpsc::SyncSender;
+use std::time::{Duration, Instant};
 
 mod actions;
 mod commands;
@@ -51,7 +52,8 @@ pub enum AppEvent {
 /// all Kitty images are purged from the terminal and the cache is
 /// reset — visible thumbnails reload from warm disk cache in one frame.
 const THUMBNAIL_CACHE_MULTIPLIER: usize = 8;
-pub(super) const THUMBNAIL_CACHE_HARD_CAP: usize = 200;
+pub(super) const THUMBNAIL_CACHE_HARD_CAP: NonZeroUsize = NonZeroUsize::new(200).unwrap();
+const PAIRING_SUGGESTION_DEBOUNCE: Duration = Duration::from_millis(120);
 
 /// UI-related transient state (popups, command mode, errors).
 pub struct UiState {
@@ -119,6 +121,8 @@ pub struct SelectionState {
 pub struct PairingState {
     pub history: PairingHistory,
     pub suggestions: Vec<PathBuf>,
+    pub suggestions_dirty: bool,
+    pub suggestions_due_at: Option<Instant>,
     pub current_wallpapers: HashMap<String, PathBuf>,
     pub show_preview: bool,
     pub preview_matches: HashMap<String, Vec<(PathBuf, f32, ColorHarmony)>>,
@@ -179,10 +183,7 @@ impl App {
             filters,
             thumbnails: ThumbnailState {
                 image_picker,
-                cache: LruCache::new(
-                    NonZeroUsize::new(THUMBNAIL_CACHE_HARD_CAP)
-                        .expect("thumbnail cache hard cap must be non-zero"),
-                ),
+                cache: LruCache::new(THUMBNAIL_CACHE_HARD_CAP),
                 loading: std::collections::HashSet::new(),
                 request_tx: None,
                 generation: 0,
@@ -190,6 +191,8 @@ impl App {
             pairing: PairingState {
                 history: pairing_history,
                 suggestions: Vec::new(),
+                suggestions_dirty: false,
+                suggestions_due_at: None,
                 current_wallpapers: HashMap::new(),
                 show_preview: false,
                 preview_matches: HashMap::new(),
@@ -205,7 +208,7 @@ impl App {
         self.selection.screen_idx = 0;
         self.update_filtered_wallpapers();
         self.restore_last_selection();
-        self.update_pairing_suggestions();
+        self.force_pairing_suggestions_update();
         Ok(())
     }
 }

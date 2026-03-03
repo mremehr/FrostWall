@@ -122,6 +122,9 @@ pub struct WallpaperCache {
     /// Cached list of matching wallpaper indices per screen key.
     #[serde(skip)]
     pub screen_match_indices: HashMap<String, Vec<usize>>,
+    /// Precomputed palette features per wallpaper index for fast similarity search.
+    #[serde(skip)]
+    pub similarity_profiles: Vec<crate::utils::PaletteProfile>,
 }
 
 #[derive(Debug, Default)]
@@ -486,6 +489,7 @@ mod tests {
             screen_indices: HashMap::new(),
             recursive: false,
             screen_match_indices: HashMap::new(),
+            similarity_profiles: Vec::new(),
         };
 
         let selected = cache
@@ -507,6 +511,7 @@ mod tests {
             screen_indices: HashMap::new(),
             recursive: false,
             screen_match_indices: HashMap::new(),
+            similarity_profiles: Vec::new(),
         };
 
         let selected = cache
@@ -538,6 +543,7 @@ mod tests {
             screen_indices: HashMap::new(),
             recursive: true,
             screen_match_indices: HashMap::new(),
+            similarity_profiles: Vec::new(),
         };
         cache.screen_indices.insert("DP-1".into(), 1);
 

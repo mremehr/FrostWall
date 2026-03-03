@@ -8,6 +8,48 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 impl App {
+    /// Mark pairing suggestions for background/debounced refresh.
+    pub fn schedule_pairing_suggestions_update(&mut self) {
+        if !self.config.pairing.enabled {
+            self.pairing.suggestions.clear();
+            self.pairing.suggestions_dirty = false;
+            self.pairing.suggestions_due_at = None;
+            return;
+        }
+
+        self.pairing.suggestions_dirty = true;
+        self.pairing.suggestions_due_at =
+            Some(std::time::Instant::now() + super::PAIRING_SUGGESTION_DEBOUNCE);
+    }
+
+    /// Refresh suggestions immediately.
+    pub fn force_pairing_suggestions_update(&mut self) {
+        self.update_pairing_suggestions();
+        self.pairing.suggestions_dirty = false;
+        self.pairing.suggestions_due_at = None;
+    }
+
+    /// Refresh suggestions when debounce interval has elapsed.
+    /// Returns true when suggestions were recomputed.
+    pub fn update_pairing_suggestions_if_due(&mut self) -> bool {
+        if !self.pairing.suggestions_dirty {
+            return false;
+        }
+
+        let due = self
+            .pairing
+            .suggestions_due_at
+            .map(|when| std::time::Instant::now() >= when)
+            .unwrap_or(true);
+
+        if !due {
+            return false;
+        }
+
+        self.force_pairing_suggestions_update();
+        true
+    }
+
     /// Update pairing suggestions based on currently selected wallpaper.
     pub fn update_pairing_suggestions(&mut self) {
         if !self.config.pairing.enabled {
@@ -254,6 +296,8 @@ impl App {
             return Ok(());
         }
 
+        let previous_wallpapers = self.pairing.current_wallpapers.clone();
+
         // First apply the selected wallpaper to current screen.
         self.apply_wallpaper()?;
 
@@ -278,6 +322,14 @@ impl App {
                         .insert(screen_name.clone(), wp_path.clone());
                 }
             }
+        }
+
+        if previous_wallpapers != self.pairing.current_wallpapers {
+            self.pairing.history.arm_undo(
+                previous_wallpapers,
+                self.config.pairing.undo_window_secs,
+                "Pairing applied",
+            );
         }
 
         // Record the pairing.

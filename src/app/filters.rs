@@ -66,6 +66,7 @@ impl App {
 
         // Clear thumbnail state after filter changes so IDs don't drift/wrap.
         self.reset_thumbnail_cache();
+        self.schedule_pairing_suggestions_update();
     }
 
     /// Toggle match mode and refresh filter.

@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 impl PairingHistory {
     /// Create new pairing history manager
@@ -612,6 +612,27 @@ impl PairingHistory {
         self.data.affinity_scores.retain(|score| {
             active_paths.contains(score.wallpaper_a.as_path())
                 && active_paths.contains(score.wallpaper_b.as_path())
+        });
+    }
+
+    /// Arm undo with a snapshot of wallpapers before a pairing change.
+    /// Passing empty state or zero duration disables undo.
+    pub fn arm_undo(
+        &mut self,
+        previous_wallpapers: HashMap<String, PathBuf>,
+        duration_secs: u64,
+        message: impl Into<String>,
+    ) {
+        if previous_wallpapers.is_empty() || duration_secs == 0 {
+            self.undo_state = None;
+            return;
+        }
+
+        self.undo_state = Some(UndoState {
+            previous_wallpapers,
+            started_at: Instant::now(),
+            duration: Duration::from_secs(duration_secs),
+            message: message.into(),
         });
     }
 

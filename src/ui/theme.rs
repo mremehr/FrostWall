@@ -2,7 +2,7 @@ use ratatui::style::Color;
 use std::fs;
 
 /// Frost theme colors - inspired by Nord/Catppuccin ice palette
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct FrostTheme {
     // Backgrounds
     pub bg_dark: Color,

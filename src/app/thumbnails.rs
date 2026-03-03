@@ -59,7 +59,7 @@ impl App {
         let preload = self.config.thumbnails.preload_count;
         let warm_window = cols.saturating_add(preload.saturating_mul(2));
         let target = (cols * THUMBNAIL_CACHE_MULTIPLIER).max(warm_window.saturating_mul(2));
-        target.clamp(24, THUMBNAIL_CACHE_HARD_CAP)
+        target.clamp(24, THUMBNAIL_CACHE_HARD_CAP.get())
     }
 
     fn max_in_flight_thumbnail_requests(&self) -> usize {
@@ -190,9 +190,9 @@ mod tests {
     use crate::wallpaper::{Wallpaper, WallpaperCache};
     use lru::LruCache;
     use std::collections::{HashMap, HashSet};
-    use std::num::NonZeroUsize;
     use std::path::PathBuf;
     use std::sync::mpsc;
+    use std::time::{Duration, Instant};
 
     fn test_wallpaper(name: &str) -> Wallpaper {
         Wallpaper {
@@ -224,6 +224,7 @@ mod tests {
                 screen_indices: HashMap::new(),
                 recursive: false,
                 screen_match_indices: HashMap::new(),
+                similarity_profiles: Vec::new(),
             },
             config: Config::default(),
             ui: UiState::default(),
@@ -231,10 +232,7 @@ mod tests {
             filters: FilterState::default(),
             thumbnails: ThumbnailState {
                 image_picker: None,
-                cache: LruCache::new(
-                    NonZeroUsize::new(THUMBNAIL_CACHE_HARD_CAP)
-                        .expect("thumbnail cache hard cap must be non-zero"),
-                ),
+                cache: LruCache::new(THUMBNAIL_CACHE_HARD_CAP),
                 loading: HashSet::new(),
                 request_tx: None,
                 generation: 0,
@@ -242,6 +240,8 @@ mod tests {
             pairing: PairingState {
                 history: PairingHistory::new(128),
                 suggestions: Vec::new(),
+                suggestions_dirty: false,
+                suggestions_due_at: None,
                 current_wallpapers: HashMap::new(),
                 show_preview: false,
                 preview_matches: HashMap::new(),
@@ -325,6 +325,29 @@ mod tests {
 
         app.request_thumbnail(1);
         assert!(!app.is_loading(1));
+    }
+
+    #[test]
+    fn schedule_pairing_suggestions_marks_dirty() {
+        let mut app = test_app(0);
+        app.config.pairing.enabled = true;
+
+        app.schedule_pairing_suggestions_update();
+
+        assert!(app.pairing.suggestions_dirty);
+        assert!(app.pairing.suggestions_due_at.is_some());
+    }
+
+    #[test]
+    fn update_pairing_suggestions_if_due_clears_dirty() {
+        let mut app = test_app(0);
+        app.config.pairing.enabled = true;
+        app.schedule_pairing_suggestions_update();
+        app.pairing.suggestions_due_at = Some(Instant::now() - Duration::from_millis(1));
+
+        assert!(app.update_pairing_suggestions_if_due());
+        assert!(!app.pairing.suggestions_dirty);
+        assert!(app.pairing.suggestions_due_at.is_none());
     }
 
     #[test]

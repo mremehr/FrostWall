@@ -259,6 +259,8 @@ impl App {
 
     /// Find similar wallpapers and select the best match.
     fn find_and_select_similar(&mut self) {
+        self.cache.ensure_similarity_profiles();
+
         let next_pos = {
             let Some(current_cache_idx) = self
                 .selection
@@ -271,18 +273,30 @@ impl App {
             let Some(current_wp) = self.cache.wallpapers.get(current_cache_idx) else {
                 return;
             };
+            let Some(current_profile) = self.cache.similarity_profiles.get(current_cache_idx)
+            else {
+                return;
+            };
 
-            let wallpaper_colors: Vec<(usize, &[String])> = self
-                .cache
-                .wallpapers
-                .iter()
-                .enumerate()
-                .filter(|(idx, wp)| *idx != current_cache_idx && !wp.colors.is_empty())
-                .map(|(idx, wp)| (idx, wp.colors.as_slice()))
-                .collect();
+            let similar = crate::utils::find_similar_wallpapers_with_profiles_iter(
+                &current_wp.colors,
+                current_profile,
+                self.cache
+                    .wallpapers
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, wp)| {
+                        if idx == current_cache_idx || wp.colors.is_empty() {
+                            return None;
+                        }
 
-            let similar =
-                crate::utils::find_similar_wallpapers(&current_wp.colors, &wallpaper_colors, 1);
+                        self.cache
+                            .similarity_profiles
+                            .get(idx)
+                            .map(|profile| (idx, wp.colors.as_slice(), profile))
+                    }),
+                1,
+            );
             similar.first().and_then(|(_, idx)| {
                 self.selection
                     .filtered_wallpapers

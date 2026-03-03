@@ -36,7 +36,7 @@ impl App {
         if !self.selection.filtered_wallpapers.is_empty() {
             self.selection.wallpaper_idx =
                 (self.selection.wallpaper_idx + 1) % self.selection.filtered_wallpapers.len();
-            self.update_pairing_suggestions();
+            self.schedule_pairing_suggestions_update();
         }
     }
 
@@ -48,7 +48,7 @@ impl App {
             } else {
                 self.selection.wallpaper_idx - 1
             };
-            self.update_pairing_suggestions();
+            self.schedule_pairing_suggestions_update();
         }
     }
 
@@ -74,7 +74,7 @@ impl App {
                 }
             }
 
-            self.update_pairing_suggestions();
+            self.schedule_pairing_suggestions_update();
         }
     }
 
@@ -104,7 +104,7 @@ impl App {
                 }
             }
 
-            self.update_pairing_suggestions();
+            self.schedule_pairing_suggestions_update();
         }
     }
 

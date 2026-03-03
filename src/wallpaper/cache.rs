@@ -41,17 +41,29 @@ impl WallpaperCache {
                 }
 
                 if cache.source_dir == source_dir {
+                    let previous_recursive = cache.recursive;
+                    let recursive_changed = previous_recursive != recursive;
                     cache.recursive = recursive;
-                    let valid = match mode {
-                        CacheLoadMode::Full => cache.validate(),
-                        CacheLoadMode::MetadataOnly => cache.validate_for_ai(),
-                    };
 
-                    if valid {
-                        return Ok(cache);
+                    if !recursive_changed {
+                        let valid = match mode {
+                            CacheLoadMode::Full => cache.validate(),
+                            CacheLoadMode::MetadataOnly => cache.validate_for_ai(),
+                        };
+
+                        if valid {
+                            cache.rebuild_similarity_profiles();
+                            return Ok(cache);
+                        }
+
+                        eprintln!("Cache out of date, refreshing incrementally...");
+                    } else {
+                        eprintln!(
+                            "Scan mode changed (recursive: {} -> {}), refreshing incrementally...",
+                            previous_recursive, recursive
+                        );
                     }
 
-                    eprintln!("Cache out of date, refreshing incrementally...");
                     match cache.incremental_rescan(recursive) {
                         Ok((added, removed)) => {
                             if added > 0 || removed > 0 {
@@ -63,6 +75,7 @@ impl WallpaperCache {
                                 cache.save()?;
                             }
 
+                            cache.rebuild_similarity_profiles();
                             return Ok(cache);
                         }
                         Err(err) => {
@@ -162,14 +175,17 @@ impl WallpaperCache {
         // Sort by filename for consistent ordering
         wallpapers.sort_by(|a, b| a.path.cmp(&b.path));
 
-        Ok(Self {
+        let mut cache = Self {
             version: CACHE_VERSION,
             wallpapers,
             source_dir: source_dir.to_path_buf(),
             screen_indices: HashMap::new(),
             recursive,
             screen_match_indices: HashMap::new(),
-        })
+            similarity_profiles: Vec::new(),
+        };
+        cache.rebuild_similarity_profiles();
+        Ok(cache)
     }
 
     /// Fast scan for AI operations (dimensions + metadata only, no color extraction).
@@ -216,14 +232,17 @@ impl WallpaperCache {
 
         wallpapers.sort_by(|a, b| a.path.cmp(&b.path));
 
-        Ok(Self {
+        let mut cache = Self {
             version: CACHE_VERSION,
             wallpapers,
             source_dir: source_dir.to_path_buf(),
             screen_indices: HashMap::new(),
             recursive,
             screen_match_indices: HashMap::new(),
-        })
+            similarity_profiles: Vec::new(),
+        };
+        cache.rebuild_similarity_profiles();
+        Ok(cache)
     }
 
     /// Incremental rescan: discover new files and remove deleted ones while
@@ -313,6 +332,7 @@ impl WallpaperCache {
         self.wallpapers = kept;
         self.version = CACHE_VERSION;
         self.screen_match_indices.clear();
+        self.rebuild_similarity_profiles();
 
         // Auto-save after rescan
         self.save()?;
@@ -331,6 +351,27 @@ impl WallpaperCache {
         fs::write(&cache_path, data)?;
 
         Ok(())
+    }
+
+    fn rebuild_similarity_profiles(&mut self) {
+        self.similarity_profiles = self
+            .wallpapers
+            .iter()
+            .map(|wp| crate::utils::build_palette_profile(&wp.colors, &wp.color_weights))
+            .collect();
+    }
+
+    pub fn ensure_similarity_profiles(&mut self) {
+        let needs_rebuild = self.similarity_profiles.len() != self.wallpapers.len()
+            || self
+                .wallpapers
+                .iter()
+                .zip(self.similarity_profiles.iter())
+                .any(|(wp, profile)| profile.normalized_weights.len() != wp.colors.len());
+
+        if needs_rebuild {
+            self.rebuild_similarity_profiles();
+        }
     }
 
     fn validate(&self) -> bool {
