@@ -1,5 +1,6 @@
 use super::{center_vertically, fit_aspect, THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH};
 use crate::app::App;
+use crate::screen::AspectCategory;
 use crate::ui::theme::FrostTheme;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -8,6 +9,36 @@ use ratatui::{
     Frame,
 };
 use ratatui_image::StatefulImage;
+
+const THUMBNAIL_GAP: u16 = 2;
+const PORTRAIT_SLOT_WIDTH: u16 = 34;
+const SQUARE_SLOT_WIDTH: u16 = 40;
+const LANDSCAPE_SLOT_WIDTH: u16 = THUMBNAIL_WIDTH;
+const ULTRAWIDE_SLOT_WIDTH: u16 = 64;
+
+fn slot_width_for_aspect(aspect: AspectCategory) -> u16 {
+    match aspect {
+        AspectCategory::Portrait => PORTRAIT_SLOT_WIDTH,
+        AspectCategory::Square => SQUARE_SLOT_WIDTH,
+        AspectCategory::Landscape => LANDSCAPE_SLOT_WIDTH,
+        AspectCategory::Ultrawide => ULTRAWIDE_SLOT_WIDTH,
+    }
+}
+
+fn centered_window_start(total: usize, selected: usize, count: usize) -> usize {
+    if total <= count {
+        return 0;
+    }
+
+    let half = count / 2;
+    if selected <= half {
+        0
+    } else if selected >= total.saturating_sub(half + 1) {
+        total.saturating_sub(count)
+    } else {
+        selected - half
+    }
+}
 
 pub(super) fn draw_carousel_single(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme) {
     if app.selection.filtered_wallpapers.is_empty() {
@@ -154,28 +185,67 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
         return;
     }
 
-    // Calculate visible range centered on selection
+    // Adaptive 3/5 layout:
+    // - Prefer 5 thumbnails when they fit in available width.
+    // - Fall back to 3 when 5 would overflow.
+    // - Keep selected wallpaper in the middle when possible.
     let total = app.selection.filtered_wallpapers.len();
-    let grid_columns = app.config.thumbnails.grid_columns;
-    let visible = grid_columns.min(total);
-    let half = visible / 2;
 
     // Clamp wallpaper_idx to valid range (defensive against stale index)
     let clamped_idx = app.selection.wallpaper_idx.min(total.saturating_sub(1));
 
-    let start = if clamped_idx <= half {
-        0
-    } else if clamped_idx >= total.saturating_sub(half + 1) {
-        total.saturating_sub(visible)
-    } else {
-        clamped_idx - half
+    let window_width = |count: usize| -> u16 {
+        let start = centered_window_start(total, clamped_idx, count);
+        let end = (start + count).min(total);
+        let thumbs = start..end;
+        let thumbs_count = thumbs.len();
+
+        let total_width: u16 = thumbs
+            .clone()
+            .map(|idx| {
+                let cache_idx = app.selection.filtered_wallpapers[idx];
+                app.cache
+                    .wallpapers
+                    .get(cache_idx)
+                    .map(|wp| slot_width_for_aspect(wp.aspect_category))
+                    .unwrap_or(THUMBNAIL_WIDTH)
+            })
+            .sum();
+
+        total_width
+            .saturating_add(THUMBNAIL_GAP.saturating_mul(thumbs_count.saturating_sub(1) as u16))
     };
 
+    let mut visible = if total >= 5 {
+        5
+    } else if total >= 3 {
+        3
+    } else {
+        total
+    };
+    while visible > 1 && window_width(visible) > area.width {
+        visible -= 1;
+    }
+
+    let start = centered_window_start(total, clamped_idx, visible);
     let end = (start + visible).min(total);
 
-    // Calculate thumbnail positions
-    let thumb_total_width = THUMBNAIL_WIDTH + 2; // +2 for spacing
-    let total_thumbs_width = (visible as u16) * thumb_total_width;
+    // Calculate variable thumbnail widths and centered starting x.
+    let slot_widths: Vec<u16> = (start..end)
+        .map(|idx| {
+            let cache_idx = app.selection.filtered_wallpapers[idx];
+            app.cache
+                .wallpapers
+                .get(cache_idx)
+                .map(|wp| slot_width_for_aspect(wp.aspect_category))
+                .unwrap_or(THUMBNAIL_WIDTH)
+        })
+        .collect();
+
+    let total_thumbs_width: u16 =
+        slot_widths.iter().copied().sum::<u16>().saturating_add(
+            THUMBNAIL_GAP.saturating_mul(slot_widths.len().saturating_sub(1) as u16),
+        );
     let start_x = area.x + (area.width.saturating_sub(total_thumbs_width)) / 2;
 
     // Center vertically
@@ -201,9 +271,14 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
         app.request_thumbnail(cache_idx);
     }
 
+    let mut cursor_x = start_x;
     for (i, idx) in (start..end).enumerate() {
         let cache_idx = app.selection.filtered_wallpapers[idx];
         let is_selected = idx == clamped_idx;
+        let slot_width = slot_widths.get(i).copied().unwrap_or(THUMBNAIL_WIDTH);
+        let next_cursor = cursor_x
+            .saturating_add(slot_width)
+            .saturating_add(THUMBNAIL_GAP);
 
         // Get wallpaper info before mutable borrow
         let (filename, is_suggestion) = app
@@ -223,18 +298,19 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
             .unwrap_or(("?".to_string(), false));
 
         let is_loading = app.is_loading(cache_idx);
-
-        let thumb_x = start_x + (i as u16) * thumb_total_width;
+        let thumb_x = cursor_x;
 
         // Bounds check - skip if outside visible area
-        if thumb_x + THUMBNAIL_WIDTH > area.x + area.width {
+        if thumb_x + slot_width > area.x + area.width {
+            cursor_x = next_cursor;
             continue;
         }
         if thumb_y + THUMBNAIL_HEIGHT + 2 > area.y + area.height {
+            cursor_x = next_cursor;
             continue;
         }
 
-        let thumb_area = Rect::new(thumb_x, thumb_y, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT + 2);
+        let thumb_area = Rect::new(thumb_x, thumb_y, slot_width, THUMBNAIL_HEIGHT + 2);
 
         // Draw thumbnail frame - green for suggestions, highlight for selected
         let border_color = if is_selected {
@@ -299,7 +375,7 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
 
         // Indicators below thumbnail (with bounds check)
         if thumb_area.bottom() < area.y + area.height {
-            let indicator_area = Rect::new(thumb_x, thumb_area.bottom(), THUMBNAIL_WIDTH, 1);
+            let indicator_area = Rect::new(thumb_x, thumb_area.bottom(), slot_width, 1);
 
             if is_selected {
                 // Selection indicator
@@ -315,5 +391,7 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
                 f.render_widget(indicator, indicator_area);
             }
         }
+
+        cursor_x = next_cursor;
     }
 }
