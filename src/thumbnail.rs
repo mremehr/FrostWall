@@ -18,19 +18,34 @@ const UNSHARP_THRESHOLD: i32 = 1;
 
 pub struct ThumbnailCache {
     cache_dir: PathBuf,
+    width: u32,
+    height: u32,
+    quality: u8,
 }
 
 impl ThumbnailCache {
     pub fn new() -> Self {
+        Self::new_with_settings(THUMB_WIDTH, THUMB_HEIGHT, JPEG_QUALITY)
+    }
+
+    pub fn new_with_settings(width: u32, height: u32, quality: u8) -> Self {
+        let width = width.max(32);
+        let height = height.max(32);
+        let quality = quality.clamp(1, 100);
         let cache_dir = directories::ProjectDirs::from("com", "mrmattias", "frostwall")
             .map(|dirs| dirs.cache_dir().to_path_buf())
             .unwrap_or_else(|| PathBuf::from("/tmp/frostwall"))
-            .join("thumbs_v2"); // New version for higher quality
+            .join(format!("thumbs_v3_{}x{}_q{}", width, height, quality));
 
         // Ensure cache directory exists
         let _ = fs::create_dir_all(&cache_dir);
 
-        Self { cache_dir }
+        Self {
+            cache_dir,
+            width,
+            height,
+            quality,
+        }
     }
 
     /// Generate a hash-based filename for the thumbnail
@@ -77,8 +92,8 @@ impl ThumbnailCache {
         }
 
         let thumb_path = self.thumb_filename(source_path);
-        let result_image = Self::build_thumbnail_image(source_path)?;
-        if let Err(err) = save_as_jpeg(&result_image, &thumb_path, JPEG_QUALITY) {
+        let result_image = self.build_thumbnail_image(source_path)?;
+        if let Err(err) = save_as_jpeg(&result_image, &thumb_path, self.quality) {
             // Rendering should still work even if the cache cannot be written.
             eprintln!(
                 "Warning: failed to persist thumbnail {}: {}",
@@ -105,14 +120,14 @@ impl ThumbnailCache {
         (dst_w.max(1), dst_h.max(1))
     }
 
-    fn build_thumbnail_image(source_path: &Path) -> Result<RgbaImage> {
+    fn build_thumbnail_image(&self, source_path: &Path) -> Result<RgbaImage> {
         let src_image = image::open(source_path)
             .with_context(|| format!("Failed to open image: {}", source_path.display()))?;
 
         let src_rgba = src_image.to_rgba8();
         let (src_width, src_height) = (src_rgba.width(), src_rgba.height());
         let (dst_width, dst_height) =
-            Self::fit_dimensions(src_width, src_height, THUMB_WIDTH, THUMB_HEIGHT);
+            Self::fit_dimensions(src_width, src_height, self.width, self.height);
 
         let src_fir = Image::from_vec_u8(
             src_width,
@@ -218,6 +233,9 @@ mod tests {
 
         let cache = ThumbnailCache {
             cache_dir: cache_dir.clone(),
+            width: THUMB_WIDTH,
+            height: THUMB_HEIGHT,
+            quality: JPEG_QUALITY,
         };
         let thumb_path = cache.thumb_filename(&source_path);
         fs::write(&thumb_path, b"not-a-valid-jpeg")?;

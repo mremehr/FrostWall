@@ -6,6 +6,9 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use tokio::fs;
+use tokio::io::AsyncWriteExt;
+
+const MAX_DOWNLOAD_BYTES: u64 = 100 * 1024 * 1024;
 
 /// Supported web galleries
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -269,18 +272,72 @@ impl WebImporter {
             anyhow::bail!("Download failed with status: {}", response.status());
         }
 
-        let bytes = response
-            .bytes()
-            .await
-            .context("Failed to read image data")?;
+        if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
+            let is_image = content_type
+                .to_str()
+                .map(|v| v.starts_with("image/"))
+                .unwrap_or(false);
+            if !is_image {
+                let content_type_str = String::from_utf8_lossy(content_type.as_bytes());
+                anyhow::bail!("Unexpected content type: {}", content_type_str);
+            }
+        }
+
+        if let Some(content_len) = response.content_length() {
+            if content_len > MAX_DOWNLOAD_BYTES {
+                anyhow::bail!(
+                    "Image too large: {} bytes (max {})",
+                    content_len,
+                    MAX_DOWNLOAD_BYTES
+                );
+            }
+        }
 
         // Ensure directory exists
         fs::create_dir_all(dest_dir).await?;
 
-        // Write to file
-        fs::write(&dest_path, &bytes)
+        let tmp_path = dest_path.with_extension(format!("{extension}.part"));
+        let mut file = fs::File::create(&tmp_path)
             .await
-            .context("Failed to save image")?;
+            .with_context(|| format!("Failed to create temp file: {}", tmp_path.display()))?;
+
+        // Stream download to disk to avoid buffering large files in memory.
+        let mut response = response;
+        let mut written: u64 = 0;
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .context("Failed to read image data")?
+        {
+            written += chunk.len() as u64;
+            if written > MAX_DOWNLOAD_BYTES {
+                let _ = fs::remove_file(&tmp_path).await;
+                anyhow::bail!(
+                    "Image exceeded max download size ({} bytes)",
+                    MAX_DOWNLOAD_BYTES
+                );
+            }
+
+            file.write_all(&chunk)
+                .await
+                .with_context(|| format!("Failed to write {}", tmp_path.display()))?;
+        }
+
+        file.flush()
+            .await
+            .with_context(|| format!("Failed to flush {}", tmp_path.display()))?;
+
+        // Validate that the downloaded file is a readable image before finalizing.
+        image::image_dimensions(&tmp_path).with_context(|| {
+            format!(
+                "Downloaded file is not a valid image: {}",
+                tmp_path.display()
+            )
+        })?;
+
+        fs::rename(&tmp_path, &dest_path)
+            .await
+            .with_context(|| format!("Failed to finalize image file: {}", dest_path.display()))?;
 
         Ok(dest_path)
     }

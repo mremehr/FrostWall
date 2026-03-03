@@ -212,6 +212,7 @@ mod tests {
                 source_dir: PathBuf::from("/tmp"),
                 screen_indices: HashMap::new(),
                 recursive: false,
+                screen_match_indices: HashMap::new(),
             },
             config: Config::default(),
             ui: UiState::default(),

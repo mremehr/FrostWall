@@ -31,7 +31,7 @@ impl WallpaperCache {
 
         if cache_path.exists() {
             let data = fs::read_to_string(&cache_path)?;
-            if let Ok(cache) = serde_json::from_str::<WallpaperCache>(&data) {
+            if let Ok(mut cache) = serde_json::from_str::<WallpaperCache>(&data) {
                 if cache.version != CACHE_VERSION {
                     eprintln!(
                         "Cache format changed (v{} -> v{}), rescanning...",
@@ -39,12 +39,39 @@ impl WallpaperCache {
                     );
                     return Self::scan_with_mode(source_dir, recursive, mode);
                 }
-                let valid = match mode {
-                    CacheLoadMode::Full => cache.validate(),
-                    CacheLoadMode::MetadataOnly => cache.validate_for_ai(),
-                };
-                if cache.source_dir == source_dir && valid {
-                    return Ok(cache);
+
+                if cache.source_dir == source_dir {
+                    cache.recursive = recursive;
+                    let valid = match mode {
+                        CacheLoadMode::Full => cache.validate(),
+                        CacheLoadMode::MetadataOnly => cache.validate_for_ai(),
+                    };
+
+                    if valid {
+                        return Ok(cache);
+                    }
+
+                    eprintln!("Cache out of date, refreshing incrementally...");
+                    match cache.incremental_rescan(recursive) {
+                        Ok((added, removed)) => {
+                            if added > 0 || removed > 0 {
+                                eprintln!("Incremental refresh: +{} / -{} files", added, removed);
+                            }
+
+                            if matches!(mode, CacheLoadMode::Full) && cache.ensure_full_color_data()
+                            {
+                                cache.save()?;
+                            }
+
+                            return Ok(cache);
+                        }
+                        Err(err) => {
+                            eprintln!(
+                                "Incremental refresh failed: {}. Falling back to full scan.",
+                                err
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -141,6 +168,7 @@ impl WallpaperCache {
             source_dir: source_dir.to_path_buf(),
             screen_indices: HashMap::new(),
             recursive,
+            screen_match_indices: HashMap::new(),
         })
     }
 
@@ -194,6 +222,7 @@ impl WallpaperCache {
             source_dir: source_dir.to_path_buf(),
             screen_indices: HashMap::new(),
             recursive,
+            screen_match_indices: HashMap::new(),
         })
     }
 
@@ -283,6 +312,7 @@ impl WallpaperCache {
         kept.sort_by(|a, b| a.path.cmp(&b.path));
         self.wallpapers = kept;
         self.version = CACHE_VERSION;
+        self.screen_match_indices.clear();
 
         // Auto-save after rescan
         self.save()?;
@@ -357,15 +387,36 @@ impl WallpaperCache {
             }
         }
 
-        // Quick check: count files in directory to detect additions/removals
-        let current_count = if self.recursive {
-            WalkDir::new(&self.source_dir)
-                .follow_links(true)
-                .into_iter()
-                .filter_map(|e| e.ok())
-                .filter(|e| e.path().is_file() && crate::utils::is_image_file(e.path()))
-                .count()
-        } else if let Ok(entries) = std::fs::read_dir(&self.source_dir) {
+        // Recursive count scales poorly on large libraries. For recursive mode,
+        // use directory mtimes as a cheaper invalidation signal for add/remove.
+        if self.recursive {
+            if let Ok(cache_meta) = std::fs::metadata(Self::cache_path()) {
+                if let Ok(cache_mtime) = cache_meta.modified() {
+                    let cache_mtime_secs = cache_mtime
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+
+                    let dir_changed = WalkDir::new(&self.source_dir)
+                        .follow_links(true)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                        .filter(|e| e.file_type().is_dir())
+                        .filter_map(|e| e.metadata().ok())
+                        .filter_map(|m| m.modified().ok())
+                        .filter_map(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .any(|d| d.as_secs() > cache_mtime_secs);
+
+                    if dir_changed {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        let current_count = if let Ok(entries) = std::fs::read_dir(&self.source_dir) {
             entries
                 .filter_map(|e| e.ok())
                 .filter(|e| e.path().is_file() && crate::utils::is_image_file(&e.path()))
@@ -381,72 +432,123 @@ impl WallpaperCache {
         true
     }
 
-    pub fn for_screen(&self, screen: &Screen) -> Vec<&Wallpaper> {
-        self.wallpapers
-            .iter()
-            .filter(|wp| wp.matches_screen(screen))
-            .collect()
+    fn screen_match_key(screen: &Screen) -> String {
+        format!(
+            "{}:{}x{}:{:?}",
+            screen.name, screen.width, screen.height, screen.aspect_category
+        )
     }
 
-    pub fn random_for_screen(&self, screen: &Screen) -> Option<&Wallpaper> {
-        let matching: Vec<_> = self.for_screen(screen);
-        if matching.is_empty() {
-            // Fallback: any wallpaper
-            if self.wallpapers.is_empty() {
-                return None;
-            }
-            let idx = rand::thread_rng().gen_range(0..self.wallpapers.len());
-            return Some(&self.wallpapers[idx]);
+    fn matching_indices_for_screen(&mut self, screen: &Screen) -> &Vec<usize> {
+        let key = Self::screen_match_key(screen);
+        if !self.screen_match_indices.contains_key(&key) {
+            let indices = self
+                .wallpapers
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, wp)| wp.matches_screen(screen).then_some(idx))
+                .collect();
+            self.screen_match_indices.insert(key.clone(), indices);
         }
 
-        let idx = rand::thread_rng().gen_range(0..matching.len());
-        Some(matching[idx])
+        self.screen_match_indices
+            .get(&key)
+            .expect("screen match cache key inserted")
+    }
+
+    fn ensure_full_color_data(&mut self) -> bool {
+        let missing = self
+            .wallpapers
+            .iter()
+            .filter(|wp| wp.colors.is_empty())
+            .count();
+
+        if missing == 0 {
+            return false;
+        }
+
+        let processed = AtomicUsize::new(0);
+        eprint!("Backfilling missing colors... 0/{}", missing);
+        self.wallpapers.par_iter_mut().for_each(|wp| {
+            if wp.colors.is_empty() {
+                if let Err(err) = wp.extract_colors() {
+                    eprintln!(
+                        "\nWarning: Failed to extract colors for {}: {}",
+                        wp.path.display(),
+                        err
+                    );
+                }
+
+                let count = processed.fetch_add(1, Ordering::Relaxed) + 1;
+                if count.is_multiple_of(25) || count == missing {
+                    eprint!("\rBackfilling missing colors... {}/{}", count, missing);
+                }
+            }
+        });
+        eprintln!(" done!");
+
+        true
+    }
+
+    pub fn random_for_screen(&mut self, screen: &Screen) -> Option<&Wallpaper> {
+        let selected_idx = {
+            let matching = self.matching_indices_for_screen(screen);
+            if matching.is_empty() {
+                None
+            } else {
+                let idx = rand::thread_rng().gen_range(0..matching.len());
+                Some(matching[idx])
+            }
+        };
+
+        if let Some(cache_idx) = selected_idx {
+            return self.wallpapers.get(cache_idx);
+        }
+
+        if self.wallpapers.is_empty() {
+            // Fallback: any wallpaper
+            return None;
+        }
+
+        let idx = rand::thread_rng().gen_range(0..self.wallpapers.len());
+        self.wallpapers.get(idx)
     }
 
     pub fn next_for_screen(&mut self, screen: &Screen) -> Option<&Wallpaper> {
-        let matching: Vec<_> = self
-            .wallpapers
-            .iter()
-            .enumerate()
-            .filter(|(_, wp)| wp.matches_screen(screen))
-            .collect();
+        let current_pos = self.screen_indices.get(&screen.name).copied();
+        let (next_pos, cache_idx) = {
+            let matching = self.matching_indices_for_screen(screen);
+            if matching.is_empty() {
+                return None;
+            }
 
-        if matching.is_empty() {
-            return None;
-        }
+            let current = current_pos.unwrap_or_else(|| matching.len().saturating_sub(1));
+            let next = (current + 1) % matching.len();
+            (next, matching[next])
+        };
 
-        let current = self
-            .screen_indices
-            .get(&screen.name)
-            .copied()
-            .unwrap_or_else(|| matching.len().saturating_sub(1));
-        let next = (current + 1) % matching.len();
-        self.screen_indices.insert(screen.name.clone(), next);
-
-        Some(matching[next].1)
+        self.screen_indices.insert(screen.name.clone(), next_pos);
+        self.wallpapers.get(cache_idx)
     }
 
     pub fn prev_for_screen(&mut self, screen: &Screen) -> Option<&Wallpaper> {
-        let matching: Vec<_> = self
-            .wallpapers
-            .iter()
-            .enumerate()
-            .filter(|(_, wp)| wp.matches_screen(screen))
-            .collect();
+        let current_pos = self.screen_indices.get(&screen.name).copied().unwrap_or(0);
+        let (prev_pos, cache_idx) = {
+            let matching = self.matching_indices_for_screen(screen);
+            if matching.is_empty() {
+                return None;
+            }
 
-        if matching.is_empty() {
-            return None;
-        }
-
-        let current = self.screen_indices.get(&screen.name).copied().unwrap_or(0);
-        let prev = if current == 0 {
-            matching.len() - 1
-        } else {
-            current - 1
+            let prev = if current_pos == 0 {
+                matching.len() - 1
+            } else {
+                current_pos - 1
+            };
+            (prev, matching[prev])
         };
-        self.screen_indices.insert(screen.name.clone(), prev);
 
-        Some(matching[prev].1)
+        self.screen_indices.insert(screen.name.clone(), prev_pos);
+        self.wallpapers.get(cache_idx)
     }
 
     pub fn stats(&self) -> CacheStats {

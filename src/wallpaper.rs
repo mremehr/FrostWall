@@ -119,6 +119,9 @@ pub struct WallpaperCache {
     /// Whether the cache was built with recursive scanning
     #[serde(default)]
     pub recursive: bool,
+    /// Cached list of matching wallpaper indices per screen key.
+    #[serde(skip)]
+    pub screen_match_indices: HashMap<String, Vec<usize>>,
 }
 
 #[derive(Debug, Default)]
@@ -482,6 +485,7 @@ mod tests {
             source_dir: PathBuf::from("/test"),
             screen_indices: HashMap::new(),
             recursive: false,
+            screen_match_indices: HashMap::new(),
         };
 
         let selected = cache
@@ -502,6 +506,7 @@ mod tests {
             source_dir: PathBuf::from("/test"),
             screen_indices: HashMap::new(),
             recursive: false,
+            screen_match_indices: HashMap::new(),
         };
 
         let selected = cache
@@ -532,6 +537,7 @@ mod tests {
             source_dir: PathBuf::from("/test"),
             screen_indices: HashMap::new(),
             recursive: true,
+            screen_match_indices: HashMap::new(),
         };
         cache.screen_indices.insert("DP-1".into(), 1);
 

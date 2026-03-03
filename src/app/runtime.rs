@@ -52,7 +52,9 @@ pub async fn run_tui(wallpaper_dir: PathBuf) -> Result<()> {
 
     // Spawn thumbnail worker thread.
     let event_tx_thumb = event_tx.clone();
-    let disk_cache = ThumbnailCache::new();
+    let thumb_cfg = &app.config.thumbnails;
+    let disk_cache =
+        ThumbnailCache::new_with_settings(thumb_cfg.width, thumb_cfg.height, thumb_cfg.quality);
     thread::spawn(move || {
         thumbnail_worker(thumb_rx, event_tx_thumb, disk_cache);
     });
@@ -209,10 +211,13 @@ fn run_app<B: ratatui::backend::Backend>(
     let mut last_theme_check = std::time::Instant::now();
     let mut current_theme_is_light = crate::ui::theme::is_light_theme();
     let mut needs_redraw = true;
+    let theme_check_interval =
+        std::time::Duration::from_millis(app.config.theme.check_interval_ms.max(100));
+    let event_wait_timeout = theme_check_interval.min(std::time::Duration::from_millis(100));
 
     loop {
-        // Check for theme change every 500ms and force full redraw.
-        if last_theme_check.elapsed() >= std::time::Duration::from_millis(500) {
+        // Check for theme change on configured interval and force full redraw.
+        if last_theme_check.elapsed() >= theme_check_interval {
             let new_is_light = crate::ui::theme::is_light_theme();
             if new_is_light != current_theme_is_light {
                 current_theme_is_light = new_is_light;
@@ -230,18 +235,17 @@ fn run_app<B: ratatui::backend::Backend>(
         }
 
         // Block until event arrives (with timeout for theme checks).
-        let events: Vec<AppEvent> =
-            match event_rx.recv_timeout(std::time::Duration::from_millis(100)) {
-                Ok(event) => {
-                    needs_redraw = true;
-                    let mut events = vec![event];
-                    while let Ok(e) = event_rx.try_recv() {
-                        events.push(e);
-                    }
-                    coalesce_thumbnail_events(events)
+        let events: Vec<AppEvent> = match event_rx.recv_timeout(event_wait_timeout) {
+            Ok(event) => {
+                needs_redraw = true;
+                let mut events = vec![event];
+                while let Ok(e) = event_rx.try_recv() {
+                    events.push(e);
                 }
-                Err(_) => continue, // Timeout, check theme and loop.
-            };
+                coalesce_thumbnail_events(events)
+            }
+            Err(_) => continue, // Timeout, check theme and loop.
+        };
 
         for event in events {
             match event {

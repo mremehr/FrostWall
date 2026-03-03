@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::process::Command;
+use tokio::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Screen {
@@ -91,6 +91,7 @@ async fn detect_niri() -> Result<Vec<Screen>> {
     let output = Command::new("niri")
         .args(["msg", "outputs"])
         .output()
+        .await
         .context("Failed to run niri msg outputs")?;
 
     if !output.status.success() {
@@ -154,6 +155,7 @@ fn parse_niri_output(output: &str) -> Result<Vec<Screen>> {
 async fn detect_wlr_randr() -> Result<Vec<Screen>> {
     let output = Command::new("wlr-randr")
         .output()
+        .await
         .context("Failed to run wlr-randr")?;
 
     if !output.status.success() {

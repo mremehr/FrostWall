@@ -6,7 +6,7 @@ use crate::{app, screen, swww, wallpaper};
 pub async fn cmd_random(wallpaper_dir: &Path) -> Result<()> {
     let recursive = app::Config::load()?.wallpaper.recursive;
     let screens = screen::detect_screens().await?;
-    let cache = wallpaper::WallpaperCache::load_or_scan(
+    let mut cache = wallpaper::WallpaperCache::load_or_scan(
         wallpaper_dir,
         recursive,
         wallpaper::CacheLoadMode::MetadataOnly,

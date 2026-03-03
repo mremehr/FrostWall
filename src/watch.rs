@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
+const FS_RESCAN_DEBOUNCE: Duration = Duration::from_millis(1200);
+
 /// Watch daemon configuration
 pub struct WatchConfig {
     pub interval: Duration,
@@ -123,6 +125,7 @@ pub async fn run_watch(watch_config: WatchConfig) -> Result<()> {
 
     let mut last_change = Instant::now();
     let mut cache_dirty = false;
+    let mut last_fs_change_at: Option<Instant> = None;
 
     println!("\n🔄 Running... (Ctrl+C to stop)\n");
 
@@ -138,6 +141,7 @@ pub async fn run_watch(watch_config: WatchConfig) -> Result<()> {
                         if is_image_file(path) {
                             println!("📁 File change detected: {}", path.display());
                             cache_dirty = true;
+                            last_fs_change_at = Some(Instant::now());
                         }
                     }
                 }
@@ -145,37 +149,29 @@ pub async fn run_watch(watch_config: WatchConfig) -> Result<()> {
             }
         }
 
-        // Reload cache if dirty
-        if cache_dirty {
-            println!("🔄 Rescanning wallpaper directory...");
-            match WallpaperCache::scan_recursive(&wallpaper_dir, recursive) {
-                Ok(new_cache) => {
-                    let old_count = cache.wallpapers.len();
-                    let new_count = new_cache.wallpapers.len();
-                    cache = new_cache;
-                    cache.save()?;
-
-                    if new_count > old_count {
-                        println!(
-                            "✓ Added {} new wallpaper(s) (total: {})",
-                            new_count - old_count,
-                            new_count
-                        );
-                    } else if new_count < old_count {
-                        println!(
-                            "✓ Removed {} wallpaper(s) (total: {})",
-                            old_count - new_count,
-                            new_count
-                        );
+        // Run a debounced incremental refresh to avoid expensive full rescans
+        // while batch copies/moves are still in progress.
+        if cache_dirty
+            && last_fs_change_at
+                .map(|t| t.elapsed() >= FS_RESCAN_DEBOUNCE)
+                .unwrap_or(false)
+        {
+            println!("🔄 Refreshing cache (incremental)...");
+            match cache.incremental_rescan(recursive) {
+                Ok((added, removed)) => {
+                    let total = cache.wallpapers.len();
+                    if added > 0 || removed > 0 {
+                        println!("✓ +{} / -{} wallpapers (total: {})", added, removed, total);
                     } else {
-                        println!("✓ Cache updated ({} wallpapers)", new_count);
+                        println!("✓ Cache verified ({} wallpapers)", total);
                     }
                 }
                 Err(e) => {
-                    eprintln!("⚠ Failed to rescan: {}", e);
+                    eprintln!("⚠ Failed to refresh cache: {}", e);
                 }
             }
             cache_dirty = false;
+            last_fs_change_at = None;
         }
 
         // Check if it's time to change wallpaper
@@ -245,23 +241,24 @@ fn set_wallpapers(
     }
 
     for screen in screens {
-        let wp = if use_time_profiles {
+        let wp_path = if use_time_profiles {
             // Get wallpapers sorted by time profile score
-            let suitable: Vec<_> = cache
+            let suitable: Vec<(usize, f32)> = cache
                 .wallpapers
                 .iter()
-                .filter(|wp| !wp.colors.is_empty())
-                .filter(|wp| wp.matches_screen(screen))
-                .map(|wp| {
+                .enumerate()
+                .filter(|(_, wp)| !wp.colors.is_empty())
+                .filter(|(_, wp)| wp.matches_screen(screen))
+                .map(|(idx, wp)| {
                     let score = config.time_profiles.score_wallpaper(&wp.colors, &wp.tags);
-                    (wp, score)
+                    (idx, score)
                 })
                 .filter(|(_, score)| *score >= 0.4) // Minimum threshold
                 .collect();
 
             if suitable.is_empty() {
                 // Fallback to random if no suitable wallpapers
-                cache.random_for_screen(screen)
+                cache.random_for_screen(screen).map(|wp| wp.path.clone())
             } else {
                 // Pick randomly from top 20% of scored wallpapers
                 let top_count = (suitable.len() / 5).max(3).min(suitable.len());
@@ -271,16 +268,17 @@ fn set_wallpapers(
                 use rand::seq::SliceRandom;
                 sorted[..top_count]
                     .choose(&mut rand::thread_rng())
-                    .map(|(wp, _)| *wp)
+                    .and_then(|(idx, _)| cache.wallpapers.get(*idx))
+                    .map(|wp| wp.path.clone())
             }
         } else {
-            cache.random_for_screen(screen)
+            cache.random_for_screen(screen).map(|wp| wp.path.clone())
         };
 
-        if let Some(wp) = wp {
+        if let Some(wp_path) = wp_path {
             swww::set_wallpaper_with_resize(
                 &screen.name,
-                &wp.path,
+                &wp_path,
                 &config.transition(),
                 config.display.resize_mode,
                 &config.display.fill_color,
@@ -290,7 +288,7 @@ fn set_wallpapers(
             println!(
                 "  {} → {}",
                 screen.name,
-                wp.path.file_name().unwrap_or_default().to_string_lossy()
+                wp_path.file_name().unwrap_or_default().to_string_lossy()
             );
         }
     }
