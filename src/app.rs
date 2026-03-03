@@ -165,6 +165,10 @@ impl App {
         let mut pairing_history = PairingHistory::load(config.pairing.max_history_records)
             .unwrap_or_else(|_| PairingHistory::new(config.pairing.max_history_records));
         pairing_history.rebuild_affinity();
+        let filters = FilterState {
+            aspect_sort_enabled: config.display.aspect_sort,
+            ..FilterState::default()
+        };
 
         Ok(Self {
             screens: Vec::new(),
@@ -172,7 +176,7 @@ impl App {
             config,
             ui: UiState::default(),
             selection: SelectionState::default(),
-            filters: FilterState::default(),
+            filters,
             thumbnails: ThumbnailState {
                 image_picker,
                 cache: LruCache::new(

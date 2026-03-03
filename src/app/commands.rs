@@ -174,6 +174,7 @@ impl App {
                     if !self.filters.aspect_sort_enabled {
                         self.toggle_aspect_sort();
                     } else {
+                        self.config.display.aspect_sort = true;
                         self.ui.status_message = Some(
                             "Aspect sort: ON (ultrawide→landscape→square→portrait)".to_string(),
                         );
@@ -183,6 +184,7 @@ impl App {
                     if self.filters.aspect_sort_enabled {
                         self.toggle_aspect_sort();
                     } else {
+                        self.config.display.aspect_sort = false;
                         self.ui.status_message = Some("Aspect sort: OFF".to_string());
                     }
                 }

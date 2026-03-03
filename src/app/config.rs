@@ -48,6 +48,9 @@ pub struct DisplayConfig {
     pub resize_mode: ResizeMode,
     #[serde(default)]
     pub fill_color: FillColor,
+    /// Persisted aspect grouping for carousel ordering.
+    #[serde(default)]
+    pub aspect_sort: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -262,6 +265,7 @@ impl Default for DisplayConfig {
             match_mode: MatchMode::Flexible,
             resize_mode: ResizeMode::Fit,
             fill_color: FillColor::black(),
+            aspect_sort: false,
         }
     }
 }
@@ -518,5 +522,23 @@ impl Config {
             }
         }
         dir.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_defaults_disable_aspect_sort() {
+        let config = Config::default();
+        assert!(!config.display.aspect_sort);
+    }
+
+    #[test]
+    fn config_serialization_includes_aspect_sort() {
+        let config = Config::default();
+        let toml = toml::to_string_pretty(&config).expect("serialize default config");
+        assert!(toml.contains("aspect_sort = false"));
     }
 }

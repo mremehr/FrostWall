@@ -8,7 +8,7 @@ All notable changes to FrostWall will be documented in this file.
 - **Session persistence** - TUI now restores selection per monitor and reopens the last active screen
 - **Protocol indicator UI** - Thumbnail protocol label is shown in header only (removed duplicate footer label)
 - **Adaptive carousel layout** - Thumbnail row now uses aspect-aware slot widths and prefers 5 visible items, falling back to 3 on narrow terminals
-- **Aspect grouping toggle** - New `a` key and `:aspect [toggle|on|off]` command to group wallpapers by `Ultrawide -> Landscape -> Square -> Portrait`
+- **Aspect grouping toggle** - New `a` key and `:aspect [toggle|on|off]` command to group wallpapers by `Ultrawide -> Landscape -> Square -> Portrait`, persisted via `[display].aspect_sort`
 
 ## [0.5.0] - 2026-02-07
 

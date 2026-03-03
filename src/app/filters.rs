@@ -88,6 +88,7 @@ impl App {
     /// Toggle grouping by aspect category.
     pub fn toggle_aspect_sort(&mut self) {
         self.filters.aspect_sort_enabled = !self.filters.aspect_sort_enabled;
+        self.config.display.aspect_sort = self.filters.aspect_sort_enabled;
         self.apply_sort();
         self.ui.status_message = Some(format!(
             "Aspect sort: {} (ultrawide→landscape→square→portrait)",

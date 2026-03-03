@@ -317,6 +317,7 @@ recursive = false
 [display]
 match_mode = "Flexible"    # Strict, Flexible, All
 resize_mode = "Fit"        # Crop, Fit, No, Stretch
+aspect_sort = false        # Persist aspect grouping (a / :aspect)
 
 [display.fill_color]       # Padding color (RGBA)
 r = 0
@@ -418,6 +419,7 @@ Default weights are tuned so ranking is stable first, expressive second:
 | `m` | Toggle match mode (Strict/Flexible/All) |
 | `f` | Toggle resize mode (Crop/Fit/No/Stretch) |
 | `s` | Toggle sort mode (Name/Size/Date) |
+| `a` | Toggle aspect grouping (persisted in config) |
 | `c` | Show/hide color palette |
 | `C` | Open color filter picker |
 | `t` | Cycle tag filter |
