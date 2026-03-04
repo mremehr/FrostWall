@@ -730,3 +730,229 @@ impl PairingHistory {
         self.data.affinity_scores.len()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn history(max: usize) -> PairingHistory {
+        PairingHistory::new(max)
+    }
+
+    fn paths(a: &str, b: &str) -> (PathBuf, PathBuf) {
+        (PathBuf::from(a), PathBuf::from(b))
+    }
+
+    fn pairing(screens: &[(&str, &str)]) -> HashMap<String, PathBuf> {
+        screens
+            .iter()
+            .map(|(s, p)| (s.to_string(), PathBuf::from(p)))
+            .collect()
+    }
+
+    // ── calculate_base_score ──────────────────────────────────────────────────
+
+    #[test]
+    fn base_score_zero_pairings_is_zero() {
+        // pair_count=0 → ln_1p(0)=0 → score=0
+        assert_eq!(PairingHistory::calculate_base_score(0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn base_score_increases_with_pairings() {
+        let s1 = PairingHistory::calculate_base_score(1, 0.0);
+        let s5 = PairingHistory::calculate_base_score(5, 0.0);
+        let s10 = PairingHistory::calculate_base_score(10, 0.0);
+        assert!(s1 < s5 && s5 < s10, "score should grow with pair_count");
+    }
+
+    #[test]
+    fn base_score_capped_at_one() {
+        let s = PairingHistory::calculate_base_score(1000, 9999.0);
+        assert!(s <= 1.0, "score must not exceed 1.0, got {s}");
+    }
+
+    #[test]
+    fn base_score_duration_adds_bonus() {
+        let no_dur = PairingHistory::calculate_base_score(3, 0.0);
+        let long_dur = PairingHistory::calculate_base_score(3, 1800.0); // 30 min
+        assert!(long_dur > no_dur, "longer duration should boost score");
+    }
+
+    // ── ordered_pair ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn ordered_pair_is_stable_and_commutative() {
+        let (a, b) = paths("/a/foo.jpg", "/b/bar.jpg");
+        let (p, q) = PairingHistory::ordered_pair(&a, &b);
+        let (p2, q2) = PairingHistory::ordered_pair(&b, &a);
+        assert_eq!((p, q), (p2, q2), "ordered_pair must be commutative");
+    }
+
+    #[test]
+    fn ordered_pair_puts_lesser_path_first() {
+        let (a, b) = paths("/alpha.jpg", "/zeta.jpg");
+        let (first, _) = PairingHistory::ordered_pair(&a, &b);
+        assert_eq!(first, Path::new("/alpha.jpg"));
+    }
+
+    // ── get_affinity / update_affinity ────────────────────────────────────────
+
+    #[test]
+    fn affinity_starts_at_zero() {
+        let h = history(100);
+        let (a, b) = paths("/a.jpg", "/b.jpg");
+        assert_eq!(h.get_affinity(&a, &b), 0.0);
+    }
+
+    #[test]
+    fn affinity_increases_after_update() {
+        let mut h = history(100);
+        let (a, b) = paths("/a.jpg", "/b.jpg");
+        h.update_affinity(&a, &b, None);
+        assert!(h.get_affinity(&a, &b) > 0.0);
+    }
+
+    #[test]
+    fn affinity_is_commutative() {
+        let mut h = history(100);
+        let (a, b) = paths("/a.jpg", "/b.jpg");
+        h.update_affinity(&a, &b, Some(600));
+        assert_eq!(h.get_affinity(&a, &b), h.get_affinity(&b, &a));
+    }
+
+    #[test]
+    fn affinity_grows_with_repeated_pairings() {
+        let mut h = history(100);
+        let (a, b) = paths("/a.jpg", "/b.jpg");
+        h.update_affinity(&a, &b, None);
+        let after_1 = h.get_affinity(&a, &b);
+        for _ in 0..9 {
+            h.update_affinity(&a, &b, None);
+        }
+        let after_10 = h.get_affinity(&a, &b);
+        assert!(after_10 > after_1, "more pairings → higher affinity");
+    }
+
+    // ── rebuild_affinity ──────────────────────────────────────────────────────
+
+    #[test]
+    fn rebuild_affinity_matches_manual_updates() {
+        let mut h = history(100);
+        let (a, b) = paths("/a.jpg", "/b.jpg");
+        // Add two records manually without save-to-disk
+        h.data.records.push(PairingRecord {
+            wallpapers: [("s1".to_string(), a.clone()), ("s2".to_string(), b.clone())]
+                .into_iter()
+                .collect(),
+            timestamp: 0,
+            duration: Some(300),
+            manual: true,
+        });
+        h.data.records.push(PairingRecord {
+            wallpapers: [("s1".to_string(), a.clone()), ("s2".to_string(), b.clone())]
+                .into_iter()
+                .collect(),
+            timestamp: 1,
+            duration: Some(600),
+            manual: false,
+        });
+
+        h.data.affinity_scores.clear();
+        h.rebuild_affinity();
+
+        assert_eq!(h.affinity_count(), 1);
+        assert!(h.get_affinity(&a, &b) > 0.0);
+    }
+
+    #[test]
+    fn rebuild_affinity_is_idempotent() {
+        let mut h = history(100);
+        let (a, b) = paths("/x.jpg", "/y.jpg");
+        h.data.records.push(PairingRecord {
+            wallpapers: pairing(&[("s1", "/x.jpg"), ("s2", "/y.jpg")]),
+            timestamp: 0,
+            duration: None,
+            manual: true,
+        });
+        h.rebuild_affinity();
+        let score_first = h.get_affinity(&a, &b);
+        h.rebuild_affinity();
+        let score_second = h.get_affinity(&a, &b);
+        assert_eq!(score_first, score_second, "rebuild must be idempotent");
+    }
+
+    // ── undo ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn undo_not_available_initially() {
+        let h = history(100);
+        assert!(!h.can_undo());
+        assert!(h.undo_state().is_none());
+    }
+
+    #[test]
+    fn arm_undo_makes_undo_available() {
+        let mut h = history(100);
+        h.arm_undo(pairing(&[("s1", "/a.jpg")]), 30, "test");
+        assert!(h.can_undo());
+    }
+
+    #[test]
+    fn do_undo_returns_previous_wallpapers_and_clears_state() {
+        let mut h = history(100);
+        let prev = pairing(&[("s1", "/prev.jpg")]);
+        h.arm_undo(prev.clone(), 30, "test");
+        let restored = h.do_undo();
+        assert_eq!(restored, Some(prev));
+        assert!(!h.can_undo(), "undo state should be cleared after use");
+    }
+
+    #[test]
+    fn arm_undo_with_empty_wallpapers_disables_undo() {
+        let mut h = history(100);
+        h.arm_undo(HashMap::new(), 30, "test");
+        assert!(!h.can_undo());
+    }
+
+    #[test]
+    fn arm_undo_with_zero_duration_disables_undo() {
+        let mut h = history(100);
+        h.arm_undo(pairing(&[("s1", "/a.jpg")]), 0, "test");
+        assert!(!h.can_undo());
+    }
+
+    // ── prune_old_records ─────────────────────────────────────────────────────
+
+    #[test]
+    fn prune_removes_oldest_records_when_over_limit() {
+        let mut h = history(2);
+        // Insert 3 records without triggering file I/O
+        for i in 0..3u64 {
+            h.data.records.push(PairingRecord {
+                wallpapers: pairing(&[("s1", "/a.jpg"), ("s2", "/b.jpg")]),
+                timestamp: i,
+                duration: None,
+                manual: true,
+            });
+        }
+        h.prune_old_records();
+        assert_eq!(h.record_count(), 2, "should prune to max_records");
+    }
+
+    #[test]
+    fn prune_removes_stale_affinity_entries() {
+        let mut h = history(1);
+        let (a, b) = paths("/old.jpg", "/also-old.jpg");
+        h.data.affinity_scores.push(AffinityScore {
+            wallpaper_a: a.clone(),
+            wallpaper_b: b.clone(),
+            score: 0.5,
+            pair_count: 2,
+            avg_duration_secs: 300.0,
+        });
+        // No records reference these paths → should be pruned
+        h.prune_old_records();
+        assert_eq!(h.affinity_count(), 0, "stale affinity entries should be removed");
+    }
+}

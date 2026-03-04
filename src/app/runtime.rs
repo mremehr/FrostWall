@@ -135,18 +135,7 @@ impl RuntimePerf {
             self.tick_events
         );
 
-        self.window_start = Instant::now();
-        self.draw_count = 0;
-        self.draw_total = Duration::ZERO;
-        self.draw_max = Duration::ZERO;
-        self.event_batches = 0;
-        self.event_total = 0;
-        self.event_process_total = Duration::ZERO;
-        self.event_process_max = Duration::ZERO;
-        self.key_events = 0;
-        self.thumbnail_events = 0;
-        self.resize_events = 0;
-        self.tick_events = 0;
+        *self = Self::new(self.enabled);
     }
 }
 
@@ -186,9 +175,7 @@ impl WorkerPerf {
             self.batches, self.requests,
         );
 
-        self.window_start = Instant::now();
-        self.batches = 0;
-        self.requests = 0;
+        *self = Self::new(self.enabled);
     }
 }
 
