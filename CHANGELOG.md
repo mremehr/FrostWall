@@ -5,6 +5,11 @@ All notable changes to FrostWall will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **Carousel UX** - Non-selected thumbnails rendered without borders for a cleaner filmstrip look; all thumbnails use `Fit` resize (no cropping); softer edge-fade and reduced selected-slot boost for more balanced sizing
+- **Pairing scoring** - Repetition penalty reduced (scale 2.5→1.2, cap 8→3) to avoid drowning out visual matches; soft-mode content tags now get a 1.2× bonus multiplier matching style-tag symmetry
+- **Scan performance** - K-means color extraction thumbnail size halved (128→64px) for ~4× faster initial scans
+- **Color picker** - `available_colors` cached on filter change instead of recomputed on every picker open
+- **Code quality** - ~25 magic numbers in pairing history extracted to named constants; +17 unit tests (layout, config, cache persistence)
 - **Session persistence** - TUI now restores selection per monitor and reopens the last active screen
 - **Protocol indicator UI** - Thumbnail protocol label is shown in header only (removed duplicate footer label)
 - **Adaptive carousel layout** - Thumbnail row now uses aspect-aware slot sizing, centered selection, edge fade, and stronger portrait/square balancing
