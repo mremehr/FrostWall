@@ -402,6 +402,10 @@ fn input_worker(tx: SyncSender<AppEvent>) {
 }
 
 fn coalesce_thumbnail_events(events: Vec<AppEvent>) -> Vec<AppEvent> {
+    // Fast path: skip allocation if no thumbnail events present (~95% of frames).
+    if !events.iter().any(|e| matches!(e, AppEvent::ThumbnailReady(_))) {
+        return events;
+    }
     let mut coalesced = Vec::with_capacity(events.len());
     let mut latest_generation: Option<u64> = None;
     let mut ordered_cache_idxs = Vec::new();
@@ -440,6 +444,171 @@ fn coalesce_thumbnail_events(events: Vec<AppEvent>) -> Vec<AppEvent> {
     coalesced
 }
 
+/// Check if the system color theme has changed and update app state accordingly.
+/// Returns true if the theme changed (caller should clear the terminal).
+fn check_theme_changes(
+    app: &mut App,
+    last_check: &mut Instant,
+    is_light: &mut bool,
+    interval: Duration,
+) -> bool {
+    if last_check.elapsed() < interval {
+        return false;
+    }
+    *last_check = Instant::now();
+    let new_is_light = crate::ui::theme::is_light_theme();
+    if new_is_light != *is_light {
+        *is_light = new_is_light;
+        app.ui.theme = crate::ui::theme::frost_theme();
+        return true;
+    }
+    false
+}
+
+/// Handle a single key press event. Dispatches to popup handlers, command mode,
+/// keybinding-driven actions, and fallback key map.
+fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent) {
+    // Handle help popup first (blocks other input).
+    if app.ui.show_help {
+        match key.code {
+            KeyCode::Char('?') | KeyCode::Esc | KeyCode::Enter => {
+                app.ui.show_help = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Handle color picker popup.
+    if app.ui.show_color_picker {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('C') => {
+                app.ui.show_color_picker = false;
+            }
+            KeyCode::Char('l') | KeyCode::Right => {
+                app.color_picker_next();
+            }
+            KeyCode::Char('h') | KeyCode::Left => {
+                app.color_picker_prev();
+            }
+            KeyCode::Enter => {
+                app.apply_color_filter();
+            }
+            KeyCode::Char('x') | KeyCode::Backspace => {
+                app.clear_color_filter();
+                app.ui.show_color_picker = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Handle pairing preview popup.
+    if app.pairing.show_preview {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('p') => {
+                app.pairing.show_preview = false;
+            }
+            KeyCode::Char('l') | KeyCode::Right | KeyCode::Char('n') => {
+                app.pairing_preview_next();
+            }
+            KeyCode::Char('h') | KeyCode::Left | KeyCode::Char('N') => {
+                app.pairing_preview_prev();
+            }
+            KeyCode::Enter => {
+                if let Err(e) = app.apply_pairing_preview() {
+                    app.ui.status_message = Some(format!("{}", e));
+                }
+            }
+            KeyCode::Char('y') => {
+                app.toggle_pairing_style_mode();
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() => {
+                let idx = if c == '0' {
+                    9
+                } else {
+                    (c as u8 - b'1') as usize
+                };
+                let max = app.pairing_preview_alternatives();
+                if idx < max {
+                    app.pairing.preview_idx = idx;
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Handle command mode (vim-style :).
+    if app.ui.command_mode {
+        match key.code {
+            KeyCode::Esc => app.exit_command_mode(),
+            KeyCode::Enter => app.execute_command(),
+            KeyCode::Backspace => app.command_backspace(),
+            KeyCode::Char(c) => app.command_input(c),
+            _ => {}
+        }
+        return;
+    }
+
+    // Use configurable keybindings.
+    let kb = &app.config.keybindings;
+    let code = key.code;
+
+    if kb.matches(code, &kb.quit) || code == KeyCode::Esc {
+        app.ui.should_quit = true;
+    } else if kb.matches(code, &kb.next) || code == KeyCode::Right {
+        app.next_wallpaper();
+    } else if kb.matches(code, &kb.prev) || code == KeyCode::Left {
+        app.prev_wallpaper();
+    } else if kb.matches(code, &kb.next_screen) {
+        app.next_screen();
+    } else if kb.matches(code, &kb.prev_screen) {
+        app.prev_screen();
+    } else if kb.matches(code, &kb.apply) {
+        if let Err(e) = app.apply_wallpaper() {
+            app.ui.status_message = Some(format!("{}", e));
+        }
+    } else if kb.matches(code, &kb.random) {
+        if let Err(e) = app.random_wallpaper() {
+            app.ui.status_message = Some(format!("{}", e));
+        }
+    } else if kb.matches(code, &kb.toggle_match) {
+        app.toggle_match_mode();
+    } else if kb.matches(code, &kb.toggle_resize) {
+        app.toggle_resize_mode();
+    } else {
+        match code {
+            KeyCode::Char(':') => app.enter_command_mode(),
+            KeyCode::Char('?') => app.toggle_help(),
+            KeyCode::Char('s') => app.toggle_sort_mode(),
+            KeyCode::Char('a') | KeyCode::Char('A') => app.toggle_aspect_sort(),
+            KeyCode::Char('c') => app.toggle_colors(),
+            KeyCode::Char('C') => app.toggle_color_picker(),
+            KeyCode::Char('p') => app.toggle_pairing_preview(),
+            KeyCode::Char('t') => app.cycle_tag_filter(),
+            KeyCode::Char('T') => app.clear_tag_filter(),
+            KeyCode::Char('w') => {
+                if let Err(e) = app.export_pywal() {
+                    app.ui.status_message = Some(format!("pywal: {}", e));
+                }
+            }
+            KeyCode::Char('i') => app.toggle_thumbnail_protocol_mode(),
+            KeyCode::Char('W') => app.toggle_pywal_export(),
+            KeyCode::Char('u') => {
+                if let Err(e) = app.do_undo() {
+                    app.ui.status_message = Some(format!("Undo: {}", e));
+                }
+            }
+            KeyCode::Char('R') => match app.rescan() {
+                Ok(msg) => app.ui.status_message = Some(format!("Rescan: {}", msg)),
+                Err(e) => app.ui.status_message = Some(format!("Rescan: {}", e)),
+            },
+            _ => {}
+        }
+    }
+}
+
 fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
@@ -463,15 +632,14 @@ fn run_app<B: ratatui::backend::Backend>(
         }
 
         // Check for theme change on configured interval and force full redraw.
-        if last_theme_check.elapsed() >= theme_check_interval {
-            let new_is_light = crate::ui::theme::is_light_theme();
-            if new_is_light != current_theme_is_light {
-                current_theme_is_light = new_is_light;
-                app.ui.theme = crate::ui::theme::frost_theme();
-                terminal.clear()?; // Force full terminal redraw.
-                needs_redraw = true;
-            }
-            last_theme_check = std::time::Instant::now();
+        if check_theme_changes(
+            app,
+            &mut last_theme_check,
+            &mut current_theme_is_light,
+            theme_check_interval,
+        ) {
+            terminal.clear()?;
+            needs_redraw = true;
         }
 
         // Only redraw when needed (event received or state changed).
@@ -512,177 +680,7 @@ fn run_app<B: ratatui::backend::Backend>(
                     }
                     pending_thumbnail_redraw = false;
                     redraw_from_events = true;
-
-                    // Handle help popup first (blocks other input).
-                    if app.ui.show_help {
-                        match key.code {
-                            KeyCode::Char('?') | KeyCode::Esc | KeyCode::Enter => {
-                                app.ui.show_help = false;
-                            }
-                            _ => {}
-                        }
-                        continue;
-                    }
-
-                    // Handle color picker popup.
-                    if app.ui.show_color_picker {
-                        match key.code {
-                            KeyCode::Esc | KeyCode::Char('C') => {
-                                app.ui.show_color_picker = false;
-                            }
-                            KeyCode::Char('l') | KeyCode::Right => {
-                                app.color_picker_next();
-                            }
-                            KeyCode::Char('h') | KeyCode::Left => {
-                                app.color_picker_prev();
-                            }
-                            KeyCode::Enter => {
-                                app.apply_color_filter();
-                            }
-                            KeyCode::Char('x') | KeyCode::Backspace => {
-                                app.clear_color_filter();
-                                app.ui.show_color_picker = false;
-                            }
-                            _ => {}
-                        }
-                        continue;
-                    }
-
-                    // Handle pairing preview popup.
-                    if app.pairing.show_preview {
-                        match key.code {
-                            KeyCode::Esc | KeyCode::Char('p') => {
-                                app.pairing.show_preview = false;
-                            }
-                            KeyCode::Char('l') | KeyCode::Right | KeyCode::Char('n') => {
-                                app.pairing_preview_next();
-                            }
-                            KeyCode::Char('h') | KeyCode::Left | KeyCode::Char('N') => {
-                                app.pairing_preview_prev();
-                            }
-                            KeyCode::Enter => {
-                                if let Err(e) = app.apply_pairing_preview() {
-                                    app.ui.status_message = Some(format!("{}", e));
-                                }
-                            }
-                            KeyCode::Char('y') => {
-                                app.toggle_pairing_style_mode();
-                            }
-                            KeyCode::Char(c) if c.is_ascii_digit() => {
-                                let idx = if c == '0' {
-                                    9
-                                } else {
-                                    (c as u8 - b'1') as usize
-                                };
-                                let max = app.pairing_preview_alternatives();
-                                if idx < max {
-                                    app.pairing.preview_idx = idx;
-                                }
-                            }
-                            _ => {}
-                        }
-                        continue;
-                    }
-
-                    // Handle command mode (vim-style :).
-                    if app.ui.command_mode {
-                        match key.code {
-                            KeyCode::Esc => {
-                                app.exit_command_mode();
-                            }
-                            KeyCode::Enter => {
-                                app.execute_command();
-                            }
-                            KeyCode::Backspace => {
-                                app.command_backspace();
-                            }
-                            KeyCode::Char(c) => {
-                                app.command_input(c);
-                            }
-                            _ => {}
-                        }
-                        continue;
-                    }
-
-                    // Use configurable keybindings.
-                    let kb = &app.config.keybindings;
-                    let code = key.code;
-
-                    // Quit (configurable + Esc always works).
-                    if kb.matches(code, &kb.quit) || code == KeyCode::Esc {
-                        app.ui.should_quit = true;
-                    }
-                    // Navigation (configurable + arrow keys always work).
-                    else if kb.matches(code, &kb.next) || code == KeyCode::Right {
-                        app.next_wallpaper();
-                    } else if kb.matches(code, &kb.prev) || code == KeyCode::Left {
-                        app.prev_wallpaper();
-                    }
-                    // Screen navigation (configurable).
-                    else if kb.matches(code, &kb.next_screen) {
-                        app.next_screen();
-                    } else if kb.matches(code, &kb.prev_screen) {
-                        app.prev_screen();
-                    }
-                    // Apply wallpaper (configurable).
-                    else if kb.matches(code, &kb.apply) {
-                        if let Err(e) = app.apply_wallpaper() {
-                            app.ui.status_message = Some(format!("{}", e));
-                        }
-                    }
-                    // Random wallpaper (configurable).
-                    else if kb.matches(code, &kb.random) {
-                        if let Err(e) = app.random_wallpaper() {
-                            app.ui.status_message = Some(format!("{}", e));
-                        }
-                    }
-                    // Toggle match mode (configurable).
-                    else if kb.matches(code, &kb.toggle_match) {
-                        app.toggle_match_mode();
-                    }
-                    // Toggle resize mode (configurable).
-                    else if kb.matches(code, &kb.toggle_resize) {
-                        app.toggle_resize_mode();
-                    }
-                    // Non-configurable keys.
-                    else {
-                        match code {
-                            KeyCode::Char(':') => app.enter_command_mode(),
-                            KeyCode::Char('?') => app.toggle_help(),
-                            KeyCode::Char('s') => app.toggle_sort_mode(),
-                            KeyCode::Char('a') | KeyCode::Char('A') => app.toggle_aspect_sort(),
-                            KeyCode::Char('c') => app.toggle_colors(),
-                            KeyCode::Char('C') => app.toggle_color_picker(),
-                            KeyCode::Char('p') => app.toggle_pairing_preview(),
-                            KeyCode::Char('t') => app.cycle_tag_filter(),
-                            KeyCode::Char('T') => app.clear_tag_filter(),
-                            KeyCode::Char('w') => {
-                                if let Err(e) = app.export_pywal() {
-                                    app.ui.status_message = Some(format!("pywal: {}", e));
-                                }
-                            }
-                            KeyCode::Char('i') => app.toggle_thumbnail_protocol_mode(),
-                            KeyCode::Char('W') => app.toggle_pywal_export(),
-                            KeyCode::Char('u') => {
-                                // Undo pairing.
-                                if let Err(e) = app.do_undo() {
-                                    app.ui.status_message = Some(format!("Undo: {}", e));
-                                }
-                            }
-                            KeyCode::Char('R') => {
-                                // Rescan wallpaper directory.
-                                match app.rescan() {
-                                    Ok(msg) => {
-                                        app.ui.status_message = Some(format!("Rescan: {}", msg));
-                                    }
-                                    Err(e) => {
-                                        app.ui.status_message = Some(format!("Rescan: {}", e));
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
+                    handle_key_event(app, key);
                 }
                 AppEvent::ThumbnailReady(response) => {
                     app.handle_thumbnail_ready(response);

@@ -1,6 +1,6 @@
 use crate::app::Config;
 use crate::screen;
-use crate::swww::ResizeMode;
+use crate::swww::{ResizeMode, TransitionType};
 use crate::wallpaper::MatchMode;
 use anyhow::Result;
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Select};
@@ -128,11 +128,11 @@ pub async fn run_init() -> Result<()> {
         .interact()?;
 
     let transition_type = match trans_idx {
-        0 => "fade",
-        1 => "wipe",
-        2 => "grow",
-        3 => "center",
-        _ => "none",
+        0 => TransitionType::Fade,
+        1 => TransitionType::Wipe,
+        2 => TransitionType::Grow,
+        3 => TransitionType::Center,
+        _ => TransitionType::None,
     };
 
     // Step 6: Scan subdirectories
@@ -147,7 +147,7 @@ pub async fn run_init() -> Result<()> {
     config.wallpaper.recursive = recursive;
     config.display.match_mode = match_mode;
     config.display.resize_mode = resize_mode;
-    config.transition.transition_type = transition_type.to_string();
+    config.transition.transition_type = transition_type;
 
     // Save config
     config.save()?;

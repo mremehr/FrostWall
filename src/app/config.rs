@@ -55,7 +55,8 @@ pub struct DisplayConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransitionConfig {
-    pub transition_type: String,
+    #[serde(default)]
+    pub transition_type: TransitionType,
     pub duration: f32,
     pub fps: u32,
 }
@@ -273,7 +274,7 @@ impl Default for DisplayConfig {
 impl Default for TransitionConfig {
     fn default() -> Self {
         Self {
-            transition_type: "fade".to_string(),
+            transition_type: TransitionType::Fade,
             duration: 1.0,
             fps: 60,
         }
@@ -496,18 +497,8 @@ impl Config {
 
     /// Build a Transition struct from config settings.
     pub fn transition(&self) -> Transition {
-        let transition_type = match self.transition.transition_type.as_str() {
-            "fade" => TransitionType::Fade,
-            "wipe" => TransitionType::Wipe,
-            "grow" => TransitionType::Grow,
-            "center" => TransitionType::Center,
-            "outer" => TransitionType::Outer,
-            "none" => TransitionType::None,
-            _ => TransitionType::Fade,
-        };
-
         Transition {
-            transition_type,
+            transition_type: self.transition.transition_type,
             duration: self.transition.duration,
             fps: self.transition.fps,
         }

@@ -1,5 +1,6 @@
+use lru::LruCache;
 use palette::{IntoColor, Lab, Srgb};
-use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::sync::{OnceLock, RwLock};
 
 /// Types of color harmony between two palettes
@@ -70,10 +71,14 @@ struct ColorFeatures {
     brightness: f32,
 }
 
-static COLOR_FEATURE_CACHE: OnceLock<RwLock<HashMap<u32, ColorFeatures>>> = OnceLock::new();
+/// Max number of distinct colors cached. Covers ~16M unique colors with room to spare
+/// while bounding memory to ~8192 * sizeof(ColorFeatures) ≈ 460 KB.
+const COLOR_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(8192).unwrap();
 
-fn color_feature_cache() -> &'static RwLock<HashMap<u32, ColorFeatures>> {
-    COLOR_FEATURE_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+static COLOR_FEATURE_CACHE: OnceLock<RwLock<LruCache<u32, ColorFeatures>>> = OnceLock::new();
+
+fn color_feature_cache() -> &'static RwLock<LruCache<u32, ColorFeatures>> {
+    COLOR_FEATURE_CACHE.get_or_init(|| RwLock::new(LruCache::new(COLOR_CACHE_CAPACITY)))
 }
 
 fn parse_hex_u24(hex: &str) -> Option<u32> {
@@ -139,19 +144,18 @@ fn compute_color_features((r, g, b): (u8, u8, u8)) -> ColorFeatures {
 fn color_features(hex: &str) -> Option<ColorFeatures> {
     let key = parse_hex_u24(hex)?;
 
-    if let Ok(cache) = color_feature_cache().read() {
+    // LruCache::get() requires &mut (updates recency), so we always take write lock.
+    if let Ok(mut cache) = color_feature_cache().write() {
         if let Some(features) = cache.get(&key) {
             return Some(features.clone());
         }
+        let features = compute_color_features(rgb_from_u24(key));
+        cache.put(key, features.clone());
+        return Some(features);
     }
 
-    let features = compute_color_features(rgb_from_u24(key));
-
-    if let Ok(mut cache) = color_feature_cache().write() {
-        cache.entry(key).or_insert_with(|| features.clone());
-    }
-
-    Some(features)
+    // Lock poisoned — compute without caching.
+    Some(compute_color_features(rgb_from_u24(key)))
 }
 
 /// Parse hex color string to RGB tuple

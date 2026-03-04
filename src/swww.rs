@@ -10,8 +10,10 @@ pub struct Transition {
     pub fps: u32,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum TransitionType {
+    #[default]
     Fade,
     Wipe,
     Grow,

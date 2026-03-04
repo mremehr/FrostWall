@@ -46,8 +46,8 @@ impl PairingHistory {
             std::fs::create_dir_all(parent)?;
         }
 
-        let content = serde_json::to_string_pretty(&self.data)?;
-        std::fs::write(&self.cache_path, content)?;
+        let file = std::fs::File::create(&self.cache_path)?;
+        serde_json::to_writer_pretty(std::io::BufWriter::new(file), &self.data)?;
 
         Ok(())
     }

@@ -431,6 +431,10 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
         .saturating_sub(3)
         .clamp(THUMBNAIL_HEIGHT / 2, THUMBNAIL_HEIGHT * 3);
     let cell_aspect = terminal_cell_aspect(app);
+    // Equal-area height for selected slot: portrait gets more height, ultrawide less,
+    // so all formats occupy roughly the same visual area when selected.
+    // target_area = THUMBNAIL_HEIGHT * THUMBNAIL_WIDTH (baseline area in cells²)
+    let target_area_cells = (THUMBNAIL_HEIGHT as f32) * (THUMBNAIL_WIDTH as f32);
     let slot_ratios: Vec<f32> = (start..end)
         .map(|idx| {
             let cache_idx = app.selection.filtered_wallpapers[idx];
@@ -458,11 +462,20 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
         .get(selected_slot)
         .copied()
         .unwrap_or(LANDSCAPE_RATIO);
-    let portrait_or_square_focus = selected_ratio <= 1.1;
+    let _portrait_or_square_focus = selected_ratio <= 1.1;
+    // Equal-area height for the selected slot: solve h such that (h * ratio * cell_aspect) * h = target_area
+    // → h = sqrt(target_area / (ratio * cell_aspect))
+    let selected_eq_h = ((target_area_cells / (selected_ratio.max(0.1) * cell_aspect))
+        .sqrt()
+        .clamp(MIN_THUMB_CONTENT_HEIGHT as f32, max_content_height as f32 * 2.0))
+        as u16;
+    // Derive equal-area width and use as selected_min_width floor
+    let selected_eq_w =
+        (selected_eq_h as f32 * selected_ratio * cell_aspect).round() as u16;
     let selected_min_width = if selected_ratio >= 2.0 {
         THUMBNAIL_WIDTH + (THUMBNAIL_WIDTH / 2) + 6
     } else {
-        THUMBNAIL_WIDTH + 8
+        selected_eq_w.max(THUMBNAIL_WIDTH + 8)
     };
     let slot_max_widths: Vec<u16> = slot_ratios
         .iter()
@@ -483,6 +496,8 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
         .collect();
     // Keep width and height coupled so portrait/square cards do not become overly wide when
     // height is capped by layout constraints.
+    // For the selected slot we use the equal-area height (selected_eq_h) so all formats
+    // get roughly the same visual area regardless of aspect ratio.
     let coupled_slot_max_widths: Vec<u16> = slot_max_widths
         .iter()
         .enumerate()
@@ -492,8 +507,13 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
                 .get(i)
                 .copied()
                 .unwrap_or((MAX_SLOT_WIDTH, max_content_height));
-            let slot_cap_h = max_content_height.min(slot_max_h.max(1));
-            let max_by_height = ((slot_cap_h as f32) * ratio * cell_aspect).round() as u16;
+            let cap_h = if i == selected_slot {
+                // Equal-area cap: portrait gets more height, ultrawide less.
+                selected_eq_h.min(slot_max_h.max(1))
+            } else {
+                max_content_height.min(slot_max_h.max(1))
+            };
+            let max_by_height = ((cap_h as f32) * ratio * cell_aspect).round() as u16;
             (*max_w).min(max_by_height.max(1)).max(1)
         })
         .collect();
@@ -528,20 +548,8 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
             let distance = i.abs_diff(center);
             let scale = match distance {
                 0 => 1.0,
-                1 => {
-                    if portrait_or_square_focus {
-                        0.90
-                    } else {
-                        0.95
-                    }
-                }
-                _ => {
-                    if portrait_or_square_focus {
-                        0.80
-                    } else {
-                        0.88
-                    }
-                }
+                1 => 0.82, // adjacent: noticeably smaller
+                _ => 0.62, // outer edges: significantly smaller
             };
             let cap = slot_max_widths
                 .get(i)
@@ -572,7 +580,12 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
                 .get(i)
                 .copied()
                 .unwrap_or((MAX_SLOT_WIDTH, max_content_height));
-            let slot_cap = max_content_height.min(slot_max_h.max(1));
+            // Selected slot uses equal-area height cap so portrait can be taller.
+            let slot_cap = if i == selected_slot {
+                selected_eq_h.min(slot_max_h.max(1))
+            } else {
+                max_content_height.min(slot_max_h.max(1))
+            };
             content_height_for_slot(*w, *ratio, slot_cap, cell_aspect)
         })
         .collect();
@@ -587,20 +600,8 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
             }
             let scale = match distance {
                 0 => 1.0,
-                1 => {
-                    if portrait_or_square_focus {
-                        0.86
-                    } else {
-                        0.93
-                    }
-                }
-                _ => {
-                    if portrait_or_square_focus {
-                        0.72
-                    } else {
-                        0.84
-                    }
-                }
+                1 => 0.80, // adjacent: visibly shorter
+                _ => 0.60, // outer edges: clearly smaller
             };
             let scaled = ((*h as f32) * scale).round() as u16;
             let (_, slot_max_h) = slot_limits

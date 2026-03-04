@@ -23,7 +23,7 @@ kmeans_colors = "0.6.0"
 palette = "0.7"
 
 # Async runtime
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "io-util", "fs", "macros", "process", "signal"] }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -79,6 +79,7 @@ clip-cuda = ["clip", "ort/cuda"]
 
 [dev-dependencies]
 criterion = "0.5"
+tempfile = "3.26.0"
 
 [[bench]]
 name = "color_ops"
@@ -87,6 +88,8 @@ harness = false
 [profile.release]
 lto = true
 strip = true
+codegen-units = 1
+panic = "abort"
 
 [patch.crates-io]
 ratatui-image = { path = "vendor/ratatui-image" }

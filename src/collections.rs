@@ -61,8 +61,8 @@ impl CollectionStore {
             std::fs::create_dir_all(parent)?;
         }
 
-        let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, content)?;
+        let file = std::fs::File::create(&path)?;
+        serde_json::to_writer_pretty(std::io::BufWriter::new(file), self)?;
 
         Ok(())
     }

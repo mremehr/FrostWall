@@ -118,8 +118,8 @@ pub fn export_colors(colors: &WalColors) -> Result<PathBuf> {
 
     // Export colors.json
     let json_path = cache_dir.join("colors.json");
-    let json = serde_json::to_string_pretty(colors)?;
-    fs::write(&json_path, &json)?;
+    let file = fs::File::create(&json_path)?;
+    serde_json::to_writer_pretty(std::io::BufWriter::new(file), colors)?;
 
     // Export colors (plain hex, one per line)
     let plain_path = cache_dir.join("colors");
