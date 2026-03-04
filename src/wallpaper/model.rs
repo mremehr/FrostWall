@@ -49,7 +49,7 @@ impl Wallpaper {
         const K: usize = 5;
         const CONVERGENCE_THRESHOLD: f32 = 5.0; // Looser convergence (was 2.0)
         const MAX_ITERATIONS: u32 = 30; // Faster (was 100)
-        const THUMBNAIL_SIZE: u32 = 128; // Smaller (was 256)
+        const THUMBNAIL_SIZE: u32 = 64; // Smaller (was 128)
 
         let img = image::open(&self.path).context("Failed to open image")?;
         let thumb = img.resize(THUMBNAIL_SIZE, THUMBNAIL_SIZE, FilterType::Triangle);

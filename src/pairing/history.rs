@@ -10,6 +10,96 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+// ── Affinity base-score constants ────────────────────────────────────────────
+/// Diminishing-returns threshold: ln-normalisation saturates at 10 pairings.
+const AFFINITY_PAIR_COUNT_SATURATION: f32 = 10.0;
+/// "Canonical" long-duration pairing: 30 min (1 800 s) maps to score 1.0.
+const AFFINITY_DURATION_TARGET_SECS: f32 = 1800.0;
+/// Count contributes 70 % of the base affinity score.
+const AFFINITY_COUNT_WEIGHT: f32 = 0.7;
+/// Duration contributes 30 % of the base affinity score.
+const AFFINITY_DURATION_WEIGHT: f32 = 0.3;
+
+// ── Strict-mode feature-weight multipliers ───────────────────────────────────
+/// Strict: de-emphasise raw co-occurrence so style signals dominate.
+const STRICT_SCREEN_CTX_SCALE: f32 = 0.55;
+/// Strict: boost visual weight to enforce palette coherence.
+const STRICT_VISUAL_SCALE: f32 = 1.20;
+/// Strict: lift harmony bonus slightly for aesthetic consistency.
+const STRICT_HARMONY_SCALE: f32 = 1.10;
+/// Strict: amplify tag signal — style/type is the primary discriminator.
+const STRICT_TAG_SCALE: f32 = 1.55;
+/// Strict: heavily reward CLIP semantic similarity.
+const STRICT_SEMANTIC_SCALE: f32 = 1.80;
+/// Strict: small lift on repetition penalty to further encourage variety.
+const STRICT_REPETITION_SCALE: f32 = 1.15;
+
+// ── Soft-mode feature-weight multipliers ─────────────────────────────────────
+/// Soft: mild reduction of screen-context history weight.
+const SOFT_SCREEN_CTX_SCALE: f32 = 0.90;
+/// Soft: minor visual boost without overriding history.
+const SOFT_VISUAL_SCALE: f32 = 1.05;
+/// Soft: slight tag boost to nudge style awareness without enforcing it.
+const SOFT_TAG_SCALE: f32 = 1.15;
+/// Soft: moderate semantic boost.
+const SOFT_SEMANTIC_SCALE: f32 = 1.20;
+
+// ── History scale factors ────────────────────────────────────────────────────
+/// Strict: history influence cut to 15 % so style features actually dominate.
+const STRICT_HISTORY_SCALE: f32 = 0.15;
+/// Soft: history influence at 60 % — learned pairs still matter but softer.
+const SOFT_HISTORY_SCALE: f32 = 0.6;
+
+// ── Tag scoring constants ────────────────────────────────────────────────────
+/// Maximum shared-tag count that earns a base bonus (excess ignored).
+const TAG_MAX_SHARED: f32 = 3.0;
+/// Soft: maximum style-tag overlap that earns a bonus.
+const TAG_SOFT_STYLE_MAX: f32 = 2.0;
+/// Soft: bonus multiplier applied to tag_weight per overlapping style tag.
+const TAG_SOFT_STYLE_BONUS_MULT: f32 = 1.5;
+/// Soft: penalty fraction of tag_weight when no style tags match.
+const TAG_SOFT_STYLE_PENALTY_MULT: f32 = 1.2;
+/// Soft: maximum content-tag overlap that earns a bonus.
+const TAG_SOFT_CONTENT_MAX: f32 = 3.0;
+/// Soft: bonus multiplier applied to tag_weight per overlapping content tag.
+const TAG_SOFT_CONTENT_BONUS_MULT: f32 = 1.2;
+/// Soft: penalty fraction of tag_weight when no content tags match.
+const TAG_SOFT_CONTENT_PENALTY_MULT: f32 = 0.6;
+/// Strict: maximum style/content overlap that earns a bonus.
+const TAG_STRICT_STYLE_MAX: f32 = 2.0;
+/// Strict: strong style bonus multiplier — this is the whole point of strict.
+const TAG_STRICT_BONUS_MULT: f32 = 4.0;
+/// Strict: heavy penalty multiplier for wrong style.
+const TAG_STRICT_PENALTY_MULT: f32 = 6.0;
+/// Strict: maximum content-tag overlap eligible for bonus.
+const TAG_STRICT_CONTENT_MAX: f32 = 3.0;
+/// Strict: content bonus multiplier applied to tag_weight.
+const TAG_STRICT_CONTENT_BONUS_MULT: f32 = 2.0;
+
+// ── Quality blend weights (strict mode) ──────────────────────────────────────
+/// Semantic similarity contributes 58 % of combined quality score.
+const QUALITY_SEMANTIC_WEIGHT: f32 = 0.58;
+/// Visual similarity contributes 42 % of combined quality score.
+const QUALITY_VISUAL_WEIGHT: f32 = 0.42;
+
+// ── Screen-context duration constants ────────────────────────────────────────
+/// Duration baseline: 15 min (900 s) maps raw contribution to 1.0.
+const SCREEN_CTX_DURATION_BASELINE_SECS: f32 = 900.0;
+/// Default duration (seconds) used when a record has no duration stored.
+const SCREEN_CTX_DEFAULT_DURATION_SECS: u64 = 90;
+/// Duration factor floor — prevents near-zero contributions from short views.
+const SCREEN_CTX_DURATION_MIN: f32 = 0.35;
+/// Duration factor ceiling — caps outlier marathon sessions.
+const SCREEN_CTX_DURATION_MAX: f32 = 1.6;
+/// Manual pairings receive a 10 % contribution boost over automatic ones.
+const MANUAL_PAIRING_BOOST: f32 = 1.1;
+
+// ── Repetition penalty constants ─────────────────────────────────────────────
+/// Raw score multiplier before weight application.
+const REPETITION_PENALTY_SCALE: f32 = 1.2;
+/// Hard cap in absolute score units (applied before weight scaling).
+const REPETITION_PENALTY_MAX: f32 = 3.0;
+
 impl PairingHistory {
     /// Create new pairing history manager
     pub fn new(max_records: usize) -> Self {
@@ -142,14 +232,15 @@ impl PairingHistory {
     /// Calculate base affinity score from pairing stats.
     /// Normalized to roughly 0.0–1.0 so it doesn't dominate other features.
     fn calculate_base_score(pair_count: u32, avg_duration_secs: f32) -> f32 {
-        // Diminishing returns on count, normalized to ~1.0 at 10 pairings
-        let count_score = (pair_count as f32).ln_1p() / 10.0_f32.ln_1p();
+        // Diminishing returns on count, normalized to ~1.0 at AFFINITY_PAIR_COUNT_SATURATION pairings
+        let count_score =
+            (pair_count as f32).ln_1p() / AFFINITY_PAIR_COUNT_SATURATION.ln_1p();
 
         // Longer durations boost slightly (capped at 1.0)
-        let duration_score = (avg_duration_secs / 1800.0).min(1.0);
+        let duration_score = (avg_duration_secs / AFFINITY_DURATION_TARGET_SECS).min(1.0);
 
         // Combine: count matters most, duration is a bonus
-        (count_score * 0.7 + duration_score * 0.3).min(1.0)
+        (count_score * AFFINITY_COUNT_WEIGHT + duration_score * AFFINITY_DURATION_WEIGHT).min(1.0)
     }
 
     /// Get ordered pair of paths (for consistent key)
@@ -234,19 +325,19 @@ impl PairingHistory {
             repetition_penalty_weight,
         ) = match context.style_mode {
             PairingStyleMode::Strict => (
-                context.screen_context_weight * 0.55,
-                context.visual_weight * 1.20,
-                context.harmony_weight * 1.10,
-                context.tag_weight * 1.55,
-                context.semantic_weight * 1.80,
-                context.repetition_penalty_weight * 1.15,
+                context.screen_context_weight * STRICT_SCREEN_CTX_SCALE,
+                context.visual_weight * STRICT_VISUAL_SCALE,
+                context.harmony_weight * STRICT_HARMONY_SCALE,
+                context.tag_weight * STRICT_TAG_SCALE,
+                context.semantic_weight * STRICT_SEMANTIC_SCALE,
+                context.repetition_penalty_weight * STRICT_REPETITION_SCALE,
             ),
             PairingStyleMode::Soft => (
-                context.screen_context_weight * 0.90,
-                context.visual_weight * 1.05,
+                context.screen_context_weight * SOFT_SCREEN_CTX_SCALE,
+                context.visual_weight * SOFT_VISUAL_SCALE,
                 context.harmony_weight,
-                context.tag_weight * 1.15,
-                context.semantic_weight * 1.20,
+                context.tag_weight * SOFT_TAG_SCALE,
+                context.semantic_weight * SOFT_SEMANTIC_SCALE,
                 context.repetition_penalty_weight,
             ),
             PairingStyleMode::Off => (
@@ -280,8 +371,8 @@ impl PairingHistory {
         // In Strict mode, reduce the influence of history so that style/type matching
         // actually dominates.  In Off/Soft the user's history still matters a lot.
         let history_scale = match context.style_mode {
-            PairingStyleMode::Strict => 0.15,
-            PairingStyleMode::Soft => 0.6,
+            PairingStyleMode::Strict => STRICT_HISTORY_SCALE,
+            PairingStyleMode::Soft => SOFT_HISTORY_SCALE,
             PairingStyleMode::Off => 1.0,
         };
 
@@ -420,7 +511,7 @@ impl PairingHistory {
                 );
                 let harmony_bonus = harmony.bonus() * strength * harmony_weight;
                 score += harmony_bonus;
-                let tag_bonus = (shared_tags as f32).min(3.0) * tag_weight;
+                let tag_bonus = (shared_tags as f32).min(TAG_MAX_SHARED) * tag_weight;
                 score += tag_bonus;
 
                 match context.style_mode {
@@ -428,16 +519,18 @@ impl PairingHistory {
                     PairingStyleMode::Soft => {
                         if !selected_style_tags.is_empty() {
                             if style_overlap > 0 {
-                                score += (style_overlap as f32).min(2.0) * (tag_weight * 1.5);
+                                score += (style_overlap as f32).min(TAG_SOFT_STYLE_MAX)
+                                    * (tag_weight * TAG_SOFT_STYLE_BONUS_MULT);
                             } else {
-                                score -= tag_weight * 1.2;
+                                score -= tag_weight * TAG_SOFT_STYLE_PENALTY_MULT;
                             }
                         }
                         if !selected_content_tags.is_empty() {
                             if content_overlap > 0 {
-                                score += (content_overlap as f32).min(3.0) * tag_weight;
+                                score += (content_overlap as f32).min(TAG_SOFT_CONTENT_MAX)
+                                    * (tag_weight * TAG_SOFT_CONTENT_BONUS_MULT);
                             } else {
-                                score -= tag_weight * 0.6;
+                                score -= tag_weight * TAG_SOFT_CONTENT_PENALTY_MULT;
                             }
                         }
                     }
@@ -453,15 +546,17 @@ impl PairingHistory {
 
                             if overlap > 0 {
                                 // Strong bonus — this is the whole point of strict
-                                score += (overlap as f32).min(2.0) * (tag_weight * 4.0);
+                                score += (overlap as f32).min(TAG_STRICT_STYLE_MAX)
+                                    * (tag_weight * TAG_STRICT_BONUS_MULT);
                             } else {
                                 // Heavy penalty for wrong style
-                                score -= tag_weight * 6.0;
+                                score -= tag_weight * TAG_STRICT_PENALTY_MULT;
                             }
                         }
 
                         if !selected_content_tags.is_empty() {
-                            score += (content_overlap as f32).min(3.0) * (tag_weight * 2.0);
+                            score += (content_overlap as f32).min(TAG_STRICT_CONTENT_MAX)
+                                * (tag_weight * TAG_STRICT_CONTENT_BONUS_MULT);
                         } else if selected_style_tags.is_empty() {
                             // No explicit style tags on the selected image:
                             // strict mode still enforces close visual/semantic similarity.
@@ -471,7 +566,8 @@ impl PairingHistory {
                         }
 
                         let strict_quality = if let Some(similarity) = semantic_similarity {
-                            (similarity * 0.58) + (visual_similarity * 0.42)
+                            (similarity * QUALITY_SEMANTIC_WEIGHT)
+                                + (visual_similarity * QUALITY_VISUAL_WEIGHT)
                         } else {
                             visual_similarity
                         };
@@ -538,8 +634,11 @@ impl PairingHistory {
 
             let age_secs = now.saturating_sub(record.timestamp) as f32;
             let recency = 1.0 / (1.0 + age_secs / HALF_LIFE_SECS);
-            let duration_factor = (record.duration.unwrap_or(90) as f32 / 900.0).clamp(0.35, 1.6);
-            let manual_factor = if record.manual { 1.1 } else { 1.0 };
+            let duration_factor = (record.duration.unwrap_or(SCREEN_CTX_DEFAULT_DURATION_SECS)
+                as f32
+                / SCREEN_CTX_DURATION_BASELINE_SECS)
+                .clamp(SCREEN_CTX_DURATION_MIN, SCREEN_CTX_DURATION_MAX);
+            let manual_factor = if record.manual { MANUAL_PAIRING_BOOST } else { 1.0 };
             let contribution = recency * duration_factor * manual_factor;
             *raw.entry(target_path.as_path()).or_insert(0.0) += contribution;
         }
@@ -577,7 +676,7 @@ impl PairingHistory {
             .sum::<f32>();
 
         // Scale penalty relative to total feature magnitude so it actually matters.
-        (raw_penalty * 2.5 * weight).min(8.0 * weight)
+        (raw_penalty * REPETITION_PENALTY_SCALE * weight).min(REPETITION_PENALTY_MAX * weight)
     }
 
     /// Get affinity score between two wallpapers

@@ -21,7 +21,7 @@ const MIN_SLOT_WIDTH: u16 = 24;
 const MAX_CAROUSEL_VISIBLE: usize = 13; // ~338 terminal columns needed at MIN_SLOT_WIDTH
 const MAX_SLOT_WIDTH: u16 = 280;
 const MAX_SELECTED_SLOT_WIDTH: u16 = 360;
-const SELECTED_WIDTH_BOOST: f32 = 1.52;
+const SELECTED_WIDTH_BOOST: f32 = 1.25;
 const SELECTED_ULTRAWIDE_BOOST: f32 = 1.12;
 
 fn slot_width_for_ratio(ratio: f32, is_selected: bool) -> u16 {
@@ -433,7 +433,7 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
     let max_content_height = area
         .height
         .saturating_sub(3)
-        .clamp(THUMBNAIL_HEIGHT / 2, THUMBNAIL_HEIGHT * 3);
+        .clamp(THUMBNAIL_HEIGHT / 2, THUMBNAIL_HEIGHT * 5);
     let cell_aspect = terminal_cell_aspect(app);
     // Equal-area height for selected slot: portrait gets more height, ultrawide less,
     // so all formats occupy roughly the same visual area when selected.
@@ -552,8 +552,8 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
             let distance = i.abs_diff(center);
             let scale = match distance {
                 0 => 1.0,
-                1 => 0.82, // adjacent: noticeably smaller
-                _ => 0.62, // outer edges: significantly smaller
+                1 => 0.90, // adjacent: subtly smaller
+                _ => 0.78, // outer edges: moderately smaller
             };
             let cap = slot_max_widths
                 .get(i)
@@ -597,15 +597,15 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
     // Pseudo-fade: side slots are a bit smaller so center stays visually dominant.
     if visible > 1 {
         let center = visible / 2;
-        for (i, h) in slot_heights.iter_mut().enumerate() {
+        for (i, (h, ratio)) in slot_heights.iter_mut().zip(slot_ratios.iter()).enumerate() {
             let distance = i.abs_diff(center);
             if i == selected_slot {
                 continue;
             }
             let scale = match distance {
                 0 => 1.0,
-                1 => 0.80, // adjacent: visibly shorter
-                _ => 0.60, // outer edges: clearly smaller
+                1 => 0.90, // adjacent: subtly shorter
+                _ => if *ratio >= 2.0 { 0.80 } else { 0.75 }, // outer edges
             };
             let scaled = ((*h as f32) * scale).round() as u16;
             let (_, slot_max_h) = slot_limits
@@ -738,7 +738,7 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
         f.render_widget(Clear, thumb_area);
 
         let block = Block::default()
-            .borders(Borders::ALL)
+            .borders(if is_selected { Borders::ALL } else { Borders::NONE })
             .border_style(border_style)
             .style(Style::default().bg(if is_selected {
                 theme.bg_medium
@@ -754,7 +754,9 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
 
         // Try to render image if available
         if let Some(protocol) = app.get_thumbnail(cache_idx) {
-            let image = StatefulImage::new(None).resize(Resize::Crop(None));
+            // All thumbnails use Fit — no cropping, full image visible.
+            let resize = Resize::Fit(None);
+            let image = StatefulImage::new(None).resize(resize);
             f.render_stateful_widget(image, inner, protocol);
         } else if is_loading {
             // Show loading indicator

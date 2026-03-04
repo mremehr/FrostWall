@@ -70,6 +70,7 @@ impl App {
     /// Full update: filter, sort, reset thumbnail cache, schedule suggestions.
     pub fn update_filtered_wallpapers(&mut self) {
         self.update_filtered_wallpapers_core();
+        self.filters.available_colors = self.get_unique_colors();
         // Clear thumbnail state after filter changes so IDs don't drift/wrap.
         self.reset_thumbnail_cache();
         self.schedule_pairing_suggestions_update();
@@ -190,11 +191,7 @@ impl App {
 
     /// Toggle color picker popup.
     pub fn toggle_color_picker(&mut self) {
-        if !self.ui.show_color_picker {
-            // Build list of unique colors from all wallpapers.
-            self.filters.available_colors = self.get_unique_colors();
-            self.filters.color_picker_idx = 0;
-        }
+        self.filters.color_picker_idx = 0;
         self.ui.show_color_picker = !self.ui.show_color_picker;
     }
 

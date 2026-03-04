@@ -44,37 +44,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // Vertical layout: header, carousel, (optional error), (optional colors), footer
     let has_error = app.ui.status_message.is_some();
-    let constraints = if app.ui.show_colors {
-        if has_error {
-            vec![
-                Constraint::Length(2), // Header
-                Constraint::Length(1), // Error
-                Constraint::Min(7),    // Carousel
-                Constraint::Length(3), // Color palette
-                Constraint::Length(2), // Footer
-            ]
-        } else {
-            vec![
-                Constraint::Length(2), // Header
-                Constraint::Min(8),    // Carousel
-                Constraint::Length(3), // Color palette
-                Constraint::Length(2), // Footer
-            ]
-        }
-    } else if has_error {
-        vec![
-            Constraint::Length(2), // Header
-            Constraint::Length(1), // Error
-            Constraint::Min(9),    // Carousel
-            Constraint::Length(2), // Footer
-        ]
-    } else {
-        vec![
-            Constraint::Length(2), // Header
-            Constraint::Min(10),   // Carousel
-            Constraint::Length(2), // Footer
-        ]
-    };
+    let constraints = build_layout_constraints(app.ui.show_colors, has_error);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -98,12 +68,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     } else if app.pairing.show_preview && !app.pairing.preview_matches.is_empty() {
         // Split layout: adaptive width based on number of target preview screens.
         let preview_targets = app.pairing.preview_matches.len();
-        let right_percent = match preview_targets {
-            0 | 1 => 45,
-            2 => 50,
-            _ => 55,
-        };
-        let left_percent = 100 - right_percent;
+        let (left_percent, right_percent) = calculate_preview_split(preview_targets);
         let split = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -137,6 +102,48 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.pairing.history.can_undo() {
         draw_undo_popup(f, app, area, &theme);
     }
+}
+
+/// Build vertical layout constraints based on UI state.
+/// Returns constraints for: header, [error], carousel, [colors], footer.
+fn build_layout_constraints(show_colors: bool, has_error: bool) -> Vec<Constraint> {
+    match (show_colors, has_error) {
+        (true, true) => vec![
+            Constraint::Length(2), // Header
+            Constraint::Length(1), // Error
+            Constraint::Min(7),    // Carousel
+            Constraint::Length(3), // Color palette
+            Constraint::Length(2), // Footer
+        ],
+        (true, false) => vec![
+            Constraint::Length(2), // Header
+            Constraint::Min(8),    // Carousel
+            Constraint::Length(3), // Color palette
+            Constraint::Length(2), // Footer
+        ],
+        (false, true) => vec![
+            Constraint::Length(2), // Header
+            Constraint::Length(1), // Error
+            Constraint::Min(9),    // Carousel
+            Constraint::Length(2), // Footer
+        ],
+        (false, false) => vec![
+            Constraint::Length(2), // Header
+            Constraint::Min(10),   // Carousel
+            Constraint::Length(2), // Footer
+        ],
+    }
+}
+
+/// Calculate the left/right percentage split for the pairing preview layout.
+/// Returns `(left_percent, right_percent)`.
+fn calculate_preview_split(target_screen_count: usize) -> (u16, u16) {
+    let right_percent: u16 = match target_screen_count {
+        0 | 1 => 45,
+        2 => 50,
+        _ => 55,
+    };
+    (100 - right_percent, right_percent)
 }
 
 fn center_vertically(area: Rect, height: u16) -> Rect {
@@ -225,5 +232,86 @@ fn parse_hex_color(hex: &str) -> Option<ratatui::style::Color> {
         Some(ratatui::style::Color::Rgb(r, g, b))
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── build_layout_constraints ──────────────────────────────────────────────
+
+    #[test]
+    fn test_constraints_no_colors_no_error() {
+        let cs = build_layout_constraints(false, false);
+        // Expect: header, carousel, footer  (3 items)
+        assert_eq!(cs.len(), 3);
+        assert_eq!(cs[0], Constraint::Length(2)); // header
+        assert_eq!(cs[2], Constraint::Length(2)); // footer
+    }
+
+    #[test]
+    fn test_constraints_with_colors_no_error() {
+        let cs = build_layout_constraints(true, false);
+        // Expect: header, carousel, colors, footer (4 items)
+        assert_eq!(cs.len(), 4);
+        assert_eq!(cs[0], Constraint::Length(2)); // header
+        assert_eq!(cs[2], Constraint::Length(3)); // color palette
+        assert_eq!(cs[3], Constraint::Length(2)); // footer
+    }
+
+    #[test]
+    fn test_constraints_no_colors_with_error() {
+        let cs = build_layout_constraints(false, true);
+        // Expect: header, error, carousel, footer (4 items)
+        assert_eq!(cs.len(), 4);
+        assert_eq!(cs[0], Constraint::Length(2)); // header
+        assert_eq!(cs[1], Constraint::Length(1)); // error
+        assert_eq!(cs[3], Constraint::Length(2)); // footer
+    }
+
+    #[test]
+    fn test_constraints_with_colors_with_error() {
+        let cs = build_layout_constraints(true, true);
+        // Expect: header, error, carousel, colors, footer (5 items)
+        assert_eq!(cs.len(), 5);
+        assert_eq!(cs[0], Constraint::Length(2)); // header
+        assert_eq!(cs[1], Constraint::Length(1)); // error
+        assert_eq!(cs[3], Constraint::Length(3)); // color palette
+        assert_eq!(cs[4], Constraint::Length(2)); // footer
+    }
+
+    // ── calculate_preview_split ───────────────────────────────────────────────
+
+    #[test]
+    fn test_preview_split_zero_targets() {
+        let (left, right) = calculate_preview_split(0);
+        assert_eq!((left, right), (55, 45));
+    }
+
+    #[test]
+    fn test_preview_split_one_target() {
+        let (left, right) = calculate_preview_split(1);
+        assert_eq!((left, right), (55, 45));
+    }
+
+    #[test]
+    fn test_preview_split_two_targets() {
+        let (left, right) = calculate_preview_split(2);
+        assert_eq!((left, right), (50, 50));
+    }
+
+    #[test]
+    fn test_preview_split_many_targets() {
+        let (left, right) = calculate_preview_split(5);
+        assert_eq!((left, right), (45, 55));
+    }
+
+    #[test]
+    fn test_preview_split_sums_to_100() {
+        for n in [0, 1, 2, 3, 10] {
+            let (l, r) = calculate_preview_split(n);
+            assert_eq!(l + r, 100, "split must sum to 100 for n={n}");
+        }
     }
 }

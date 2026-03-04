@@ -96,4 +96,102 @@ impl WallpaperCache {
 
         Ok(())
     }
+
+    /// Serialize cache to a caller-specified path (used in tests).
+    #[cfg(test)]
+    pub(crate) fn save_to(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let file = fs::File::create(path)?;
+        serde_json::to_writer_pretty(std::io::BufWriter::new(file), self)?;
+        Ok(())
+    }
+
+    /// Deserialize cache from a caller-specified path (used in tests).
+    #[cfg(test)]
+    pub(crate) fn load_from(path: &Path) -> Result<Self> {
+        let data = fs::read_to_string(path)?;
+        Ok(serde_json::from_str(&data)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::screen::AspectCategory;
+    use crate::wallpaper::{Wallpaper, WallpaperCache, CACHE_VERSION};
+    use std::collections::HashMap;
+
+    fn minimal_cache(dir: &Path) -> WallpaperCache {
+        WallpaperCache {
+            version: CACHE_VERSION,
+            wallpapers: vec![Wallpaper {
+                path: dir.join("a.jpg"),
+                width: 1920,
+                height: 1080,
+                aspect_category: AspectCategory::Landscape,
+                colors: vec!["#112233".into()],
+                color_weights: vec![1.0],
+                tags: vec!["nature".into()],
+                auto_tags: vec![],
+                embedding: None,
+                file_size: 0,
+                modified_at: 0,
+            }],
+            source_dir: dir.to_path_buf(),
+            screen_indices: HashMap::new(),
+            recursive: false,
+            screen_match_indices: HashMap::new(),
+            similarity_profiles: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_save_creates_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = minimal_cache(dir.path());
+        let path = dir.path().join("cache.json");
+        cache.save_to(&path).unwrap();
+        assert!(path.exists(), "save_to should create the cache file");
+    }
+
+    #[test]
+    fn test_save_load_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = minimal_cache(dir.path());
+        let path = dir.path().join("cache.json");
+        original.save_to(&path).unwrap();
+        let loaded = WallpaperCache::load_from(&path).unwrap();
+        assert_eq!(loaded.wallpapers.len(), original.wallpapers.len());
+        assert_eq!(loaded.wallpapers[0].path, original.wallpapers[0].path);
+        assert_eq!(loaded.wallpapers[0].colors, original.wallpapers[0].colors);
+        assert_eq!(loaded.source_dir, original.source_dir);
+        assert_eq!(loaded.recursive, original.recursive);
+    }
+
+    #[test]
+    fn test_load_missing_file_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("nonexistent.json");
+        assert!(
+            WallpaperCache::load_from(&missing).is_err(),
+            "loading a missing file should return an error"
+        );
+    }
+
+    #[test]
+    fn test_cache_version_mismatch_detected() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cache = minimal_cache(dir.path());
+        // Write a cache with a stale version number.
+        cache.version = 0;
+        let path = dir.path().join("cache.json");
+        cache.save_to(&path).unwrap();
+        let loaded = WallpaperCache::load_from(&path).unwrap();
+        assert_ne!(
+            loaded.version, CACHE_VERSION,
+            "loaded version should differ from current CACHE_VERSION"
+        );
+    }
 }
