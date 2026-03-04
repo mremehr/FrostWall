@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
-use ratatui_image::StatefulImage;
+use ratatui_image::{Resize, StatefulImage};
 
 const THUMBNAIL_GAP: u16 = 2;
 const DEFAULT_TERMINAL_CELL_ASPECT: f32 = 2.0;
@@ -18,6 +18,7 @@ const MAX_TERMINAL_CELL_ASPECT: f32 = 3.0;
 const MIN_THUMB_CONTENT_HEIGHT: u16 = 8;
 const LANDSCAPE_RATIO: f32 = 16.0 / 9.0;
 const MIN_SLOT_WIDTH: u16 = 24;
+const MAX_CAROUSEL_VISIBLE: usize = 13; // ~338 terminal columns needed at MIN_SLOT_WIDTH
 const MAX_SLOT_WIDTH: u16 = 280;
 const MAX_SELECTED_SLOT_WIDTH: u16 = 360;
 const SELECTED_WIDTH_BOOST: f32 = 1.52;
@@ -420,7 +421,10 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
     // Clamp wallpaper_idx to valid range (defensive against stale index)
     let clamped_idx = app.selection.wallpaper_idx.min(total.saturating_sub(1));
 
-    let visible = if total >= 5 { 5 } else { total };
+    // How many slots fit: N*MIN + (N-1)*GAP ≤ width → N ≤ (width+GAP)/(MIN+GAP)
+    let min_per_slot = (MIN_SLOT_WIDTH + THUMBNAIL_GAP) as usize; // always > 0
+    let max_by_width = (area.width as usize + THUMBNAIL_GAP as usize) / min_per_slot;
+    let visible = max_by_width.min(total).clamp(1, MAX_CAROUSEL_VISIBLE);
 
     let start = centered_window_start(total, clamped_idx, visible);
     let end = (start + visible).min(total);
@@ -539,7 +543,7 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
         })
         .collect();
     // Edge pseudo-fade: shrink far sides first, but never the selected slot.
-    if visible == 5 {
+    if visible > 1 {
         let center = visible / 2;
         for (i, width) in base_slot_widths.iter_mut().enumerate() {
             if i == selected_slot {
@@ -591,7 +595,7 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
         .collect();
 
     // Pseudo-fade: side slots are a bit smaller so center stays visually dominant.
-    if visible == 5 {
+    if visible > 1 {
         let center = visible / 2;
         for (i, h) in slot_heights.iter_mut().enumerate() {
             let distance = i.abs_diff(center);
@@ -662,7 +666,7 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
         let y_offset = max_slot_content_height.saturating_sub(slot_content_height) / 2;
         let thumb_y = thumb_row_y.saturating_add(y_offset);
         let distance_from_center = i.abs_diff(center_slot);
-        let fade_level = if visible == 5 {
+        let fade_level = if visible > 1 {
             match distance_from_center {
                 0 => 0, // center
                 1 => 1, // near edges
@@ -750,7 +754,7 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
 
         // Try to render image if available
         if let Some(protocol) = app.get_thumbnail(cache_idx) {
-            let image = StatefulImage::new(None);
+            let image = StatefulImage::new(None).resize(Resize::Crop(None));
             f.render_stateful_widget(image, inner, protocol);
         } else if is_loading {
             // Show loading indicator

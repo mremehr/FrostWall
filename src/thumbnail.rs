@@ -7,11 +7,12 @@ use std::hash::{Hash, Hasher};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
-// Higher resolution for crisp thumbnails and better fill in larger carousel slots.
-pub const THUMB_WIDTH: u32 = 2560;
-pub const THUMB_HEIGHT: u32 = 1920;
-pub const MIN_THUMB_WIDTH: u32 = 2560;
-pub const MIN_THUMB_HEIGHT: u32 = 1920;
+// Resolution tuned for carousel slots (~300-500 px wide).
+// Generating 2560 px images for 300 px display was ~9× wasted work.
+pub const THUMB_WIDTH: u32 = 800;
+pub const THUMB_HEIGHT: u32 = 600;
+pub const MIN_THUMB_WIDTH: u32 = 320;
+pub const MIN_THUMB_HEIGHT: u32 = 240;
 
 // JPEG quality (0-100) - 92 is high quality with good compression
 const JPEG_QUALITY: u8 = 92;

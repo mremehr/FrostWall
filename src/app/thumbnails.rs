@@ -69,7 +69,7 @@ impl App {
             .grid_columns
             .max(CAROUSEL_VISIBLE_TARGET)
             .max(1);
-        (cols * THUMBNAIL_MAX_IN_FLIGHT_MULTIPLIER).clamp(6, 12)
+        (cols * THUMBNAIL_MAX_IN_FLIGHT_MULTIPLIER).clamp(10, 32)
     }
 
     pub(super) fn new_thumbnail_picker(config: &Config) -> Picker {

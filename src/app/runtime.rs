@@ -156,9 +156,6 @@ struct WorkerPerf {
     window_start: Instant,
     batches: u64,
     requests: u64,
-    decode_total: Duration,
-    decode_max: Duration,
-    failures: u64,
 }
 
 impl WorkerPerf {
@@ -168,9 +165,6 @@ impl WorkerPerf {
             window_start: Instant::now(),
             batches: 0,
             requests: 0,
-            decode_total: Duration::ZERO,
-            decode_max: Duration::ZERO,
-            failures: 0,
         }
     }
 
@@ -182,43 +176,19 @@ impl WorkerPerf {
         self.requests = self.requests.saturating_add(size as u64);
     }
 
-    fn record_decode(&mut self, elapsed: Duration, ok: bool) {
-        if !self.enabled {
-            return;
-        }
-        self.decode_total += elapsed;
-        self.decode_max = self.decode_max.max(elapsed);
-        if !ok {
-            self.failures = self.failures.saturating_add(1);
-        }
-    }
-
     fn maybe_log(&mut self) {
         if !self.enabled || self.window_start.elapsed() < PERF_LOG_INTERVAL {
             return;
         }
 
-        let decode_avg_ms = if self.requests > 0 {
-            self.decode_total.as_secs_f64() * 1000.0 / self.requests as f64
-        } else {
-            0.0
-        };
-
         eprintln!(
-            "[perf][thumb-worker] batches={} requests={} decode_avg={:.2}ms decode_max={:.2}ms failures={}",
-            self.batches,
-            self.requests,
-            decode_avg_ms,
-            self.decode_max.as_secs_f64() * 1000.0,
-            self.failures
+            "[perf][thumb-worker] batches={} requests={}",
+            self.batches, self.requests,
         );
 
         self.window_start = Instant::now();
         self.batches = 0;
         self.requests = 0;
-        self.decode_total = Duration::ZERO;
-        self.decode_max = Duration::ZERO;
-        self.failures = 0;
     }
 }
 
@@ -310,11 +280,8 @@ fn thumbnail_worker(
         perf.record_batch(requests.len());
 
         for request in requests {
-            let decode_started = Instant::now();
-            // Load thumbnail (uses fast_image_resize with disk caching).
             match disk_cache.load(&request.source_path) {
                 Ok(image) => {
-                    perf.record_decode(decode_started.elapsed(), true);
                     let response = ThumbnailResponse {
                         cache_idx: request.cache_idx,
                         image,
@@ -325,7 +292,6 @@ fn thumbnail_worker(
                     }
                 }
                 Err(e) => {
-                    perf.record_decode(decode_started.elapsed(), false);
                     eprintln!(
                         "Thumbnail failed for {}: {}",
                         request.source_path.display(),
