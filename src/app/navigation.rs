@@ -147,7 +147,7 @@ impl App {
                 });
 
             self.selection.screen_idx = screen_idx;
-            self.update_filtered_wallpapers();
+            self.update_filtered_wallpapers_core();
 
             if let Some(saved_path) = saved_path.as_deref() {
                 if let Some(pos) = find_position_by_path(
@@ -213,7 +213,7 @@ impl App {
             };
 
             self.selection.screen_idx = screen_idx;
-            self.update_filtered_wallpapers();
+            self.update_filtered_wallpapers_core();
 
             let Some(&cache_idx) = self.selection.filtered_wallpapers.get(saved_pos) else {
                 continue;

@@ -18,6 +18,7 @@ mod config;
 mod filters;
 mod navigation;
 mod pairing_ui;
+mod perf;
 mod runtime;
 mod thumbnails;
 
@@ -168,7 +169,11 @@ impl App {
         // Load pairing history and rebuild affinity scores with corrected formula
         let mut pairing_history = PairingHistory::load(config.pairing.max_history_records)
             .unwrap_or_else(|_| PairingHistory::new(config.pairing.max_history_records));
-        pairing_history.rebuild_affinity();
+        // Only rebuild if affinity scores are missing (first run / empty cache).
+        // On a normal start, the scores are already persisted to disk and valid.
+        if pairing_history.affinity_count() == 0 && pairing_history.record_count() > 0 {
+            pairing_history.rebuild_affinity();
+        }
         let filters = FilterState {
             aspect_sort_enabled: config.display.aspect_sort,
             ..FilterState::default()
@@ -206,9 +211,9 @@ impl App {
     pub async fn init_screens(&mut self) -> Result<()> {
         self.screens = screen::detect_screens().await?;
         self.selection.screen_idx = 0;
-        self.update_filtered_wallpapers();
+        // restore_last_selection handles all per-screen filtering and the final
+        // full update (including thumbnail reset + scheduling pairing suggestions).
         self.restore_last_selection();
-        self.force_pairing_suggestions_update();
         Ok(())
     }
 }

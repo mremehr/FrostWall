@@ -13,8 +13,9 @@ fn aspect_sort_rank(aspect: AspectCategory) -> u8 {
 }
 
 impl App {
-    /// Recompute the filtered wallpaper list based on screen, tag, and color filters.
-    pub fn update_filtered_wallpapers(&mut self) {
+    /// Recompute filtered list + sort. Does NOT reset thumbnail cache or schedule
+    /// pairing suggestions. Use when updating multiple screens sequentially.
+    pub(super) fn update_filtered_wallpapers_core(&mut self) {
         let match_mode = self.config.display.match_mode;
         let tag_filter = self.filters.active_tag.as_deref();
         let color_filter = self.filters.active_color.as_deref();
@@ -63,7 +64,12 @@ impl App {
         } else if self.selection.wallpaper_idx >= self.selection.filtered_wallpapers.len() {
             self.selection.wallpaper_idx = self.selection.filtered_wallpapers.len() - 1;
         }
+    }
 
+    /// Recompute the filtered wallpaper list based on screen, tag, and color filters.
+    /// Full update: filter, sort, reset thumbnail cache, schedule suggestions.
+    pub fn update_filtered_wallpapers(&mut self) {
+        self.update_filtered_wallpapers_core();
         // Clear thumbnail state after filter changes so IDs don't drift/wrap.
         self.reset_thumbnail_cache();
         self.schedule_pairing_suggestions_update();

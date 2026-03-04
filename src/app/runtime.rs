@@ -1,3 +1,4 @@
+use super::perf::{perf_enabled, RuntimePerf, WorkerPerf};
 use super::{App, AppEvent, ThumbnailRequest, ThumbnailResponse};
 use crate::thumbnail::{effective_thumbnail_bounds, ThumbnailCache};
 use crate::ui;
@@ -17,169 +18,13 @@ use std::time::{Duration, Instant};
 
 const THUMBNAIL_REQUEST_QUEUE_CAPACITY: usize = 512;
 const APP_EVENT_QUEUE_CAPACITY: usize = 1024;
-const PERF_LOG_INTERVAL: Duration = Duration::from_secs(3);
 const THUMBNAIL_REDRAW_INTERVAL: Duration = Duration::from_millis(16);
 
-fn perf_enabled() -> bool {
-    std::env::var("FROSTWALL_PERF")
-        .map(|v| {
-            let v = v.trim().to_ascii_lowercase();
-            matches!(v.as_str(), "1" | "true" | "yes" | "on")
-        })
-        .unwrap_or(false)
-}
-
-#[derive(Debug)]
-struct RuntimePerf {
-    enabled: bool,
-    window_start: Instant,
-    draw_count: u64,
-    draw_total: Duration,
-    draw_max: Duration,
-    event_batches: u64,
-    event_total: u64,
-    event_process_total: Duration,
-    event_process_max: Duration,
-    key_events: u64,
-    thumbnail_events: u64,
-    resize_events: u64,
-    tick_events: u64,
-}
-
-impl RuntimePerf {
-    fn new(enabled: bool) -> Self {
-        Self {
-            enabled,
-            window_start: Instant::now(),
-            draw_count: 0,
-            draw_total: Duration::ZERO,
-            draw_max: Duration::ZERO,
-            event_batches: 0,
-            event_total: 0,
-            event_process_total: Duration::ZERO,
-            event_process_max: Duration::ZERO,
-            key_events: 0,
-            thumbnail_events: 0,
-            resize_events: 0,
-            tick_events: 0,
-        }
-    }
-
-    fn record_draw(&mut self, elapsed: Duration) {
-        if !self.enabled {
-            return;
-        }
-        self.draw_count = self.draw_count.saturating_add(1);
-        self.draw_total += elapsed;
-        self.draw_max = self.draw_max.max(elapsed);
-    }
-
-    fn record_event_batch(&mut self, events: usize, process_elapsed: Duration) {
-        if !self.enabled {
-            return;
-        }
-        self.event_batches = self.event_batches.saturating_add(1);
-        self.event_total = self.event_total.saturating_add(events as u64);
-        self.event_process_total += process_elapsed;
-        self.event_process_max = self.event_process_max.max(process_elapsed);
-    }
-
-    fn record_event(&mut self, event: &AppEvent) {
-        if !self.enabled {
-            return;
-        }
-        match event {
-            AppEvent::Key(_) => self.key_events = self.key_events.saturating_add(1),
-            AppEvent::ThumbnailReady(_) => {
-                self.thumbnail_events = self.thumbnail_events.saturating_add(1)
-            }
-            AppEvent::Resize => self.resize_events = self.resize_events.saturating_add(1),
-            AppEvent::Tick => self.tick_events = self.tick_events.saturating_add(1),
-        }
-    }
-
-    fn maybe_log(&mut self) {
-        if !self.enabled || self.window_start.elapsed() < PERF_LOG_INTERVAL {
-            return;
-        }
-
-        let draw_avg_ms = if self.draw_count > 0 {
-            self.draw_total.as_secs_f64() * 1000.0 / self.draw_count as f64
-        } else {
-            0.0
-        };
-        let events_per_batch = if self.event_batches > 0 {
-            self.event_total as f64 / self.event_batches as f64
-        } else {
-            0.0
-        };
-        let process_avg_ms = if self.event_batches > 0 {
-            self.event_process_total.as_secs_f64() * 1000.0 / self.event_batches as f64
-        } else {
-            0.0
-        };
-
-        eprintln!(
-            "[perf][runtime] draws={} draw_avg={:.2}ms draw_max={:.2}ms batches={} events={} ev/batch={:.2} process_avg={:.2}ms process_max={:.2}ms key={} thumb={} resize={} tick={}",
-            self.draw_count,
-            draw_avg_ms,
-            self.draw_max.as_secs_f64() * 1000.0,
-            self.event_batches,
-            self.event_total,
-            events_per_batch,
-            process_avg_ms,
-            self.event_process_max.as_secs_f64() * 1000.0,
-            self.key_events,
-            self.thumbnail_events,
-            self.resize_events,
-            self.tick_events
-        );
-
-        *self = Self::new(self.enabled);
-    }
-}
-
-#[derive(Debug)]
-struct WorkerPerf {
-    enabled: bool,
-    window_start: Instant,
-    batches: u64,
-    requests: u64,
-}
-
-impl WorkerPerf {
-    fn new(enabled: bool) -> Self {
-        Self {
-            enabled,
-            window_start: Instant::now(),
-            batches: 0,
-            requests: 0,
-        }
-    }
-
-    fn record_batch(&mut self, size: usize) {
-        if !self.enabled {
-            return;
-        }
-        self.batches = self.batches.saturating_add(1);
-        self.requests = self.requests.saturating_add(size as u64);
-    }
-
-    fn maybe_log(&mut self) {
-        if !self.enabled || self.window_start.elapsed() < PERF_LOG_INTERVAL {
-            return;
-        }
-
-        eprintln!(
-            "[perf][thumb-worker] batches={} requests={}",
-            self.batches, self.requests,
-        );
-
-        *self = Self::new(self.enabled);
-    }
-}
-
 pub async fn run_tui(wallpaper_dir: PathBuf) -> Result<()> {
+    // Print loading indicator before blocking on cache load.
+    // This is printed to the normal terminal (before EnterAlternateScreen)
+    // and disappears automatically when TUI takes over.
+    eprintln!("Loading wallpaper library…");
     let mut app = App::new(wallpaper_dir)?;
 
     // Show terminal optimization hint if first run in Kitty.
