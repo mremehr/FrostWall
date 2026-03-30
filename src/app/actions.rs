@@ -1,9 +1,9 @@
 use super::App;
-use crate::swww;
+use crate::wallpaper_backend;
 use anyhow::Result;
 
 impl App {
-    /// Apply the selected wallpaper to the current screen via swww.
+    /// Apply the selected wallpaper to the current screen via the configured backend.
     pub fn apply_wallpaper(&mut self) -> Result<()> {
         let (screen_name, wp_path, pywal_error) = {
             let (Some(screen), Some(wp)) = (self.selected_screen(), self.selected_wallpaper())
@@ -11,7 +11,8 @@ impl App {
                 return Ok(());
             };
 
-            swww::set_wallpaper_with_resize(
+            wallpaper_backend::set_wallpaper_with_resize(
+                &self.config.backend,
                 &screen.name,
                 &wp.path,
                 &self.config.transition(),
@@ -43,7 +44,8 @@ impl App {
     pub fn do_undo(&mut self) -> Result<()> {
         if let Some(previous) = self.pairing.history.do_undo() {
             for (screen_name, wp_path) in &previous {
-                swww::set_wallpaper_with_resize(
+                wallpaper_backend::set_wallpaper_with_resize(
+                    &self.config.backend,
                     screen_name,
                     wp_path,
                     &self.config.transition(),

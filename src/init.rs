@@ -1,7 +1,7 @@
 use crate::app::Config;
 use crate::screen;
-use crate::swww::{ResizeMode, TransitionType};
 use crate::wallpaper::MatchMode;
+use crate::wallpaper_backend::{ResizeMode, TransitionType};
 use anyhow::Result;
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Select};
 use std::path::PathBuf;

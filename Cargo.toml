@@ -6,7 +6,7 @@ authors = ["MrMattias", "Claude (Anthropic)"]
 description = "Intelligent wallpaper manager with screen-aware matching for Wayland"
 license = "GPL-2.0"
 repository = "https://github.com/mrmattias/frostwall"
-keywords = ["wallpaper", "wayland", "tui", "swww", "ratatui"]
+keywords = ["wallpaper", "wayland", "tui", "awww", "ratatui"]
 categories = ["command-line-utilities"]
 readme = "README.md"
 

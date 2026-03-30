@@ -281,13 +281,13 @@ Control how wallpapers fit the screen:
 - **High-resolution thumbnail caching** - SIMD-accelerated disk cache (default `2560x1920`, quality `92`)
 - **Event flow optimization** - Thumbnail requests/events are deduped, generation-filtered, and priority-ordered
 - **Burst-aware redraw throttling** - Thumbnail-heavy bursts are capped to ~60 FPS to reduce CPU spikes
-- **Transition effects** - Fade, wipe, grow, center, outer via swww
+- **Transition effects** - Fade, wipe, grow, center, outer via awww
 - **TOML configuration** - Customize paths, keybindings, transitions
 
 ## Requirements
 
 - **Wayland compositor**: niri, Sway, Hyprland, or any wlr-based compositor
-- **swww**: Wallpaper daemon (`swww` and `swww-daemon`)
+- **Wallpaper backend**: `awww` today, selected via a backend layer for future expansion
 - **Screen detection**: niri (preferred) or wlr-randr
 - **Terminal with graphics**: Kitty, WezTerm, or Sixel-capable terminal for image previews
 
@@ -459,7 +459,9 @@ src/
   screen.rs            # Screen detection (niri/wlr-randr)
   wallpaper.rs         # Wallpaper types + module exports
   pairing.rs           # Pairing types + module exports
-  swww.rs              # swww daemon interface
+  wallpaper_backend.rs # Backend abstraction + common backend types
+  wallpaper_backend/
+    awww.rs            # awww backend implementation
   thumbnail.rs         # SIMD thumbnail generation & disk cache
   pywal.rs             # pywal color export
   profile.rs           # Profile management
@@ -505,7 +507,7 @@ src/
 3. **Filter**: Match wallpapers to selected screen's aspect category
 4. **Pair**: Calculate pairing suggestions based on history + color similarity
 5. **Preview**: Split-view shows selected wallpaper + thumbnail suggestions
-6. **Apply**: Call `swww img` with transition parameters for all screens
+6. **Apply**: Call the configured wallpaper backend with transition parameters for all screens
 
 ### Performance Profiling
 
@@ -555,7 +557,7 @@ binds {
 
 ```bash
 #!/bin/bash
-swww-daemon &
+awww-daemon &
 sleep 0.5
 frostwall random
 ```

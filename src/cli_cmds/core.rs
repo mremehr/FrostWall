@@ -1,83 +1,86 @@
 use anyhow::Result;
 use std::path::Path;
 
-use crate::{app, screen, swww, wallpaper};
+use crate::{app, screen, wallpaper, wallpaper_backend};
 
-pub async fn cmd_random(wallpaper_dir: &Path) -> Result<()> {
+#[derive(Clone, Copy)]
+enum ScreenSelectionMode {
+    Random,
+    Next,
+    Prev,
+}
+
+impl ScreenSelectionMode {
+    fn select<'a>(
+        self,
+        cache: &'a mut wallpaper::WallpaperCache,
+        screen: &screen::Screen,
+    ) -> Option<&'a wallpaper::Wallpaper> {
+        match self {
+            Self::Random => cache.random_for_screen(screen),
+            Self::Next => cache.next_for_screen(screen),
+            Self::Prev => cache.prev_for_screen(screen),
+        }
+    }
+
+    fn persists_selection(self) -> bool {
+        !matches!(self, Self::Random)
+    }
+}
+
+fn load_screen_cache(wallpaper_dir: &Path) -> Result<wallpaper::WallpaperCache> {
     let recursive = app::Config::load()?.wallpaper.recursive;
-    let screens = screen::detect_screens().await?;
-    let mut cache = wallpaper::WallpaperCache::load_or_scan(
+    wallpaper::WallpaperCache::load_or_scan(
         wallpaper_dir,
         recursive,
         wallpaper::CacheLoadMode::MetadataOnly,
-    )?;
+    )
+}
+
+fn print_empty_wallpaper_hint(wallpaper_dir: &Path) {
+    eprintln!("No wallpapers found in: {}", wallpaper_dir.display());
+    eprintln!("Run 'frostwall init' to configure your wallpaper directory.");
+}
+
+async fn cmd_apply_selection(wallpaper_dir: &Path, mode: ScreenSelectionMode) -> Result<()> {
+    let config = app::Config::load()?;
+    let screens = screen::detect_screens().await?;
+    let mut cache = load_screen_cache(wallpaper_dir)?;
 
     if cache.wallpapers.is_empty() {
-        eprintln!("No wallpapers found in: {}", wallpaper_dir.display());
-        eprintln!("Run 'frostwall init' to configure your wallpaper directory.");
+        print_empty_wallpaper_hint(wallpaper_dir);
         return Ok(());
     }
 
     for screen in &screens {
-        if let Some(wp) = cache.random_for_screen(screen) {
-            swww::set_wallpaper(&screen.name, &wp.path, &swww::Transition::default())?;
+        if let Some(wp) = mode.select(&mut cache, screen) {
+            wallpaper_backend::set_wallpaper(
+                &config.backend,
+                &screen.name,
+                &wp.path,
+                &wallpaper_backend::Transition::default(),
+            )?;
             println!("{}: {}", screen.name, wp.path.display());
         }
     }
 
+    if mode.persists_selection() {
+        cache.save()?;
+    }
+
     Ok(())
+}
+
+pub async fn cmd_random(wallpaper_dir: &Path) -> Result<()> {
+    cmd_apply_selection(wallpaper_dir, ScreenSelectionMode::Random).await
 }
 
 pub async fn cmd_next(wallpaper_dir: &Path) -> Result<()> {
-    let recursive = app::Config::load()?.wallpaper.recursive;
-    let screens = screen::detect_screens().await?;
-    let mut cache = wallpaper::WallpaperCache::load_or_scan(
-        wallpaper_dir,
-        recursive,
-        wallpaper::CacheLoadMode::MetadataOnly,
-    )?;
-
-    if cache.wallpapers.is_empty() {
-        eprintln!("No wallpapers found in: {}", wallpaper_dir.display());
-        eprintln!("Run 'frostwall init' to configure your wallpaper directory.");
-        return Ok(());
-    }
-
-    for screen in &screens {
-        if let Some(wp) = cache.next_for_screen(screen) {
-            swww::set_wallpaper(&screen.name, &wp.path, &swww::Transition::default())?;
-            println!("{}: {}", screen.name, wp.path.display());
-        }
-    }
-
-    cache.save()?;
-    Ok(())
+    cmd_apply_selection(wallpaper_dir, ScreenSelectionMode::Next).await
 }
 
 pub async fn cmd_prev(wallpaper_dir: &Path) -> Result<()> {
-    let recursive = app::Config::load()?.wallpaper.recursive;
-    let screens = screen::detect_screens().await?;
-    let mut cache = wallpaper::WallpaperCache::load_or_scan(
-        wallpaper_dir,
-        recursive,
-        wallpaper::CacheLoadMode::MetadataOnly,
-    )?;
-
-    if cache.wallpapers.is_empty() {
-        eprintln!("No wallpapers found in: {}", wallpaper_dir.display());
-        eprintln!("Run 'frostwall init' to configure your wallpaper directory.");
-        return Ok(());
-    }
-
-    for screen in &screens {
-        if let Some(wp) = cache.prev_for_screen(screen) {
-            swww::set_wallpaper(&screen.name, &wp.path, &swww::Transition::default())?;
-            println!("{}: {}", screen.name, wp.path.display());
-        }
-    }
-
-    cache.save()?;
-    Ok(())
+    cmd_apply_selection(wallpaper_dir, ScreenSelectionMode::Prev).await
 }
 
 pub async fn cmd_screens() -> Result<()> {

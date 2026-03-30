@@ -10,12 +10,12 @@ mod pairing;
 mod profile;
 mod pywal;
 mod screen;
-mod swww;
 mod thumbnail;
 mod timeprofile;
 mod ui;
 mod utils;
 mod wallpaper;
+mod wallpaper_backend;
 mod watch;
 mod webimport;
 

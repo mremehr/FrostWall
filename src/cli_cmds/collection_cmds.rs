@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use crate::CollectionAction;
-use crate::{app, collections, pairing, swww};
+use crate::{app, collections, pairing, wallpaper_backend};
 
 pub async fn cmd_collection(action: CollectionAction) -> Result<()> {
     match action {
@@ -49,7 +49,8 @@ pub async fn cmd_collection(action: CollectionAction) -> Result<()> {
                 let transition = config.transition();
 
                 for (screen_name, wp_path) in &collection.wallpapers {
-                    if let Err(e) = swww::set_wallpaper_with_resize(
+                    if let Err(e) = wallpaper_backend::set_wallpaper_with_resize(
+                        &config.backend,
                         screen_name,
                         wp_path,
                         &transition,

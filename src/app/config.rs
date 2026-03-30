@@ -1,5 +1,5 @@
-use crate::swww::{FillColor, ResizeMode, Transition, TransitionType};
 use crate::wallpaper::MatchMode;
+use crate::wallpaper_backend::{BackendConfig, FillColor, ResizeMode, Transition, TransitionType};
 use anyhow::Result;
 use crossterm::event::KeyCode;
 use serde::{Deserialize, Serialize};
@@ -9,6 +9,8 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
+    #[serde(default)]
+    pub backend: BackendConfig,
     #[serde(default)]
     pub wallpaper: WallpaperConfig,
     #[serde(default)]
@@ -527,10 +529,17 @@ mod tests {
     }
 
     #[test]
+    fn backend_defaults_to_auto() {
+        let config = Config::default();
+        assert_eq!(config.backend.kind.display_name(), "auto");
+    }
+
+    #[test]
     fn config_serialization_includes_aspect_sort() {
         let config = Config::default();
         let toml = toml::to_string_pretty(&config).expect("serialize default config");
         assert!(toml.contains("aspect_sort = false"));
+        assert!(toml.contains("kind = \"auto\""));
     }
 
     #[test]
@@ -538,7 +547,10 @@ mod tests {
         let config = Config::default();
         // Verify defaults that are security/correctness sensitive
         assert!(!config.clip.enabled, "CLIP should be opt-in by default");
-        assert!(!config.pairing.auto_apply, "auto-apply should be conservative");
+        assert!(
+            !config.pairing.auto_apply,
+            "auto-apply should be conservative"
+        );
         assert!(config.pairing.max_history_records > 0);
         assert!(config.pairing.auto_apply_threshold > 0.0);
         assert!(config.pairing.auto_apply_threshold <= 1.0);
@@ -565,10 +577,7 @@ mod tests {
     #[test]
     fn test_keybinding_parse_key_basic() {
         use crossterm::event::KeyCode;
-        assert_eq!(
-            KeybindingsConfig::parse_key("Enter"),
-            Some(KeyCode::Enter)
-        );
+        assert_eq!(KeybindingsConfig::parse_key("Enter"), Some(KeyCode::Enter));
         assert_eq!(KeybindingsConfig::parse_key("q"), Some(KeyCode::Char('q')));
         assert_eq!(KeybindingsConfig::parse_key("f1"), Some(KeyCode::F(1)));
         assert_eq!(KeybindingsConfig::parse_key("Esc"), Some(KeyCode::Esc));

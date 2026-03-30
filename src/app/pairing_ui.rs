@@ -1,8 +1,8 @@
 use super::App;
 use crate::pairing::{extract_style_tags, MatchContext, PairingStyleMode};
-use crate::swww;
 use crate::utils::ColorHarmony;
 use crate::wallpaper::Wallpaper;
+use crate::wallpaper_backend;
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -308,7 +308,8 @@ impl App {
                 .preview_idx
                 .min(matches.len().saturating_sub(1));
             if let Some((wp_path, _, _)) = matches.get(idx) {
-                if let Err(e) = swww::set_wallpaper_with_resize(
+                if let Err(e) = wallpaper_backend::set_wallpaper_with_resize(
+                    &self.config.backend,
                     screen_name,
                     wp_path,
                     &self.config.transition(),

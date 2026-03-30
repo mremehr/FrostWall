@@ -1,8 +1,8 @@
 use crate::app::Config;
 use crate::screen;
-use crate::swww;
 use crate::timeprofile::TimePeriod;
 use crate::wallpaper::WallpaperCache;
+use crate::wallpaper_backend;
 use anyhow::{Context, Result};
 use notify::{Config as NotifyConfig, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::Path;
@@ -213,7 +213,8 @@ fn set_wallpapers(
     if !shuffle {
         for screen in screens {
             if let Some(wp) = cache.next_for_screen(screen) {
-                swww::set_wallpaper_with_resize(
+                wallpaper_backend::set_wallpaper_with_resize(
+                    &config.backend,
                     &screen.name,
                     &wp.path,
                     &config.transition(),
@@ -276,7 +277,8 @@ fn set_wallpapers(
         };
 
         if let Some(wp_path) = wp_path {
-            swww::set_wallpaper_with_resize(
+            wallpaper_backend::set_wallpaper_with_resize(
+                &config.backend,
                 &screen.name,
                 &wp_path,
                 &config.transition(),

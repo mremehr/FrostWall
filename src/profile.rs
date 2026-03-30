@@ -1,5 +1,5 @@
-use crate::swww::ResizeMode;
 use crate::wallpaper::MatchMode;
+use crate::wallpaper_backend::ResizeMode;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

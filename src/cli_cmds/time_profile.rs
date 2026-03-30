@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::path::Path;
 
 use crate::TimeProfileAction;
-use crate::{app, screen, swww, timeprofile, wallpaper};
+use crate::{app, screen, timeprofile, wallpaper, wallpaper_backend};
 
 pub async fn cmd_time_profile(action: TimeProfileAction, wallpaper_dir: &Path) -> Result<()> {
     use timeprofile::TimePeriod;
@@ -110,7 +110,8 @@ pub async fn cmd_time_profile(action: TimeProfileAction, wallpaper_dir: &Path) -
 
             for (i, screen) in screens.iter().enumerate() {
                 if let Some(wp) = sorted.get(i) {
-                    swww::set_wallpaper_with_resize(
+                    wallpaper_backend::set_wallpaper_with_resize(
+                        &config.backend,
                         &screen.name,
                         &wp.path,
                         &transition,

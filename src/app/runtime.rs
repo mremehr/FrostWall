@@ -140,37 +140,58 @@ fn send_thumbnail_ready(tx: &SyncSender<AppEvent>, response: ThumbnailResponse) 
     tx.send(AppEvent::ThumbnailReady(response)).is_ok()
 }
 
-fn collect_latest_requests(
-    first_request: ThumbnailRequest,
-    rx: &Receiver<ThumbnailRequest>,
-) -> Vec<ThumbnailRequest> {
-    let mut latest_generation = first_request.generation;
-    let mut ordered_cache_idxs = vec![first_request.cache_idx];
-    let mut latest_by_idx: HashMap<usize, ThumbnailRequest> = HashMap::new();
-    latest_by_idx.insert(first_request.cache_idx, first_request);
+fn latest_generation_by_cache_idx<T>(
+    items: impl IntoIterator<Item = T>,
+    cache_idx_of: impl Fn(&T) -> usize,
+    generation_of: impl Fn(&T) -> u64,
+) -> Vec<T> {
+    let mut latest_generation: Option<u64> = None;
+    let mut ordered_cache_idxs = Vec::new();
+    let mut latest_by_idx: HashMap<usize, T> = HashMap::new();
 
-    while let Ok(request) = rx.try_recv() {
-        if request.generation > latest_generation {
-            latest_generation = request.generation;
-            ordered_cache_idxs.clear();
-            latest_by_idx.clear();
-        }
-
-        if request.generation == latest_generation {
-            if !latest_by_idx.contains_key(&request.cache_idx) {
-                ordered_cache_idxs.push(request.cache_idx);
+    for item in items {
+        let generation = generation_of(&item);
+        match latest_generation {
+            None => latest_generation = Some(generation),
+            Some(current) if generation > current => {
+                latest_generation = Some(generation);
+                ordered_cache_idxs.clear();
+                latest_by_idx.clear();
             }
-            latest_by_idx.insert(request.cache_idx, request);
+            Some(current) if generation < current => continue,
+            Some(_) => {}
         }
+
+        let cache_idx = cache_idx_of(&item);
+        if !latest_by_idx.contains_key(&cache_idx) {
+            ordered_cache_idxs.push(cache_idx);
+        }
+        latest_by_idx.insert(cache_idx, item);
     }
 
     let mut ordered = Vec::with_capacity(latest_by_idx.len());
     for cache_idx in ordered_cache_idxs {
-        if let Some(request) = latest_by_idx.remove(&cache_idx) {
-            ordered.push(request);
+        if let Some(item) = latest_by_idx.remove(&cache_idx) {
+            ordered.push(item);
         }
     }
     ordered
+}
+
+fn collect_latest_requests(
+    first_request: ThumbnailRequest,
+    rx: &Receiver<ThumbnailRequest>,
+) -> Vec<ThumbnailRequest> {
+    let mut requests = vec![first_request];
+    while let Ok(request) = rx.try_recv() {
+        requests.push(request);
+    }
+
+    latest_generation_by_cache_idx(
+        requests,
+        |request| request.cache_idx,
+        |request| request.generation,
+    )
 }
 
 /// Background thread that polls for input events.
@@ -201,43 +222,31 @@ fn input_worker(tx: SyncSender<AppEvent>) {
 
 fn coalesce_thumbnail_events(events: Vec<AppEvent>) -> Vec<AppEvent> {
     // Fast path: skip allocation if no thumbnail events present (~95% of frames).
-    if !events.iter().any(|e| matches!(e, AppEvent::ThumbnailReady(_))) {
+    if !events
+        .iter()
+        .any(|e| matches!(e, AppEvent::ThumbnailReady(_)))
+    {
         return events;
     }
     let mut coalesced = Vec::with_capacity(events.len());
-    let mut latest_generation: Option<u64> = None;
-    let mut ordered_cache_idxs = Vec::new();
-    let mut latest_by_idx: HashMap<usize, ThumbnailResponse> = HashMap::new();
+    let mut thumbnail_events = Vec::new();
 
     for event in events {
         match event {
-            AppEvent::ThumbnailReady(response) => {
-                match latest_generation {
-                    None => latest_generation = Some(response.generation),
-                    Some(gen) if response.generation > gen => {
-                        latest_generation = Some(response.generation);
-                        ordered_cache_idxs.clear();
-                        latest_by_idx.clear();
-                    }
-                    Some(gen) if response.generation < gen => continue,
-                    Some(_) => {}
-                }
-                if !latest_by_idx.contains_key(&response.cache_idx) {
-                    ordered_cache_idxs.push(response.cache_idx);
-                }
-                latest_by_idx.insert(response.cache_idx, response);
-            }
+            AppEvent::ThumbnailReady(response) => thumbnail_events.push(response),
             other => coalesced.push(other),
         }
     }
 
-    if !latest_by_idx.is_empty() {
-        for cache_idx in ordered_cache_idxs {
-            if let Some(response) = latest_by_idx.remove(&cache_idx) {
-                coalesced.push(AppEvent::ThumbnailReady(response));
-            }
-        }
-    }
+    coalesced.extend(
+        latest_generation_by_cache_idx(
+            thumbnail_events,
+            |response| response.cache_idx,
+            |response| response.generation,
+        )
+        .into_iter()
+        .map(AppEvent::ThumbnailReady),
+    );
 
     coalesced
 }

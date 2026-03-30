@@ -11,6 +11,10 @@ extensions = ["jpg", "jpeg", "png", "webp", "bmp", "gif"]
 # Scan subdirectories recursively
 recursive = false
 
+[backend]
+# Wallpaper backend: "auto" or "awww"
+kind = "auto"
+
 [display]
 # Aspect ratio matching: "Strict", "Flexible", "All"
 match_mode = "Flexible"

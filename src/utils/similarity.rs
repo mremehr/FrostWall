@@ -113,8 +113,8 @@ fn palette_similarity_normalized(
 /// Find the best color match between two palettes, weighted by color dominance.
 ///
 /// Returns a weighted similarity score (0.0-1.0).
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn palette_similarity_weighted(
+#[cfg(test)]
+pub(crate) fn palette_similarity_weighted(
     colors1: &[String],
     weights1: &[f32],
     colors2: &[String],
@@ -137,8 +137,8 @@ pub fn palette_similarity_weighted(
 
 /// Calculate overall image similarity based on color profile.
 /// Returns a score from 0.0 (very different) to 1.0 (very similar).
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn image_similarity(colors1: &[String], colors2: &[String]) -> f32 {
+#[cfg(test)]
+pub(crate) fn image_similarity(colors1: &[String], colors2: &[String]) -> f32 {
     image_similarity_weighted(colors1, &[], colors2, &[])
 }
 
@@ -188,8 +188,8 @@ pub fn image_similarity_with_profiles(
 ///
 /// Keeps only top-k matches while iterating, so callers can avoid collecting
 /// large temporary vectors of candidates.
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn find_similar_wallpapers_iter<'a, I>(
+#[cfg(test)]
+pub(crate) fn find_similar_wallpapers_iter<'a, I>(
     target_colors: &[String],
     all_wallpapers: I,
     limit: usize,
