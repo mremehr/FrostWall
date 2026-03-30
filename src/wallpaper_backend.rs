@@ -6,7 +6,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::sync::OnceLock;
 
-trait WallpaperBackend {
+trait WallpaperBackend: Sync {
     fn required_commands(&self) -> &'static [&'static str];
     fn set_wallpaper_with_resize(
         &self,
@@ -178,41 +178,38 @@ pub fn set_wallpaper_with_resize(
 }
 
 fn backend_for(kind: BackendKind) -> Result<&'static dyn WallpaperBackend> {
-    let backend = match resolve_backend_kind(kind)? {
-        BackendKind::Awww => &awww::BACKEND as &dyn WallpaperBackend,
-        BackendKind::Auto => unreachable!("auto must be resolved before dispatch"),
-    };
-    Ok(backend)
-}
-
-fn resolve_backend_kind(kind: BackendKind) -> Result<BackendKind> {
     match kind {
-        BackendKind::Auto => resolve_auto_backend_kind(),
-        BackendKind::Awww => {
-            if awww::BACKEND.is_available() {
-                Ok(BackendKind::Awww)
-            } else {
-                bail!(
-                    "Configured wallpaper backend '{}' is not available.",
-                    BackendKind::Awww.display_name()
-                )
-            }
-        }
+        BackendKind::Auto => auto_backend(),
+        BackendKind::Awww => configured_backend(&awww::BACKEND, BackendKind::Awww),
     }
 }
 
-fn resolve_auto_backend_kind() -> Result<BackendKind> {
-    static AUTO_BACKEND: OnceLock<Result<BackendKind, String>> = OnceLock::new();
+fn configured_backend(
+    backend: &'static dyn WallpaperBackend,
+    kind: BackendKind,
+) -> Result<&'static dyn WallpaperBackend> {
+    if backend.is_available() {
+        Ok(backend)
+    } else {
+        bail!(
+            "Configured wallpaper backend '{}' is not available.",
+            kind.display_name()
+        )
+    }
+}
 
-    match AUTO_BACKEND.get_or_init(detect_auto_backend_kind) {
-        Ok(kind) => Ok(*kind),
+fn auto_backend() -> Result<&'static dyn WallpaperBackend> {
+    static AUTO_BACKEND: OnceLock<Result<&'static dyn WallpaperBackend, String>> = OnceLock::new();
+
+    match AUTO_BACKEND.get_or_init(detect_auto_backend) {
+        Ok(backend) => Ok(*backend),
         Err(message) => bail!("{message}"),
     }
 }
 
-fn detect_auto_backend_kind() -> Result<BackendKind, String> {
+fn detect_auto_backend() -> Result<&'static dyn WallpaperBackend, String> {
     if awww::BACKEND.is_available() {
-        Ok(BackendKind::Awww)
+        Ok(&awww::BACKEND)
     } else {
         Err(
             "No supported wallpaper backend found. Install awww or set [backend].kind explicitly."

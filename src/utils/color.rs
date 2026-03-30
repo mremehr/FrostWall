@@ -61,6 +61,7 @@ const HARMONY_TRIADIC_MIN: f32 = 105.0;
 const HARMONY_TRIADIC_MAX: f32 = 135.0;
 const HARMONY_SPLIT_MIN: f32 = 135.0;
 const HARMONY_SPLIT_MAX: f32 = 165.0;
+const LAB_CHROMA_NORMALIZER_POW7: f32 = 6_103_515_625.0; // 25^7
 
 #[derive(Clone)]
 struct ColorFeatures {
@@ -281,7 +282,7 @@ pub fn delta_e_2000(lab1: &Lab, lab2: &Lab) -> f32 {
 
     // Calculate G factor
     let c_avg_pow7 = c_avg.powi(7);
-    let g = 0.5 * (1.0 - (c_avg_pow7 / (c_avg_pow7 + 6103515625.0_f32)).sqrt()); // 25^7
+    let g = 0.5 * (1.0 - (c_avg_pow7 / (c_avg_pow7 + LAB_CHROMA_NORMALIZER_POW7)).sqrt());
 
     // Calculate a' (adjusted a)
     let a1_prime = a1 * (1.0 + g);
@@ -368,7 +369,8 @@ pub fn delta_e_2000(lab1: &Lab, lab2: &Lab) -> f32 {
 
     // Calculate R_T (rotation term)
     let delta_theta = 30.0 * (-(((h_avg_prime * 180.0 / PI) - 275.0) / 25.0).powi(2)).exp();
-    let r_c = 2.0 * (c_avg_prime.powi(7) / (c_avg_prime.powi(7) + 6103515625.0_f32)).sqrt();
+    let r_c =
+        2.0 * (c_avg_prime.powi(7) / (c_avg_prime.powi(7) + LAB_CHROMA_NORMALIZER_POW7)).sqrt();
     let r_t = -(r_c * (2.0 * delta_theta * PI / 180.0).sin());
 
     // Calculate final delta E 2000

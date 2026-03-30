@@ -7,63 +7,67 @@ fn hex_to_rgb(hex: &str) -> Option<(u8, u8, u8)> {
     if hex.len() != 6 {
         return None;
     }
-    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-    Some((r, g, b))
+    let red = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let green = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let blue = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some((red, green, blue))
 }
 
 fn hex_to_lab(hex: &str) -> Option<Lab> {
     use palette::{IntoColor, Srgb};
-    let (r, g, b) = hex_to_rgb(hex)?;
-    let rgb = Srgb::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+    let (red, green, blue) = hex_to_rgb(hex)?;
+    let rgb = Srgb::new(
+        f32::from(red) / 255.0,
+        f32::from(green) / 255.0,
+        f32::from(blue) / 255.0,
+    );
     Some(rgb.into_color())
 }
 
 fn hex_to_hsl(hex: &str) -> Option<(f32, f32, f32)> {
-    let (r, g, b) = hex_to_rgb(hex)?;
-    let r = r as f32 / 255.0;
-    let g = g as f32 / 255.0;
-    let b = b as f32 / 255.0;
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let l = (max + min) / 2.0;
+    let (red, green, blue) = hex_to_rgb(hex)?;
+    let red = f32::from(red) / 255.0;
+    let green = f32::from(green) / 255.0;
+    let blue = f32::from(blue) / 255.0;
+    let max = red.max(green).max(blue);
+    let min = red.min(green).min(blue);
+    let lightness = f32::midpoint(max, min);
     if (max - min).abs() < f32::EPSILON {
-        return Some((0.0, 0.0, l));
+        return Some((0.0, 0.0, lightness));
     }
-    let d = max - min;
-    let s = if l > 0.5 {
-        d / (2.0 - max - min)
+    let delta = max - min;
+    let saturation = if lightness > 0.5 {
+        delta / (2.0 - max - min)
     } else {
-        d / (max + min)
+        delta / (max + min)
     };
-    let h = if (max - r).abs() < f32::EPSILON {
-        let mut h = (g - b) / d;
-        if g < b {
-            h += 6.0;
+    let hue = if (max - red).abs() < f32::EPSILON {
+        let mut hue = (green - blue) / delta;
+        if green < blue {
+            hue += 6.0;
         }
-        h
-    } else if (max - g).abs() < f32::EPSILON {
-        (b - r) / d + 2.0
+        hue
+    } else if (max - green).abs() < f32::EPSILON {
+        (blue - red) / delta + 2.0
     } else {
-        (r - g) / d + 4.0
+        (red - green) / delta + 4.0
     };
-    Some((h * 60.0, s, l))
+    Some((hue * 60.0, saturation, lightness))
 }
 
 fn delta_e_2000(lab1: &Lab, lab2: &Lab) -> f32 {
     use std::f32::consts::PI;
-    let l_bar = (lab1.l + lab2.l) / 2.0;
+    let l_bar = f32::midpoint(lab1.l, lab2.l);
     let c1 = (lab1.a * lab1.a + lab1.b * lab1.b).sqrt();
     let c2 = (lab2.a * lab2.a + lab2.b * lab2.b).sqrt();
-    let c_bar = (c1 + c2) / 2.0;
+    let c_bar = f32::midpoint(c1, c2);
     let c_bar_7 = c_bar.powi(7);
     let g = 0.5 * (1.0 - (c_bar_7 / (c_bar_7 + 25.0_f32.powi(7))).sqrt());
     let a1p = lab1.a * (1.0 + g);
     let a2p = lab2.a * (1.0 + g);
     let c1p = (a1p * a1p + lab1.b * lab1.b).sqrt();
     let c2p = (a2p * a2p + lab2.b * lab2.b).sqrt();
-    let c_bar_p = (c1p + c2p) / 2.0;
+    let c_bar_p = f32::midpoint(c1p, c2p);
     let h1p = lab1.b.atan2(a1p).to_degrees().rem_euclid(360.0);
     let h2p = lab2.b.atan2(a2p).to_degrees().rem_euclid(360.0);
     let dh = if (h1p - h2p).abs() <= 180.0 {
@@ -77,7 +81,7 @@ fn delta_e_2000(lab1: &Lab, lab2: &Lab) -> f32 {
     let dc = c2p - c1p;
     let dh_rad = 2.0 * (c1p * c2p).sqrt() * (dh * PI / 360.0).sin();
     let h_bar_p = if (h1p - h2p).abs() <= 180.0 {
-        (h1p + h2p) / 2.0
+        f32::midpoint(h1p, h2p)
     } else if h1p + h2p < 360.0 {
         (h1p + h2p + 360.0) / 2.0
     } else {
@@ -142,19 +146,19 @@ fn detect_harmony(
 
 fn bench_hex_to_rgb(c: &mut Criterion) {
     c.bench_function("hex_to_rgb", |b| {
-        b.iter(|| hex_to_rgb(black_box("#FF5733")))
+        b.iter(|| hex_to_rgb(black_box("#FF5733")));
     });
 }
 
 fn bench_hex_to_lab(c: &mut Criterion) {
     c.bench_function("hex_to_lab", |b| {
-        b.iter(|| hex_to_lab(black_box("#FF5733")))
+        b.iter(|| hex_to_lab(black_box("#FF5733")));
     });
 }
 
 fn bench_hex_to_hsl(c: &mut Criterion) {
     c.bench_function("hex_to_hsl", |b| {
-        b.iter(|| hex_to_hsl(black_box("#FF5733")))
+        b.iter(|| hex_to_hsl(black_box("#FF5733")));
     });
 }
 
@@ -162,13 +166,13 @@ fn bench_delta_e_2000(c: &mut Criterion) {
     let lab1 = hex_to_lab("#FF5733").unwrap();
     let lab2 = hex_to_lab("#3357FF").unwrap();
     c.bench_function("delta_e_2000", |b| {
-        b.iter(|| delta_e_2000(black_box(&lab1), black_box(&lab2)))
+        b.iter(|| delta_e_2000(black_box(&lab1), black_box(&lab2)));
     });
 }
 
 fn bench_color_similarity(c: &mut Criterion) {
     c.bench_function("color_similarity", |b| {
-        b.iter(|| color_similarity(black_box("#FF5733"), black_box("#3357FF")))
+        b.iter(|| color_similarity(black_box("#FF5733"), black_box("#3357FF")));
     });
 }
 
@@ -185,7 +189,7 @@ fn bench_detect_harmony(c: &mut Criterion) {
                 black_box(&colors2),
                 black_box(&weights2),
             )
-        })
+        });
     });
 }
 

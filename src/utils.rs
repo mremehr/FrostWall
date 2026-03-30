@@ -445,7 +445,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "benchmark helper"]
     fn bench_find_similar_wallpapers_ab_10k() {
         fn pseudo_hex(seed: usize, offset: usize) -> String {
             let r = ((seed.wrapping_mul(37) + offset.wrapping_mul(53)) & 0xff) as u8;

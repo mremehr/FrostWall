@@ -161,8 +161,8 @@ impl Wallpaper {
             (Ultrawide, Landscape) => true,
 
             // Square is versatile - works with landscape orientations
-            (Square, Landscape) | (Square, Ultrawide) => true,
-            (Landscape, Square) | (Ultrawide, Square) => true,
+            (Square, Landscape | Ultrawide) => true,
+            (Landscape | Ultrawide, Square) => true,
 
             // Portrait stays with portrait (or square)
             (Portrait, Square) | (Square, Portrait) => true,

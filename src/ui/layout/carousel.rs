@@ -112,9 +112,9 @@ fn thumbnail_cell_limits(app: &App, ratio: f32) -> (u16, u16) {
     let (cell_w, cell_h) = terminal_cell_size(app);
     let cell_w = cell_w.max(1) as f32;
     let cell_h = cell_h.max(1) as f32;
-    let max_w_cells = (fit_w / cell_w).floor().max(1.0) as u16;
-    let max_h_cells = (fit_h / cell_h).floor().max(1.0) as u16;
-    (max_w_cells, max_h_cells)
+    let max_width_cells = (fit_w / cell_w).floor().max(1.0) as u16;
+    let max_height_cells = (fit_h / cell_h).floor().max(1.0) as u16;
+    (max_width_cells, max_height_cells)
 }
 
 fn content_height_for_slot(slot_width: u16, ratio: f32, max_height: u16, cell_aspect: f32) -> u16 {

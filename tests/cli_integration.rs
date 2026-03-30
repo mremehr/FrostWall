@@ -72,7 +72,7 @@ fn test_random_with_images() {
     // Create minimal valid PNG files (10x10 red squares)
     for i in 0..3 {
         let img = image::RgbImage::from_fn(10, 10, |_, _| image::Rgb([255, 0, 0]));
-        img.save(tmp.join(format!("test_{}.png", i))).unwrap();
+        img.save(tmp.join(format!("test_{i}.png"))).unwrap();
     }
 
     let output = frostwall()
@@ -83,8 +83,7 @@ fn test_random_with_images() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stderr.contains("panicked"),
-        "should not panic with valid images: {}",
-        stderr
+        "should not panic with valid images: {stderr}"
     );
 
     let _ = std::fs::remove_dir_all(&tmp);

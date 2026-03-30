@@ -316,10 +316,10 @@ fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent) {
             KeyCode::Esc | KeyCode::Char('p') => {
                 app.pairing.show_preview = false;
             }
-            KeyCode::Char('l') | KeyCode::Right | KeyCode::Char('n') => {
+            KeyCode::Char('l' | 'n') | KeyCode::Right => {
                 app.pairing_preview_next();
             }
-            KeyCode::Char('h') | KeyCode::Left | KeyCode::Char('N') => {
+            KeyCode::Char('h' | 'N') | KeyCode::Left => {
                 app.pairing_preview_prev();
             }
             KeyCode::Enter => {
@@ -389,7 +389,7 @@ fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent) {
             KeyCode::Char(':') => app.enter_command_mode(),
             KeyCode::Char('?') => app.toggle_help(),
             KeyCode::Char('s') => app.toggle_sort_mode(),
-            KeyCode::Char('a') | KeyCode::Char('A') => app.toggle_aspect_sort(),
+            KeyCode::Char('a' | 'A') => app.toggle_aspect_sort(),
             KeyCode::Char('c') => app.toggle_colors(),
             KeyCode::Char('C') => app.toggle_color_picker(),
             KeyCode::Char('p') => app.toggle_pairing_preview(),

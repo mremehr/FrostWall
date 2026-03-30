@@ -223,7 +223,7 @@ fn parse_wlr_randr_output(output: &str) -> Result<Vec<Screen>> {
 /// Apply transform rotation - swap dimensions for 90/270 degree rotations
 fn apply_transform(width: u32, height: u32, transform: Option<&str>) -> (u32, u32) {
     match transform {
-        Some("90") | Some("270") | Some("flipped-90") | Some("flipped-270") => (height, width),
+        Some("90" | "270" | "flipped-90" | "flipped-270") => (height, width),
         _ => (width, height),
     }
 }
