@@ -233,8 +233,7 @@ impl PairingHistory {
     /// Normalized to roughly 0.0–1.0 so it doesn't dominate other features.
     fn calculate_base_score(pair_count: u32, avg_duration_secs: f32) -> f32 {
         // Diminishing returns on count, normalized to ~1.0 at AFFINITY_PAIR_COUNT_SATURATION pairings
-        let count_score =
-            (pair_count as f32).ln_1p() / AFFINITY_PAIR_COUNT_SATURATION.ln_1p();
+        let count_score = (pair_count as f32).ln_1p() / AFFINITY_PAIR_COUNT_SATURATION.ln_1p();
 
         // Longer durations boost slightly (capped at 1.0)
         let duration_score = (avg_duration_secs / AFFINITY_DURATION_TARGET_SECS).min(1.0);
@@ -616,8 +615,9 @@ impl PairingHistory {
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
-        let mut raw: HashMap<&Path, f32> = HashMap::new();
-        for record in self.data.records.iter().rev().take(LOOKBACK_RECORDS) {
+        let lookback = self.data.records.len().min(LOOKBACK_RECORDS);
+        let mut raw: HashMap<&Path, f32> = HashMap::with_capacity(lookback);
+        for record in self.data.records.iter().rev().take(lookback) {
             let Some(target_path) = record.wallpapers.get(target_screen) else {
                 continue;
             };
@@ -638,7 +638,11 @@ impl PairingHistory {
                 as f32
                 / SCREEN_CTX_DURATION_BASELINE_SECS)
                 .clamp(SCREEN_CTX_DURATION_MIN, SCREEN_CTX_DURATION_MAX);
-            let manual_factor = if record.manual { MANUAL_PAIRING_BOOST } else { 1.0 };
+            let manual_factor = if record.manual {
+                MANUAL_PAIRING_BOOST
+            } else {
+                1.0
+            };
             let contribution = recency * duration_factor * manual_factor;
             *raw.entry(target_path.as_path()).or_insert(0.0) += contribution;
         }
@@ -1052,6 +1056,10 @@ mod tests {
         });
         // No records reference these paths → should be pruned
         h.prune_old_records();
-        assert_eq!(h.affinity_count(), 0, "stale affinity entries should be removed");
+        assert_eq!(
+            h.affinity_count(),
+            0,
+            "stale affinity entries should be removed"
+        );
     }
 }

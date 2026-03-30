@@ -149,6 +149,13 @@ fn centered_window_start(total: usize, selected: usize, count: usize) -> usize {
     }
 }
 
+#[derive(Clone, Copy)]
+struct SlotSpec {
+    ratio: f32,
+    max_width: u16,
+    max_height: u16,
+}
+
 fn fit_slot_widths(
     base_widths: &[u16],
     slot_max_widths: &[u16],
@@ -439,10 +446,11 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
     // so all formats occupy roughly the same visual area when selected.
     // target_area = THUMBNAIL_HEIGHT * THUMBNAIL_WIDTH (baseline area in cells²)
     let target_area_cells = (THUMBNAIL_HEIGHT as f32) * (THUMBNAIL_WIDTH as f32);
-    let slot_ratios: Vec<f32> = (start..end)
+    let slot_specs: Vec<SlotSpec> = (start..end)
         .map(|idx| {
             let cache_idx = app.selection.filtered_wallpapers[idx];
-            app.cache
+            let ratio = app
+                .cache
                 .wallpapers
                 .get(cache_idx)
                 .map(|wp| {
@@ -452,50 +460,63 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
                         nominal_aspect_ratio(wp.aspect_category)
                     }
                 })
-                .unwrap_or(LANDSCAPE_RATIO)
+                .unwrap_or(LANDSCAPE_RATIO);
+            let (max_width, max_height) = thumbnail_cell_limits(app, ratio);
+            SlotSpec {
+                ratio,
+                max_width,
+                max_height,
+            }
         })
-        .collect();
-    let slot_limits: Vec<(u16, u16)> = slot_ratios
-        .iter()
-        .map(|ratio| thumbnail_cell_limits(app, *ratio))
         .collect();
     let selected_slot = clamped_idx
         .saturating_sub(start)
         .min(visible.saturating_sub(1));
-    let selected_ratio = slot_ratios
+    let selected_ratio = slot_specs
         .get(selected_slot)
-        .copied()
+        .map(|spec| spec.ratio)
         .unwrap_or(LANDSCAPE_RATIO);
-    let _portrait_or_square_focus = selected_ratio <= 1.1;
     // Equal-area height for the selected slot: solve h such that (h * ratio * cell_aspect) * h = target_area
     // → h = sqrt(target_area / (ratio * cell_aspect))
     let selected_eq_h = ((target_area_cells / (selected_ratio.max(0.1) * cell_aspect))
         .sqrt()
-        .clamp(MIN_THUMB_CONTENT_HEIGHT as f32, max_content_height as f32 * 2.0))
-        as u16;
+        .clamp(
+            MIN_THUMB_CONTENT_HEIGHT as f32,
+            max_content_height as f32 * 2.0,
+        )) as u16;
     // Derive equal-area width and use as selected_min_width floor
-    let selected_eq_w =
-        (selected_eq_h as f32 * selected_ratio * cell_aspect).round() as u16;
+    let selected_eq_w = (selected_eq_h as f32 * selected_ratio * cell_aspect).round() as u16;
     let selected_min_width = if selected_ratio >= 2.0 {
         THUMBNAIL_WIDTH + (THUMBNAIL_WIDTH / 2) + 6
     } else {
         selected_eq_w.max(THUMBNAIL_WIDTH + 8)
     };
-    let slot_max_widths: Vec<u16> = slot_ratios
+    let slot_height_cap = |slot_idx: usize, selected: bool| {
+        let max_height = slot_specs
+            .get(slot_idx)
+            .map(|spec| spec.max_height)
+            .unwrap_or(max_content_height)
+            .max(1);
+        if selected {
+            selected_eq_h.min(max_height)
+        } else {
+            max_content_height.min(max_height)
+        }
+    };
+    let slot_max_widths: Vec<u16> = slot_specs
         .iter()
         .enumerate()
-        .map(|(offset, ratio)| {
+        .map(|(offset, spec)| {
             let idx = start + offset;
             let is_selected = idx == clamped_idx;
-            let ratio_cap = if is_selected && *ratio >= 2.0 {
+            let ratio_cap = if is_selected && spec.ratio >= 2.0 {
                 MAX_SELECTED_SLOT_WIDTH
             } else if is_selected {
                 MAX_SLOT_WIDTH + (THUMBNAIL_WIDTH / 2)
             } else {
                 MAX_SLOT_WIDTH
             };
-            let (limit_w, _) = slot_limits.get(offset).copied().unwrap_or((ratio_cap, 1));
-            limit_w.min(ratio_cap).max(1)
+            spec.max_width.min(ratio_cap).max(1)
         })
         .collect();
     // Keep width and height coupled so portrait/square cards do not become overly wide when
@@ -506,18 +527,14 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
         .iter()
         .enumerate()
         .map(|(i, max_w)| {
-            let ratio = slot_ratios.get(i).copied().unwrap_or(LANDSCAPE_RATIO);
-            let (_, slot_max_h) = slot_limits
-                .get(i)
-                .copied()
-                .unwrap_or((MAX_SLOT_WIDTH, max_content_height));
-            let cap_h = if i == selected_slot {
-                // Equal-area cap: portrait gets more height, ultrawide less.
-                selected_eq_h.min(slot_max_h.max(1))
-            } else {
-                max_content_height.min(slot_max_h.max(1))
-            };
-            let max_by_height = ((cap_h as f32) * ratio * cell_aspect).round() as u16;
+            let spec = slot_specs.get(i).copied().unwrap_or(SlotSpec {
+                ratio: LANDSCAPE_RATIO,
+                max_width: MAX_SLOT_WIDTH,
+                max_height: max_content_height,
+            });
+            // Equal-area cap: portrait gets more height, ultrawide less.
+            let cap_h = slot_height_cap(i, i == selected_slot);
+            let max_by_height = ((cap_h as f32) * spec.ratio * cell_aspect).round() as u16;
             (*max_w).min(max_by_height.max(1)).max(1)
         })
         .collect();
@@ -528,16 +545,16 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
             .unwrap_or(selected_min_width),
     );
 
-    let mut base_slot_widths: Vec<u16> = slot_ratios
+    let mut base_slot_widths: Vec<u16> = slot_specs
         .iter()
         .enumerate()
-        .map(|(offset, ratio)| {
+        .map(|(offset, spec)| {
             let idx = start + offset;
             let cap = coupled_slot_max_widths
                 .get(offset)
                 .copied()
                 .unwrap_or(MAX_SLOT_WIDTH);
-            slot_width_for_ratio(*ratio, idx == clamped_idx)
+            slot_width_for_ratio(spec.ratio, idx == clamped_idx)
                 .min(cap)
                 .max(1)
         })
@@ -577,27 +594,18 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
     );
     let mut slot_heights: Vec<u16> = slot_widths
         .iter()
-        .zip(slot_ratios.iter())
+        .zip(slot_specs.iter())
         .enumerate()
-        .map(|(i, (w, ratio))| {
-            let (_, slot_max_h) = slot_limits
-                .get(i)
-                .copied()
-                .unwrap_or((MAX_SLOT_WIDTH, max_content_height));
-            // Selected slot uses equal-area height cap so portrait can be taller.
-            let slot_cap = if i == selected_slot {
-                selected_eq_h.min(slot_max_h.max(1))
-            } else {
-                max_content_height.min(slot_max_h.max(1))
-            };
-            content_height_for_slot(*w, *ratio, slot_cap, cell_aspect)
+        .map(|(i, (w, spec))| {
+            let slot_cap = slot_height_cap(i, i == selected_slot);
+            content_height_for_slot(*w, spec.ratio, slot_cap, cell_aspect)
         })
         .collect();
 
     // Pseudo-fade: side slots are a bit smaller so center stays visually dominant.
     if visible > 1 {
         let center = visible / 2;
-        for (i, (h, ratio)) in slot_heights.iter_mut().zip(slot_ratios.iter()).enumerate() {
+        for (i, (h, spec)) in slot_heights.iter_mut().zip(slot_specs.iter()).enumerate() {
             let distance = i.abs_diff(center);
             if i == selected_slot {
                 continue;
@@ -605,14 +613,16 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
             let scale = match distance {
                 0 => 1.0,
                 1 => 0.90, // adjacent: subtly shorter
-                _ => if *ratio >= 2.0 { 0.80 } else { 0.75 }, // outer edges
+                _ => {
+                    if spec.ratio >= 2.0 {
+                        0.80
+                    } else {
+                        0.75
+                    }
+                } // outer edges
             };
             let scaled = ((*h as f32) * scale).round() as u16;
-            let (_, slot_max_h) = slot_limits
-                .get(i)
-                .copied()
-                .unwrap_or((MAX_SLOT_WIDTH, max_content_height));
-            let slot_cap = max_content_height.min(slot_max_h.max(1));
+            let slot_cap = slot_height_cap(i, false);
             *h = scaled
                 .clamp(MIN_THUMB_CONTENT_HEIGHT.min(slot_cap), slot_cap)
                 .max(1);
@@ -738,7 +748,11 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
         f.render_widget(Clear, thumb_area);
 
         let block = Block::default()
-            .borders(if is_selected { Borders::ALL } else { Borders::NONE })
+            .borders(if is_selected {
+                Borders::ALL
+            } else {
+                Borders::NONE
+            })
             .border_style(border_style)
             .style(Style::default().bg(if is_selected {
                 theme.bg_medium

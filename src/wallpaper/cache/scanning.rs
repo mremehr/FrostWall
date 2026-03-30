@@ -14,8 +14,9 @@ fn collect_image_paths(source_dir: &Path, recursive: bool) -> Result<Vec<PathBuf
             .follow_links(true)
             .into_iter()
             .filter_map(|e| e.ok())
-            .map(|e| e.path().to_path_buf())
-            .filter(|p| p.is_file() && crate::utils::is_image_file(p))
+            .filter(|entry| entry.file_type().is_file())
+            .map(walkdir::DirEntry::into_path)
+            .filter(|path| crate::utils::is_image_file(path))
             .collect())
     } else {
         fs::read_dir(source_dir)
@@ -29,108 +30,84 @@ fn collect_image_paths(source_dir: &Path, recursive: bool) -> Result<Vec<PathBuf
     }
 }
 
+fn scan_wallpaper_metadata(entries: &[PathBuf], progress_label: &str) -> Vec<Wallpaper> {
+    let total = entries.len();
+    let processed = AtomicUsize::new(0);
+
+    eprint!("{progress_label}...");
+    let mut wallpapers: Vec<Wallpaper> = entries
+        .par_iter()
+        .filter_map(|path| {
+            let count = processed.fetch_add(1, Ordering::Relaxed) + 1;
+            if count.is_multiple_of(50) || count == total {
+                eprint!("\r{progress_label}... {count}/{total}");
+            }
+            match Wallpaper::from_path_fast(path) {
+                Ok(wp) => Some(wp),
+                Err(e) => {
+                    eprintln!("\nWarning: Failed to read {}: {}", path.display(), e);
+                    None
+                }
+            }
+        })
+        .collect();
+    eprintln!(" done!");
+
+    wallpapers.sort_by(|a, b| a.path.cmp(&b.path));
+    wallpapers
+}
+
+fn extract_colors_in_batches(wallpapers: &mut [Wallpaper]) {
+    const BATCH_SIZE: usize = 10;
+    let color_total = wallpapers.len();
+
+    for (batch_idx, chunk) in wallpapers.chunks_mut(BATCH_SIZE).enumerate() {
+        let batch_start = batch_idx * BATCH_SIZE;
+        chunk.par_iter_mut().for_each(|wp| {
+            if let Err(e) = wp.extract_colors() {
+                eprintln!(
+                    "\nWarning: Failed to extract colors for {}: {}",
+                    wp.path.display(),
+                    e
+                );
+            }
+        });
+        let progress = (batch_start + chunk.len()).min(color_total);
+        eprint!(
+            "\rPhase 2/2: Extracting colors... {}/{}",
+            progress, color_total
+        );
+    }
+    eprintln!(" done!");
+}
+
+fn build_cache(source_dir: &Path, recursive: bool, wallpapers: Vec<Wallpaper>) -> WallpaperCache {
+    let mut cache = WallpaperCache {
+        version: CACHE_VERSION,
+        wallpapers,
+        source_dir: source_dir.to_path_buf(),
+        screen_indices: HashMap::new(),
+        recursive,
+        screen_match_indices: HashMap::new(),
+        similarity_profiles: Vec::new(),
+    };
+    cache.rebuild_similarity_profiles();
+    cache
+}
+
 impl WallpaperCache {
     pub fn scan_recursive(source_dir: &Path, recursive: bool) -> Result<Self> {
         let entries = collect_image_paths(source_dir, recursive)?;
-        let total = entries.len();
-        let processed = AtomicUsize::new(0);
-
-        // Phase 1: Fast parallel scan (header only - dimensions)
-        eprint!("Phase 1/2: Reading dimensions...");
-        let mut wallpapers: Vec<Wallpaper> = entries
-            .par_iter()
-            .filter_map(|path| {
-                let count = processed.fetch_add(1, Ordering::Relaxed) + 1;
-                if count.is_multiple_of(50) || count == total {
-                    eprint!("\rPhase 1/2: Reading dimensions... {}/{}", count, total);
-                }
-                match Wallpaper::from_path_fast(path) {
-                    Ok(wp) => Some(wp),
-                    Err(e) => {
-                        eprintln!("\nWarning: Failed to read {}: {}", path.display(), e);
-                        None
-                    }
-                }
-            })
-            .collect();
-        eprintln!(" done!");
-
-        // Phase 2: Batched parallel color extraction
-        let color_total = wallpapers.len();
-        const BATCH_SIZE: usize = 10;
-
-        for (batch_idx, chunk) in wallpapers.chunks_mut(BATCH_SIZE).enumerate() {
-            let batch_start = batch_idx * BATCH_SIZE;
-            chunk.par_iter_mut().for_each(|wp| {
-                if let Err(e) = wp.extract_colors() {
-                    eprintln!(
-                        "\nWarning: Failed to extract colors for {}: {}",
-                        wp.path.display(),
-                        e
-                    );
-                }
-            });
-            let progress = (batch_start + chunk.len()).min(color_total);
-            eprint!(
-                "\rPhase 2/2: Extracting colors... {}/{}",
-                progress, color_total
-            );
-        }
-        eprintln!(" done!");
-
-        wallpapers.sort_by(|a, b| a.path.cmp(&b.path));
-
-        let mut cache = Self {
-            version: CACHE_VERSION,
-            wallpapers,
-            source_dir: source_dir.to_path_buf(),
-            screen_indices: HashMap::new(),
-            recursive,
-            screen_match_indices: HashMap::new(),
-            similarity_profiles: Vec::new(),
-        };
-        cache.rebuild_similarity_profiles();
-        Ok(cache)
+        let mut wallpapers = scan_wallpaper_metadata(&entries, "Phase 1/2: Reading dimensions");
+        extract_colors_in_batches(&mut wallpapers);
+        Ok(build_cache(source_dir, recursive, wallpapers))
     }
 
     /// Fast scan for AI operations (dimensions + metadata only, no color extraction).
     pub fn scan_metadata_only_recursive(source_dir: &Path, recursive: bool) -> Result<Self> {
         let entries = collect_image_paths(source_dir, recursive)?;
-        let total = entries.len();
-        let processed = AtomicUsize::new(0);
-
-        eprint!("Phase 1/1: Reading metadata...");
-        let mut wallpapers: Vec<Wallpaper> = entries
-            .par_iter()
-            .filter_map(|path| {
-                let count = processed.fetch_add(1, Ordering::Relaxed) + 1;
-                if count.is_multiple_of(50) || count == total {
-                    eprint!("\rPhase 1/1: Reading metadata... {}/{}", count, total);
-                }
-                match Wallpaper::from_path_fast(path) {
-                    Ok(wp) => Some(wp),
-                    Err(e) => {
-                        eprintln!("\nWarning: Failed to read {}: {}", path.display(), e);
-                        None
-                    }
-                }
-            })
-            .collect();
-        eprintln!(" done!");
-
-        wallpapers.sort_by(|a, b| a.path.cmp(&b.path));
-
-        let mut cache = Self {
-            version: CACHE_VERSION,
-            wallpapers,
-            source_dir: source_dir.to_path_buf(),
-            screen_indices: HashMap::new(),
-            recursive,
-            screen_match_indices: HashMap::new(),
-            similarity_profiles: Vec::new(),
-        };
-        cache.rebuild_similarity_profiles();
-        Ok(cache)
+        let wallpapers = scan_wallpaper_metadata(&entries, "Phase 1/1: Reading metadata");
+        Ok(build_cache(source_dir, recursive, wallpapers))
     }
 
     /// Incremental rescan: discover new files and remove deleted ones while
@@ -251,9 +228,8 @@ mod tests {
             0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // width=1, height=1
             0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, // bit depth=8, colortype=2
             0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, // IDAT chunk
-            0x54, 0x08, 0xd7, 0x63, 0xf8, 0xff, 0xff, 0x3f,
-            0x00, 0x05, 0xfe, 0x02, 0xfe, 0xdc, 0xcc, 0x59,
-            0xe7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, // IEND chunk
+            0x54, 0x08, 0xd7, 0x63, 0xf8, 0xff, 0xff, 0x3f, 0x00, 0x05, 0xfe, 0x02, 0xfe, 0xdc,
+            0xcc, 0x59, 0xe7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, // IEND chunk
             0x44, 0xae, 0x42, 0x60, 0x82,
         ];
         fs::write(dir.join(name), png_bytes).expect("write test image");
@@ -265,12 +241,17 @@ mod tests {
         make_test_image(dir.path(), "a.png");
         make_test_image(dir.path(), "b.png");
 
-        let cache = WallpaperCache::scan_recursive(dir.path(), false)
-            .expect("scan should succeed");
+        let cache = WallpaperCache::scan_recursive(dir.path(), false).expect("scan should succeed");
 
         assert_eq!(cache.wallpapers.len(), 2, "should find 2 images");
-        assert!(cache.wallpapers.iter().any(|w| w.path.file_name().unwrap() == "a.png"));
-        assert!(cache.wallpapers.iter().any(|w| w.path.file_name().unwrap() == "b.png"));
+        assert!(cache
+            .wallpapers
+            .iter()
+            .any(|w| w.path.file_name().unwrap() == "a.png"));
+        assert!(cache
+            .wallpapers
+            .iter()
+            .any(|w| w.path.file_name().unwrap() == "b.png"));
     }
 
     #[test]
@@ -278,8 +259,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("create tempdir");
         make_test_image(dir.path(), "tagged.png");
 
-        let mut cache = WallpaperCache::scan_recursive(dir.path(), false)
-            .expect("initial scan");
+        let mut cache = WallpaperCache::scan_recursive(dir.path(), false).expect("initial scan");
 
         // Tag the wallpaper manually.
         let path = cache.wallpapers[0].path.clone();
@@ -294,9 +274,15 @@ mod tests {
         assert_eq!(removed, 0, "no images removed");
 
         // Original wallpaper's tag must survive.
-        let tagged = cache.wallpapers.iter().find(|w| w.path == path)
+        let tagged = cache
+            .wallpapers
+            .iter()
+            .find(|w| w.path == path)
             .expect("original wallpaper still present");
-        assert!(tagged.has_tag("my-tag"), "tag must be preserved after rescan");
+        assert!(
+            tagged.has_tag("my-tag"),
+            "tag must be preserved after rescan"
+        );
     }
 
     #[test]
@@ -305,14 +291,15 @@ mod tests {
         make_test_image(dir.path(), "keep.png");
         make_test_image(dir.path(), "delete.png");
 
-        let mut cache = WallpaperCache::scan_recursive(dir.path(), false)
-            .expect("initial scan");
+        let mut cache = WallpaperCache::scan_recursive(dir.path(), false).expect("initial scan");
         assert_eq!(cache.wallpapers.len(), 2);
 
         // Delete one file.
         fs::remove_file(dir.path().join("delete.png")).expect("remove file");
 
-        let (added, removed) = cache.incremental_rescan(false).expect("rescan after delete");
+        let (added, removed) = cache
+            .incremental_rescan(false)
+            .expect("rescan after delete");
 
         assert_eq!(added, 0);
         assert_eq!(removed, 1, "one image should be removed");
@@ -330,7 +317,10 @@ mod tests {
         let cache = WallpaperCache::load_or_scan(dir.path(), false, CacheLoadMode::Full)
             .expect("load_or_scan should succeed");
 
-        assert!(!cache.wallpapers.is_empty(), "should contain at least one wallpaper");
+        assert!(
+            !cache.wallpapers.is_empty(),
+            "should contain at least one wallpaper"
+        );
         // save() writes to the real project cache dir — just verify it succeeds.
         cache.save().expect("save should not error");
     }
