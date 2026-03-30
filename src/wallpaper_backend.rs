@@ -160,22 +160,6 @@ impl TransitionType {
     }
 }
 
-pub fn set_wallpaper(
-    backend_config: &BackendConfig,
-    output: &str,
-    path: &Path,
-    transition: &Transition,
-) -> Result<()> {
-    set_wallpaper_with_resize(
-        backend_config,
-        output,
-        path,
-        transition,
-        ResizeMode::Crop,
-        &FillColor::black(),
-    )
-}
-
 pub fn set_wallpaper_with_resize(
     backend_config: &BackendConfig,
     output: &str,

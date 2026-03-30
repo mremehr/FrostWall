@@ -28,8 +28,7 @@ impl ScreenSelectionMode {
     }
 }
 
-fn load_screen_cache(wallpaper_dir: &Path) -> Result<wallpaper::WallpaperCache> {
-    let recursive = app::Config::load()?.wallpaper.recursive;
+fn load_screen_cache(wallpaper_dir: &Path, recursive: bool) -> Result<wallpaper::WallpaperCache> {
     wallpaper::WallpaperCache::load_or_scan(
         wallpaper_dir,
         recursive,
@@ -45,7 +44,7 @@ fn print_empty_wallpaper_hint(wallpaper_dir: &Path) {
 async fn cmd_apply_selection(wallpaper_dir: &Path, mode: ScreenSelectionMode) -> Result<()> {
     let config = app::Config::load()?;
     let screens = screen::detect_screens().await?;
-    let mut cache = load_screen_cache(wallpaper_dir)?;
+    let mut cache = load_screen_cache(wallpaper_dir, config.wallpaper.recursive)?;
 
     if cache.wallpapers.is_empty() {
         print_empty_wallpaper_hint(wallpaper_dir);
@@ -54,11 +53,13 @@ async fn cmd_apply_selection(wallpaper_dir: &Path, mode: ScreenSelectionMode) ->
 
     for screen in &screens {
         if let Some(wp) = mode.select(&mut cache, screen) {
-            wallpaper_backend::set_wallpaper(
+            wallpaper_backend::set_wallpaper_with_resize(
                 &config.backend,
                 &screen.name,
                 &wp.path,
-                &wallpaper_backend::Transition::default(),
+                &config.transition(),
+                config.display.resize_mode,
+                &config.display.fill_color,
             )?;
             println!("{}: {}", screen.name, wp.path.display());
         }
