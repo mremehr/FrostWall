@@ -1,11 +1,11 @@
 use crate::app::Config;
 use crate::screen;
 use crate::timeprofile::TimePeriod;
+use crate::utils::{display_path_name, is_image_file};
 use crate::wallpaper::WallpaperCache;
 use crate::wallpaper_backend;
 use anyhow::{Context, Result};
 use notify::{Config as NotifyConfig, RecommendedWatcher, RecursiveMode, Watcher};
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
@@ -287,16 +287,8 @@ fn set_wallpapers(
             )
             .with_context(|| format!("Failed to set wallpaper on {}", screen.name))?;
 
-            println!(
-                "  {} → {}",
-                screen.name,
-                wp_path.file_name().unwrap_or_default().to_string_lossy()
-            );
+            println!("  {} → {}", screen.name, display_path_name(&wp_path));
         }
     }
     Ok(())
-}
-
-fn is_image_file(path: &Path) -> bool {
-    crate::utils::is_image_file(path)
 }

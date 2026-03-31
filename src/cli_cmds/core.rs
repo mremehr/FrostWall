@@ -1,7 +1,8 @@
 use anyhow::Result;
 use std::path::Path;
 
-use crate::{app, screen, wallpaper, wallpaper_backend};
+use super::support::{load_cache_with_config, load_config};
+use crate::{screen, wallpaper, wallpaper_backend};
 
 #[derive(Clone, Copy)]
 enum ScreenSelectionMode {
@@ -28,23 +29,19 @@ impl ScreenSelectionMode {
     }
 }
 
-fn load_screen_cache(wallpaper_dir: &Path, recursive: bool) -> Result<wallpaper::WallpaperCache> {
-    wallpaper::WallpaperCache::load_or_scan(
-        wallpaper_dir,
-        recursive,
-        wallpaper::CacheLoadMode::MetadataOnly,
-    )
-}
-
 fn print_empty_wallpaper_hint(wallpaper_dir: &Path) {
     eprintln!("No wallpapers found in: {}", wallpaper_dir.display());
     eprintln!("Run 'frostwall init' to configure your wallpaper directory.");
 }
 
 async fn cmd_apply_selection(wallpaper_dir: &Path, mode: ScreenSelectionMode) -> Result<()> {
-    let config = app::Config::load()?;
+    let config = load_config()?;
     let screens = screen::detect_screens().await?;
-    let mut cache = load_screen_cache(wallpaper_dir, config.wallpaper.recursive)?;
+    let mut cache = load_cache_with_config(
+        wallpaper_dir,
+        &config,
+        wallpaper::CacheLoadMode::MetadataOnly,
+    )?;
 
     if cache.wallpapers.is_empty() {
         print_empty_wallpaper_hint(wallpaper_dir);
@@ -98,7 +95,7 @@ pub async fn cmd_screens() -> Result<()> {
 }
 
 pub async fn cmd_scan(wallpaper_dir: &Path) -> Result<()> {
-    let recursive = app::Config::load()?.wallpaper.recursive;
+    let recursive = load_config()?.wallpaper.recursive;
     println!("Scanning {}...", wallpaper_dir.display());
     let cache = wallpaper::WallpaperCache::scan_recursive(wallpaper_dir, recursive)?;
     cache.save()?;

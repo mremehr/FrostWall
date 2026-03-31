@@ -6,6 +6,8 @@
 use chrono::{Local, Timelike};
 use serde::{Deserialize, Serialize};
 
+use crate::wallpaper::Wallpaper;
+
 /// Time period of day
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -198,10 +200,10 @@ impl TimeProfiles {
 }
 
 /// Get wallpapers sorted by time profile score
-pub fn sort_by_time_profile<'a>(
-    wallpapers: &'a [crate::wallpaper::Wallpaper],
+pub fn scored_wallpapers<'a>(
+    wallpapers: &'a [Wallpaper],
     profiles: &TimeProfiles,
-) -> Vec<&'a crate::wallpaper::Wallpaper> {
+) -> Vec<(&'a Wallpaper, f32)> {
     let mut scored: Vec<_> = wallpapers
         .iter()
         .map(|wp| {
@@ -212,8 +214,18 @@ pub fn sort_by_time_profile<'a>(
 
     // Sort by score descending
     scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    scored
+}
 
-    scored.into_iter().map(|(wp, _)| wp).collect()
+/// Get wallpapers sorted by time profile score
+pub fn sort_by_time_profile<'a>(
+    wallpapers: &'a [Wallpaper],
+    profiles: &TimeProfiles,
+) -> Vec<&'a Wallpaper> {
+    scored_wallpapers(wallpapers, profiles)
+        .into_iter()
+        .map(|(wp, _)| wp)
+        .collect()
 }
 
 #[cfg(test)]

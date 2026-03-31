@@ -5,14 +5,12 @@ mod tags;
 
 use super::{CacheStats, WallpaperCache};
 use crate::screen::AspectCategory;
+use crate::utils::project_cache_dir;
 use std::path::PathBuf;
 
 impl WallpaperCache {
     pub(super) fn cache_path() -> PathBuf {
-        directories::ProjectDirs::from("com", "mrmattias", "frostwall")
-            .map(|dirs| dirs.cache_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join("wallpaper_cache.json")
+        project_cache_dir(PathBuf::from("/tmp")).join("wallpaper_cache.json")
     }
 
     pub(super) fn rebuild_similarity_profiles(&mut self) {

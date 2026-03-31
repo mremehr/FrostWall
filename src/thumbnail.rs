@@ -1,3 +1,4 @@
+use crate::utils::project_cache_dir;
 use anyhow::{Context, Result};
 use fast_image_resize::{images::Image, ResizeOptions, Resizer};
 use image::{DynamicImage, RgbaImage};
@@ -18,6 +19,9 @@ pub const MIN_THUMB_HEIGHT: u32 = 240;
 const JPEG_QUALITY: u8 = 92;
 const UNSHARP_SIGMA: f32 = 0.5;
 const UNSHARP_THRESHOLD: i32 = 1;
+#[cfg(any(test, feature = "clip"))]
+const THUMBNAIL_CACHE_PREFIX: &str = "thumbs_v";
+const THUMBNAIL_CACHE_VERSION: u32 = 3;
 
 pub struct ThumbnailCache {
     cache_dir: PathBuf,
@@ -34,10 +38,7 @@ impl ThumbnailCache {
     pub fn new_with_settings(width: u32, height: u32, quality: u8) -> Self {
         let (width, height) = effective_thumbnail_bounds(width, height);
         let quality = quality.clamp(1, 100);
-        let cache_dir = directories::ProjectDirs::from("com", "mrmattias", "frostwall")
-            .map(|dirs| dirs.cache_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("/tmp/frostwall"))
-            .join(format!("thumbs_v3_{}x{}_q{}", width, height, quality));
+        let cache_dir = Self::cache_root().join(Self::cache_dir_name(width, height, quality));
 
         // Ensure cache directory exists
         let _ = fs::create_dir_all(&cache_dir);
@@ -50,8 +51,18 @@ impl ThumbnailCache {
         }
     }
 
-    /// Generate a hash-based filename for the thumbnail
-    fn thumb_filename(&self, source_path: &Path) -> PathBuf {
+    fn cache_root() -> PathBuf {
+        project_cache_dir(PathBuf::from("/tmp/frostwall"))
+    }
+
+    fn cache_dir_name(width: u32, height: u32, quality: u8) -> String {
+        format!(
+            "thumbs_v{}_{}x{}_q{}",
+            THUMBNAIL_CACHE_VERSION, width, height, quality
+        )
+    }
+
+    fn thumb_file_name(source_path: &Path) -> String {
         let mut hasher = DefaultHasher::new();
         source_path.to_string_lossy().hash(&mut hasher);
 
@@ -62,8 +73,45 @@ impl ThumbnailCache {
             }
         }
 
-        let hash = hasher.finish();
-        self.cache_dir.join(format!("{:016x}.jpg", hash))
+        format!("{:016x}.jpg", hasher.finish())
+    }
+
+    /// Generate a hash-based filename for the thumbnail
+    fn thumb_filename(&self, source_path: &Path) -> PathBuf {
+        self.cache_dir.join(Self::thumb_file_name(source_path))
+    }
+
+    #[cfg(any(test, feature = "clip"))]
+    fn cache_variant_dirs(root: &Path) -> Vec<PathBuf> {
+        let mut variant_dirs: Vec<PathBuf> = match fs::read_dir(root) {
+            Ok(entries) => entries
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.is_dir()
+                        && path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| name.starts_with(THUMBNAIL_CACHE_PREFIX))
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+
+        variant_dirs.sort_by(|a, b| {
+            let a_name = a
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            let b_name = b
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            let a_version = parse_thumbnail_cache_version(a_name);
+            let b_version = parse_thumbnail_cache_version(b_name);
+            b_version.cmp(&a_version).then_with(|| b_name.cmp(a_name))
+        });
+        variant_dirs
     }
 
     /// Check if a cached thumbnail exists and is valid
@@ -162,6 +210,54 @@ impl ThumbnailCache {
     }
 }
 
+#[cfg(any(test, feature = "clip"))]
+fn parse_thumbnail_cache_version(dir_name: &str) -> u32 {
+    dir_name
+        .strip_prefix(THUMBNAIL_CACHE_PREFIX)
+        .map(|suffix| {
+            suffix
+                .chars()
+                .take_while(|ch| ch.is_ascii_digit())
+                .collect::<String>()
+        })
+        .and_then(|digits| digits.parse().ok())
+        .unwrap_or(0)
+}
+
+#[cfg(any(test, feature = "clip"))]
+pub struct ThumbnailLookup {
+    candidate_dirs: Vec<PathBuf>,
+}
+
+#[cfg(any(test, feature = "clip"))]
+impl ThumbnailLookup {
+    #[cfg(feature = "clip")]
+    pub fn new(width: u32, height: u32, quality: u8) -> Self {
+        Self::with_root(ThumbnailCache::cache_root(), width, height, quality)
+    }
+
+    fn with_root(root: PathBuf, width: u32, height: u32, quality: u8) -> Self {
+        let (width, height) = effective_thumbnail_bounds(width, height);
+        let quality = quality.clamp(1, 100);
+        let preferred = root.join(ThumbnailCache::cache_dir_name(width, height, quality));
+        let mut candidate_dirs = vec![preferred.clone()];
+        candidate_dirs.extend(
+            ThumbnailCache::cache_variant_dirs(&root)
+                .into_iter()
+                .filter(|path| path != &preferred),
+        );
+        Self { candidate_dirs }
+    }
+
+    pub fn find(&self, source_path: &Path) -> Option<PathBuf> {
+        let file_name = ThumbnailCache::thumb_file_name(source_path);
+        self.candidate_dirs
+            .iter()
+            .map(|dir| dir.join(&file_name))
+            .find(|path| path.exists())
+    }
+}
+
 /// Clamp thumbnail bounds to a quality floor that still allows large carousel tiles to scale well.
 pub fn effective_thumbnail_bounds(width: u32, height: u32) -> (u32, u32) {
     (
@@ -256,6 +352,35 @@ mod tests {
         assert_eq!(loaded.width(), expected_w);
         assert_eq!(loaded.height(), expected_h);
         assert!(image::open(&thumb_path).is_ok());
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn find_any_cached_prefers_newer_variant_dirs() -> Result<()> {
+        let root = unique_tmp_dir();
+        let src_dir = root.join("src");
+        fs::create_dir_all(&src_dir)?;
+
+        let source_path = src_dir.join("image.png");
+        let source = RgbImage::from_pixel(32, 32, Rgb([80, 120, 240]));
+        source.save(&source_path)?;
+
+        let legacy_dir = root.join("thumbs_v2");
+        let current_dir = root.join("thumbs_v3_800x600_q92");
+        fs::create_dir_all(&legacy_dir)?;
+        fs::create_dir_all(&current_dir)?;
+
+        let file_name = ThumbnailCache::thumb_file_name(&source_path);
+        let legacy_path = legacy_dir.join(&file_name);
+        let current_path = current_dir.join(&file_name);
+        fs::write(&legacy_path, b"legacy")?;
+        fs::write(&current_path, b"current")?;
+
+        let lookup =
+            ThumbnailLookup::with_root(root.clone(), THUMB_WIDTH, THUMB_HEIGHT, JPEG_QUALITY);
+        assert_eq!(lookup.find(&source_path), Some(current_path));
 
         let _ = fs::remove_dir_all(root);
         Ok(())

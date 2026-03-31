@@ -1,7 +1,8 @@
 use anyhow::Result;
 use std::path::Path;
 
-use crate::{app, wallpaper};
+use super::support::{load_cache_with_config, load_config};
+use crate::{utils, wallpaper};
 
 pub async fn cmd_auto_tag(
     wallpaper_dir: &Path,
@@ -14,12 +15,11 @@ pub async fn cmd_auto_tag(
 
     println!("Initializing CLIP model...");
 
-    let config = app::Config::load()?;
+    let config = load_config()?;
     let mut tagger = ClipTagger::new(&config).await?;
-    let recursive = config.wallpaper.recursive;
-    let mut cache = wallpaper::WallpaperCache::load_or_scan(
+    let mut cache = load_cache_with_config(
         wallpaper_dir,
-        recursive,
+        &config,
         wallpaper::CacheLoadMode::MetadataOnly,
     )?;
 
@@ -62,7 +62,7 @@ pub async fn cmd_auto_tag(
                         "[{}/{}] {}: {:?} (emb={})",
                         progress + 1,
                         to_process.len(),
-                        path.file_name().unwrap_or_default().to_string_lossy(),
+                        utils::display_path_name(&path),
                         tag_names,
                         analysis.embedding.len(),
                     );

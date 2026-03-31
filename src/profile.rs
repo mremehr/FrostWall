@@ -1,3 +1,4 @@
+use crate::utils::project_config_dir;
 use crate::wallpaper::MatchMode;
 use crate::wallpaper_backend::ResizeMode;
 use anyhow::{Context, Result};
@@ -49,10 +50,7 @@ pub struct ProfileManager {
 
 impl ProfileManager {
     fn config_path() -> PathBuf {
-        directories::ProjectDirs::from("com", "mrmattias", "frostwall")
-            .map(|dirs| dirs.config_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("profiles.toml")
+        project_config_dir(PathBuf::from(".")).join("profiles.toml")
     }
 
     pub fn load() -> Result<Self> {

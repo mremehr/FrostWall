@@ -4,6 +4,7 @@ mod collection_cmds;
 mod core;
 mod import_cmds;
 mod pairing_cmds;
+mod support;
 mod tagging;
 mod time_profile;
 

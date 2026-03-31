@@ -1,16 +1,12 @@
 use anyhow::Result;
 use std::path::Path;
 
+use super::support::load_cache;
 use crate::TagAction;
-use crate::{app, utils, wallpaper};
+use crate::{utils, wallpaper};
 
 pub fn cmd_tag(action: TagAction, wallpaper_dir: &Path) -> Result<()> {
-    let recursive = app::Config::load()?.wallpaper.recursive;
-    let mut cache = wallpaper::WallpaperCache::load_or_scan(
-        wallpaper_dir,
-        recursive,
-        wallpaper::CacheLoadMode::MetadataOnly,
-    )?;
+    let (_, mut cache) = load_cache(wallpaper_dir, wallpaper::CacheLoadMode::MetadataOnly)?;
 
     match action {
         TagAction::List => {
@@ -59,12 +55,7 @@ pub fn cmd_tag(action: TagAction, wallpaper_dir: &Path) -> Result<()> {
 }
 
 pub fn cmd_similar(wallpaper_dir: &Path, target_path: &Path, limit: usize) -> Result<()> {
-    let recursive = app::Config::load()?.wallpaper.recursive;
-    let mut cache = wallpaper::WallpaperCache::load_or_scan(
-        wallpaper_dir,
-        recursive,
-        wallpaper::CacheLoadMode::Full,
-    )?;
+    let (_, mut cache) = load_cache(wallpaper_dir, wallpaper::CacheLoadMode::Full)?;
     cache.ensure_similarity_profiles();
 
     // Find the target wallpaper
@@ -124,8 +115,11 @@ pub fn cmd_similar(wallpaper_dir: &Path, target_path: &Path, limit: usize) -> Re
         println!("Similar wallpapers (by color profile):");
         for (score, idx) in similar {
             let wp = &cache.wallpapers[idx];
-            let filename = wp.path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-            println!("  {:.0}% - {}", score * 100.0, filename);
+            println!(
+                "  {:.0}% - {}",
+                score * 100.0,
+                utils::display_path_name(&wp.path)
+            );
         }
     }
 

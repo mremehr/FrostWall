@@ -1,14 +1,14 @@
 use anyhow::Result;
 use std::path::Path;
 
+use super::support::{load_cache_with_config, load_config};
 use crate::TimeProfileAction;
-use crate::{app, screen, timeprofile, wallpaper, wallpaper_backend};
+use crate::{screen, timeprofile, utils, wallpaper, wallpaper_backend};
 
 pub async fn cmd_time_profile(action: TimeProfileAction, wallpaper_dir: &Path) -> Result<()> {
     use timeprofile::TimePeriod;
 
-    let mut config = app::Config::load()?;
-    let recursive = config.wallpaper.recursive;
+    let mut config = load_config()?;
 
     match action {
         TimeProfileAction::Status => {
@@ -51,11 +51,8 @@ pub async fn cmd_time_profile(action: TimeProfileAction, wallpaper_dir: &Path) -
             println!("Time-based profiles disabled.");
         }
         TimeProfileAction::Preview { limit } => {
-            let cache = wallpaper::WallpaperCache::load_or_scan(
-                wallpaper_dir,
-                recursive,
-                wallpaper::CacheLoadMode::Full,
-            )?;
+            let cache =
+                load_cache_with_config(wallpaper_dir, &config, wallpaper::CacheLoadMode::Full)?;
             let period = TimePeriod::current();
 
             println!(
@@ -65,35 +62,28 @@ pub async fn cmd_time_profile(action: TimeProfileAction, wallpaper_dir: &Path) -
             );
             println!();
 
-            // Score and sort wallpapers
-            let mut scored: Vec<_> = cache
-                .wallpapers
-                .iter()
-                .filter(|wp| !wp.colors.is_empty())
-                .map(|wp| {
-                    let score = config.time_profiles.score_wallpaper(&wp.colors, &wp.tags);
-                    (wp, score)
-                })
-                .collect();
-
-            scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-            for (wp, score) in scored.into_iter().take(limit) {
-                let filename = wp.path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+            for (wp, score) in
+                timeprofile::scored_wallpapers(&cache.wallpapers, &config.time_profiles)
+                    .into_iter()
+                    .filter(|(wp, _)| !wp.colors.is_empty())
+                    .take(limit)
+            {
                 let tags = if wp.tags.is_empty() {
                     String::new()
                 } else {
                     format!(" [{}]", wp.tags.join(", "))
                 };
-                println!("  {:.0}% - {}{}", score * 100.0, filename, tags);
+                println!(
+                    "  {:.0}% - {}{}",
+                    score * 100.0,
+                    utils::display_path_name(&wp.path),
+                    tags
+                );
             }
         }
         TimeProfileAction::Apply => {
-            let cache = wallpaper::WallpaperCache::load_or_scan(
-                wallpaper_dir,
-                recursive,
-                wallpaper::CacheLoadMode::Full,
-            )?;
+            let cache =
+                load_cache_with_config(wallpaper_dir, &config, wallpaper::CacheLoadMode::Full)?;
             let screens = screen::detect_screens().await?;
             let transition = config.transition();
             let period = TimePeriod::current();
@@ -118,11 +108,7 @@ pub async fn cmd_time_profile(action: TimeProfileAction, wallpaper_dir: &Path) -
                         config.display.resize_mode,
                         &config.display.fill_color,
                     )?;
-                    println!(
-                        "  {}: {}",
-                        screen.name,
-                        wp.path.file_name().and_then(|n| n.to_str()).unwrap_or("?")
-                    );
+                    println!("  {}: {}", screen.name, utils::display_path_name(&wp.path));
                 }
             }
         }

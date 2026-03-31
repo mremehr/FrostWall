@@ -1,3 +1,4 @@
+use crate::utils::project_config_dir;
 use crate::wallpaper::MatchMode;
 use crate::wallpaper_backend::{BackendConfig, FillColor, ResizeMode, Transition, TransitionType};
 use anyhow::Result;
@@ -407,10 +408,7 @@ impl KeybindingsConfig {
 impl Config {
     /// Return the path to the configuration file.
     pub fn config_path() -> PathBuf {
-        directories::ProjectDirs::from("com", "mrmattias", "frostwall")
-            .map(|dirs| dirs.config_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("config.toml")
+        project_config_dir(PathBuf::from(".")).join("config.toml")
     }
 
     /// Load config from file, creating default if missing or corrupt.

@@ -27,6 +27,10 @@ use std::path::{Path, PathBuf};
 use crate::app::Config;
 #[cfg(feature = "clip")]
 use crate::clip_embeddings_bin::{category_embeddings, EMBEDDING_DIM};
+#[cfg(feature = "clip")]
+use crate::thumbnail::ThumbnailLookup;
+#[cfg(feature = "clip")]
+use crate::utils::project_cache_dir;
 
 /// CLIP image input size (ViT-B/32)
 #[cfg(feature = "clip")]
@@ -162,9 +166,7 @@ pub struct ModelManager {
 #[cfg(feature = "clip")]
 impl ModelManager {
     pub fn new(config: &Config) -> Self {
-        let cache_dir = directories::ProjectDirs::from("com", "mrmattias", "frostwall")
-            .map(|dirs| dirs.cache_dir().join("models"))
-            .unwrap_or_else(|| PathBuf::from("/tmp/frostwall/models"));
+        let cache_dir = project_cache_dir(PathBuf::from("/tmp/frostwall")).join("models");
 
         let configured_url = config
             .clip
@@ -294,6 +296,7 @@ impl ModelManager {
 pub struct ClipTagger {
     visual_session: Session,
     category_embeddings: Vec<(String, Vec<f32>)>,
+    thumbnail_lookup: ThumbnailLookup,
 }
 
 #[cfg(feature = "clip")]
@@ -344,7 +347,53 @@ impl ClipTagger {
         Ok(Self {
             visual_session,
             category_embeddings: build_category_embeddings(),
+            thumbnail_lookup: ThumbnailLookup::new(
+                config.thumbnails.width,
+                config.thumbnails.height,
+                config.thumbnails.quality,
+            ),
         })
+    }
+
+    fn preprocess_image(&self, path: &Path) -> Result<Array4<f32>> {
+        // Prefer cached thumbnails over full-resolution originals.
+        let img = if let Some(thumb_path) = self.thumbnail_lookup.find(path) {
+            image::open(&thumb_path)
+                .or_else(|_| image::open(path))
+                .context("Failed to open image")?
+        } else {
+            image::open(path).context("Failed to open image")?
+        };
+
+        // Resize to CLIP input size (Triangle is fast and good enough for 224x224)
+        let img = img.resize_exact(
+            CLIP_IMAGE_SIZE,
+            CLIP_IMAGE_SIZE,
+            image::imageops::FilterType::Triangle,
+        );
+        let rgb = img.to_rgb8();
+
+        // CLIP normalization constants (ImageNet stats used by CLIP)
+        let mean = [0.481_454_66, 0.457_827_5, 0.408_210_73];
+        let std = [0.268_629_54, 0.261_302_6, 0.275_777_1];
+
+        let mut data = Vec::with_capacity(3 * CLIP_IMAGE_SIZE as usize * CLIP_IMAGE_SIZE as usize);
+
+        // Convert to CHW format (channels first) and normalize
+        for c in 0..3 {
+            for y in 0..CLIP_IMAGE_SIZE {
+                for x in 0..CLIP_IMAGE_SIZE {
+                    let pixel = rgb.get_pixel(x, y);
+                    let value = (pixel[c] as f32 / 255.0 - mean[c]) / std[c];
+                    data.push(value);
+                }
+            }
+        }
+
+        Ok(Array4::from_shape_vec(
+            (1, 3, CLIP_IMAGE_SIZE as usize, CLIP_IMAGE_SIZE as usize),
+            data,
+        )?)
     }
 
     /// Analyze image with optional verbose output for debugging.
@@ -355,7 +404,7 @@ impl ClipTagger {
         verbose: bool,
     ) -> Result<ClipAnalysis> {
         // 1. Preprocess image to CLIP format
-        let input = preprocess_image(image_path)?;
+        let input = self.preprocess_image(image_path)?;
 
         // 2. Create input tensor from ndarray
         let (input_data, _offset) = input.into_raw_vec_and_offset();
@@ -572,76 +621,4 @@ fn build_category_embeddings() -> Vec<(String, Vec<f32>)> {
     }
 
     categories
-}
-
-/// Get cached thumbnail path if it exists
-#[cfg(feature = "clip")]
-fn get_cached_thumbnail(source_path: &Path) -> Option<PathBuf> {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let cache_dir = directories::ProjectDirs::from("com", "mrmattias", "frostwall")
-        .map(|dirs| dirs.cache_dir().join("thumbs_v2"))
-        .unwrap_or_else(|| PathBuf::from("/tmp/frostwall/thumbs_v2"));
-
-    let mut hasher = DefaultHasher::new();
-    source_path.to_string_lossy().hash(&mut hasher);
-    if let Ok(metadata) = std::fs::metadata(source_path) {
-        if let Ok(modified) = metadata.modified() {
-            modified.hash(&mut hasher);
-        }
-    }
-    let hash = hasher.finish();
-    let thumb_path = cache_dir.join(format!("{:016x}.jpg", hash));
-
-    if thumb_path.exists() {
-        Some(thumb_path)
-    } else {
-        None
-    }
-}
-
-/// Preprocess image for CLIP: resize to 224x224, normalize with CLIP constants
-#[cfg(feature = "clip")]
-fn preprocess_image(path: &Path) -> Result<Array4<f32>> {
-    // Try to use cached thumbnail first (800x600 vs 4K original = much faster)
-    let img = if let Some(thumb_path) = get_cached_thumbnail(path) {
-        image::open(&thumb_path)
-            .or_else(|_| image::open(path))
-            .context("Failed to open image")?
-    } else {
-        image::open(path).context("Failed to open image")?
-    };
-
-    // Resize to CLIP input size (Triangle is fast and good enough for 224x224)
-    let img = img.resize_exact(
-        CLIP_IMAGE_SIZE,
-        CLIP_IMAGE_SIZE,
-        image::imageops::FilterType::Triangle,
-    );
-    let rgb = img.to_rgb8();
-
-    // CLIP normalization constants (ImageNet stats used by CLIP)
-    let mean = [0.481_454_66, 0.457_827_5, 0.408_210_73];
-    let std = [0.268_629_54, 0.261_302_6, 0.275_777_1];
-
-    let mut data = Vec::with_capacity(3 * CLIP_IMAGE_SIZE as usize * CLIP_IMAGE_SIZE as usize);
-
-    // Convert to CHW format (channels first) and normalize
-    for c in 0..3 {
-        for y in 0..CLIP_IMAGE_SIZE {
-            for x in 0..CLIP_IMAGE_SIZE {
-                let pixel = rgb.get_pixel(x, y);
-                let value = (pixel[c] as f32 / 255.0 - mean[c]) / std[c];
-                data.push(value);
-            }
-        }
-    }
-
-    let array = Array4::from_shape_vec(
-        (1, 3, CLIP_IMAGE_SIZE as usize, CLIP_IMAGE_SIZE as usize),
-        data,
-    )?;
-
-    Ok(array)
 }

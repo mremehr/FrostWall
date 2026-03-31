@@ -6,7 +6,10 @@ pub use color::{color_brightness, color_similarity, detect_harmony, hex_to_rgb, 
 #[cfg(test)]
 pub(crate) use color::{color_saturation, delta_e_2000, hex_to_hsl, hex_to_lab};
 
-pub use paths::{expand_tilde, is_image_file};
+pub use paths::{
+    display_path_name, expand_tilde, is_image_file, project_cache_dir, project_config_dir,
+    project_data_dir,
+};
 
 pub use similarity::{
     build_palette_profile, find_similar_wallpapers_with_profiles_iter, image_similarity_weighted,

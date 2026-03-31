@@ -10,6 +10,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::utils::project_cache_dir;
+
 // ── Affinity base-score constants ────────────────────────────────────────────
 /// Diminishing-returns threshold: ln-normalisation saturates at 10 pairings.
 const AFFINITY_PAIR_COUNT_SATURATION: f32 = 10.0;
@@ -103,9 +105,8 @@ const REPETITION_PENALTY_MAX: f32 = 3.0;
 impl PairingHistory {
     /// Create new pairing history manager
     pub fn new(max_records: usize) -> Self {
-        let cache_path = directories::ProjectDirs::from("com", "mrmattias", "frostwall")
-            .map(|dirs| dirs.cache_dir().join("pairing_history.json"))
-            .unwrap_or_else(|| PathBuf::from("/tmp/frostwall/pairing_history.json"));
+        let cache_path =
+            project_cache_dir(PathBuf::from("/tmp/frostwall")).join("pairing_history.json");
 
         Self {
             data: PairingHistoryData::default(),

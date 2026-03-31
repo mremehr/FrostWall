@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::utils::project_data_dir;
+
 /// A saved wallpaper collection (preset)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WallpaperCollection {
@@ -33,9 +35,7 @@ pub struct CollectionStore {
 impl CollectionStore {
     /// Get storage path
     fn storage_path() -> PathBuf {
-        directories::ProjectDirs::from("com", "mrmattias", "frostwall")
-            .map(|dirs| dirs.data_dir().join("collections.json"))
-            .unwrap_or_else(|| PathBuf::from("/tmp/frostwall/collections.json"))
+        project_data_dir(PathBuf::from("/tmp/frostwall")).join("collections.json")
     }
 
     /// Load collections from disk

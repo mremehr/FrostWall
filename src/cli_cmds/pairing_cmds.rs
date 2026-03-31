@@ -1,11 +1,12 @@
 use anyhow::Result;
 use std::path::Path;
 
+use super::support::{load_cache_with_config, load_config};
 use crate::PairAction;
-use crate::{app, pairing, wallpaper};
+use crate::{pairing, wallpaper};
 
 pub fn cmd_pair(action: PairAction, wallpaper_dir: &Path) -> Result<()> {
-    let config = app::Config::load()?;
+    let config = load_config()?;
 
     match action {
         PairAction::Stats => {
@@ -39,11 +40,8 @@ pub fn cmd_pair(action: PairAction, wallpaper_dir: &Path) -> Result<()> {
         }
         PairAction::Suggest { path } => {
             let history = pairing::PairingHistory::load(config.pairing.max_history_records)?;
-            let cache = wallpaper::WallpaperCache::load_or_scan(
-                wallpaper_dir,
-                config.wallpaper.recursive,
-                wallpaper::CacheLoadMode::Full,
-            )?;
+            let cache =
+                load_cache_with_config(wallpaper_dir, &config, wallpaper::CacheLoadMode::Full)?;
 
             // Find wallpapers with affinity to the given path
             let mut suggestions: Vec<_> = cache
