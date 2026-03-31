@@ -1,636 +1,167 @@
 # FrostWall
 
-**Intelligent wallpaper manager with screen-aware matching for Wayland**
+**Intelligent wallpaper manager for Wayland, built for multi-monitor setups.**
 
-FrostWall automatically detects your screen configurations and intelligently matches wallpapers based on aspect ratio, orientation, and display characteristics. Built as a Rust TUI with image preview support and CLI commands for scripting.
+FrostWall helps you browse, match, preview, and apply wallpapers without fighting different screen shapes, manual shell scripts, or broken monitor pairings.
 
-## Vision
+## Why FrostWall
 
-Managing wallpapers across multiple monitors with different aspect ratios (ultrawide, portrait, landscape) is tedious. FrostWall transforms this into a seamless, visual experience:
+- **Screen-aware matching**: filters wallpapers by aspect category per screen
+- **Real previews in the terminal**: browse with thumbnails instead of filenames
+- **Pairing mode**: preview one wallpaper together with suggested matches for other monitors
+- **Useful automation**: tags, collections, watch daemon, time profiles, pywal export
+- **Optional AI tagging**: CLIP-based auto-tagging when built with the `clip` feature
 
-- **Smart matching**: Automatically filters wallpapers that fit each screen's aspect category
-- **Multi-monitor aware**: Detects all connected outputs via niri/wlr-randr
-- **Visual pairing**: 50/50 split-view with dynamic, large previews for selected wallpaper + suggested matches
-- **Color harmony**: LAB color space matching ensures your multi-monitor setup looks cohesive
-- **Visual browsing**: TUI with real image thumbnails (Kitty/Sixel graphics protocols)
-- **Scriptable**: CLI commands for keybindings, scripts, and automation
+## Quick Start
 
-## Features
+### 1. Requirements
 
-### Screen-Aware Matching
+- Wayland
+- `awww` for wallpaper application
+- `niri` or `wlr-randr` for screen detection
+- Rust + Cargo
+- Recommended terminal for the best preview experience: Kitty or another terminal supported by `ratatui-image`
 
-Wallpapers are categorized by aspect ratio:
-- **Ultrawide** (21:9, 32:9) - for super-wide monitors
-- **Landscape** (16:9, 16:10) - standard horizontal monitors
-- **Portrait** (9:16) - rotated vertical monitors
-- **Square** (~1:1) - versatile for any orientation
-
-Match modes control filtering:
-| Mode | Behavior |
-|------|----------|
-| **Strict** | Only exact aspect category matches |
-| **Flexible** | Compatible ratios (landscape works on ultrawide, etc.) |
-| **All** | Show every wallpaper regardless of aspect |
-
-### Visual Pairing Preview
-
-The killer feature: press `p` to enter pairing mode and see a split-view with:
-
-```
-┌───────────────────────────────┬───────────────────────────────┐
-│                               │ Pair 1/10                     │
-│   [Selected wallpaper]        │ [Screen preview thumbnails]   │
-│   Dynamic size on resize      │ Dynamic size on resize        │
-│   (left panel, 50%)           │ (right panel, 50%)            │
-└───────────────────────────────┴───────────────────────────────┘
-```
-
-- **Real thumbnails** - See actual images, not just filenames
-- **Multiple alternatives** - Cycle through top matches (`preview_match_limit`, default 10)
-- **Adaptive preview slots** - Aspect-aware sizing keeps portrait/square/ultrawide previews balanced
-- **Responsive layout** - Pairing preview scales live when terminal window is resized
-- **Color-based suggestions** - Matches based on LAB color similarity
-- **History learning** - Remembers which wallpapers you pair together
-- **One-press apply** - `Enter` sets all screens at once
-
-### Intelligent Pairing System
-
-Multi-monitor wallpaper pairing that learns from your choices:
-
-- **Affinity tracking** - Records which wallpapers you use together
-- **LAB color matching** - Suggests wallpapers with perceptually similar colors
-- **Score-based ranking** - Combines history, visual similarity, harmony, tags, and semantic CLIP similarity
-- **Configurable weights** - Tune scoring weights in `[pairing]` without recompiling
-- **Style toggle in pairing mode** - `y` cycles `Off` / `Soft` / `Strict` style matching
-- **Strict is truly strict** - In `Strict`, non-matching style candidates are filtered out (no automatic fallback to `Soft`)
-- **Position memory** - TUI remembers your browsing position per screen
-- **Session restore** - Restores cursor per monitor and reopens last active screen after restart
-
-### Tagging
-
-#### Manual Tagging (built-in)
-
-Manual tags are available in all builds:
+### 2. Install
 
 ```bash
+git clone https://github.com/mrmattias/frostwall.git
+cd frostwall
+
+# Install the normal build
+cargo install --path .
+
+# Optional: install with CLIP auto-tagging
+# cargo install --path . --features clip
+
+# Optional: CLIP + CUDA
+# cargo install --path . --features clip-cuda
+```
+
+### 3. First Run
+
+```bash
+frostwall init
+frostwall scan
+frostwall
+```
+
+`frostwall init` creates your config and points FrostWall at your wallpaper directory.
+
+## Everyday Use
+
+```bash
+frostwall                 # Open the TUI
+frostwall random          # Apply a random wallpaper per screen
+frostwall next            # Next wallpaper
+frostwall prev            # Previous wallpaper
+frostwall screens         # Show detected screens
+frostwall scan            # Rescan wallpaper directory
+frostwall watch           # Background rotation daemon
+```
+
+### Common Workflows
+
+```bash
+# Tagging
 frostwall tag list
-frostwall tag add ~/wallpapers/forest.jpg nature
-frostwall tag remove ~/wallpapers/forest.jpg nature
+frostwall tag add ~/Pictures/wallpapers/forest.jpg nature
 frostwall tag show nature
-```
 
-#### CLIP AI Auto-Tagging (optional feature)
-
-Semantic image understanding using OpenAI's CLIP model:
-
-```bash
-# Build with CLIP support (CPU)
-cargo build --release --features clip
-
-# Build with CLIP + CUDA GPU acceleration
-cargo build --release --features clip-cuda
-
-# Tag wallpapers with AI (command exists only in clip-enabled builds)
-frostwall auto-tag                    # Tag all wallpapers
-frostwall auto-tag --incremental      # Only tag new wallpapers
-frostwall auto-tag --threshold 0.55   # Custom confidence threshold
-frostwall auto-tag --max-tags 5       # Limit tags per image (0 = unlimited)
-frostwall auto-tag --verbose          # Show per-image results
-frostwall --dir ~/pictures/wallpapers auto-tag --incremental --threshold 0.55
-```
-
-67 semantic categories detected by CLIP:
-`3d_render`, `abstract`, `anime`, `anime_character`, `architecture`, `art_nouveau`, `autumn`, `bright`, `castle`, `chibi`, `city`, `concept_art`, `cozy`, `cyberpunk`, `dark`, `desert`, `digital_art`, `dragon`, `dramatic`, `epic_battle`, `ethereal`, `fantasy`, `fantasy_landscape`, `flowers`, `forest`, `geometric`, `gothic`, `horror`, `illustration`, `landscape_orientation`, `line_art`, `magic`, `mecha`, `minimal`, `moody_fantasy`, `mountain`, `nature`, `neon`, `nightscape`, `ocean`, `oil_painting`, `painterly`, `pastel`, `photography`, `pixel_art`, `portrait`, `rain`, `retro`, `ruins`, `sakura`, `samurai`, `sci_fi`, `serene`, `shoujo`, `sky`, `snow`, `space`, `steampunk`, `sunset`, `tropical`, `underwater`, `urban`, `vaporwave`, `vibrant`, `vintage`, `watercolor`, `waterfall`
-
-Features:
-- Uses CLIP ViT-B/32 visual encoder via ONNX Runtime
-- 57 base embeddings stored as compact binary (114 KB)
-- Auto-downloads visual model from HuggingFace (~350MB, cached locally)
-- SHA256 model verification for integrity
-- Understands image content semantically, not just colors
-
-### Time-Based Profiles
-
-Automatic wallpaper selection based on time of day:
-
-```bash
-frostwall time-profile status    # Show current period & settings
-frostwall time-profile enable    # Enable time-based selection
-frostwall time-profile preview   # Preview matching wallpapers
-frostwall time-profile apply     # Set wallpaper for current time
-```
-
-Time periods:
-| Period | Hours | Default preferences |
-|--------|-------|---------------------|
-| Morning | 6-12 | Bright, nature, pastel |
-| Afternoon | 12-18 | Nature, ocean, mountain |
-| Evening | 18-22 | Sunset, autumn, cyberpunk |
-| Night | 22-6 | Dark, space, minimal |
-
-### Web Gallery Import
-
-Download wallpapers from popular galleries:
-
-```bash
-# Wallhaven (no API key required)
-frostwall import wallhaven "nature 4k"
-frostwall import featured --count 20
-frostwall import download <wallhaven-id>
-
-# Unsplash (requires API key)
-export UNSPLASH_ACCESS_KEY=your_key
-frostwall import unsplash "mountains"
-```
-
-### Collections (Presets)
-
-Save and recall multi-screen wallpaper combinations:
-
-```bash
-frostwall collection save "work-setup"        # Save current wallpapers
-frostwall collection save "gaming" -d "RGB!"  # With description
-frostwall collection list                      # List all collections
-frostwall collection show "work-setup"         # Show details
-frostwall collection apply "work-setup"        # Restore collection
-frostwall collection delete "work-setup"       # Delete collection
-```
-
-### Image Similarity Search
-
-Find wallpapers with similar color profiles:
-
-```bash
+# Similarity search
 frostwall similar ~/Pictures/wallpapers/favorite.jpg --limit 10
-```
 
-Uses LAB color space for perceptually accurate matching.
-
-### TUI Mode
-
-Interactive terminal interface with:
-- Real image thumbnails via ratatui-image (Kitty/Sixel protocols)
-- Aspect-aware carousel (prefers 5 visible thumbnails with centered selection, dynamic slot sizing, and edge fade)
-- Live screen switching (Tab/Shift+Tab)
-- **Visual pairing preview** (`p` key) with split-view thumbnails
-- Aspect grouping toggle (`a` key) for ordering by `Ultrawide -> Landscape -> Square -> Portrait`
-- Instant wallpaper application with animated transitions
-- Auto-detects terminal theme (Frostglow Light / Deep Cracked Ice Dark)
-- **Vim-style command mode** (`:` key)
-
-### Command Mode
-
-Press `:` in TUI for vim-style commands:
-
-| Command | Description |
-|---------|-------------|
-| `:t <tag>` | Filter by tag (fuzzy match) |
-| `:tag` | List all available tags |
-| `:clear` / `:c` | Clear all filters |
-| `:random` / `:r` | Random wallpaper |
-| `:apply` / `:a` | Apply current wallpaper |
-| `:img [toggle|hb|kitty]` | Toggle/set thumbnail protocol |
-| `:similar` / `:sim` | Find similar wallpapers |
-| `:sort name/date/size` | Change sort mode |
-| `:aspect [toggle/on/off]` | Toggle aspect grouping in carousel |
-| `:screen <n>` | Switch to screen n |
-| `:go <n>` | Go to wallpaper n |
-| `:rescan` / `:scan` | Incremental rescan (preserves tags & data) |
-| `:pair-reset` | Rebuild affinity scores from history |
-| `:pair-rebuild` | Rebuild affinity scores from history |
-| `:help` / `:h` | Show help |
-| `:q` / `:quit` | Quit |
-
-### CLI Commands
-
-```bash
-frostwall              # Launch TUI
-frostwall random       # Set random matching wallpaper per screen
-frostwall next         # Cycle to next wallpaper
-frostwall prev         # Cycle to previous wallpaper
-frostwall screens      # List detected screens
-frostwall scan         # Rescan wallpaper directory
-frostwall init         # Interactive setup wizard
-frostwall watch        # Background daemon for auto-rotation
-
-# Tag management
-frostwall tag list
-frostwall tag add ~/wallpapers/forest.jpg nature
-frostwall tag remove ~/wallpapers/forest.jpg nature
-frostwall tag show nature
-frostwall auto-tag                     # AI tagging (requires --features clip)
-
-# Pairing management
+# Pairing
 frostwall pair stats
-frostwall pair clear
-frostwall pair suggest ~/wallpapers/forest.jpg
+frostwall pair suggest ~/Pictures/wallpapers/favorite.jpg
 
 # Collections
-frostwall collection save "my-preset"
-frostwall collection apply "my-preset"
+frostwall collection save work
+frostwall collection apply work
 
 # Time profiles
+frostwall time-profile enable
 frostwall time-profile status
 frostwall time-profile apply
 
+# pywal export
+frostwall pywal ~/Pictures/wallpapers/forest.jpg --apply
+
 # Web import
-frostwall import wallhaven "nature"
-frostwall import featured
-
-# Similarity search
-frostwall similar ~/wallpapers/forest.jpg
-
-# Profile management
-frostwall profile list
-frostwall profile create work
-frostwall profile use work
-
-# pywal color export
-frostwall pywal ~/wallpapers/forest.jpg --apply
+frostwall import wallhaven "nature 4k"
+frostwall import download w8x7y9
 ```
 
-### Watch Daemon
-
-Auto-rotate wallpapers in the background:
-
-```bash
-frostwall watch --interval 30m          # Every 30 minutes
-frostwall watch --interval 1h --shuffle # Hourly, random order
-frostwall watch --watch-dir false       # Disable file monitoring
-```
-
-Features:
-- Configurable interval (30s, 5m, 1h, etc.)
-- File system monitoring (inotify) - auto-updates cache when files change
-- Shuffle or sequential mode
-- **Time-profile aware** - respects time-based preferences when enabled
-
-### Resize Modes
-
-Control how wallpapers fit the screen:
-- **Crop** (default) - Fill screen, crop excess
-- **Fit** - Fit inside screen with letterboxing
-- **No** - No resize, center image
-- **Stretch** - Fill screen (distorts aspect)
-
-### Additional Features
-
-- **Dominant color extraction** - k-means clustering extracts 5 primary colors per wallpaper
-- **LAB color space** - Perceptually accurate color matching (Delta-E/CIE76)
-- **2-phase scanning** - Fast header scan, then parallel color extraction
-- **High-resolution thumbnail caching** - SIMD-accelerated disk cache (default `2560x1920`, quality `92`)
-- **Event flow optimization** - Thumbnail requests/events are deduped, generation-filtered, and priority-ordered
-- **Burst-aware redraw throttling** - Thumbnail-heavy bursts are capped to ~60 FPS to reduce CPU spikes
-- **Transition effects** - Fade, wipe, grow, center, outer via awww
-- **TOML configuration** - Customize paths, keybindings, transitions
-
-## Requirements
-
-- **Wayland compositor**: niri, Sway, Hyprland, or any wlr-based compositor
-- **Wallpaper backend**: `awww` today, selected via a backend layer for future expansion
-- **Screen detection**: niri (preferred) or wlr-randr
-- **Terminal with graphics**: Kitty, WezTerm, or Sixel-capable terminal for image previews
-
-## Installation
-
-```bash
-cd FrostWall
-cargo build --release
-
-# With CLIP AI tagging support (CPU)
-cargo build --release --features clip
-
-# With CLIP + CUDA GPU acceleration (requires NVIDIA GPU + CUDA)
-cargo build --release --features clip-cuda
-```
-
-Binary: `target/release/frostwall`
-
-## Configuration
-
-Config file: `~/.config/frostwall/config.toml`
-
-```toml
-[wallpaper]
-directory = "~/Pictures/wallpapers"
-extensions = ["jpg", "jpeg", "png", "webp", "bmp", "gif"]
-recursive = false
-
-[display]
-match_mode = "Flexible"    # Strict, Flexible, All
-resize_mode = "Fit"        # Crop, Fit, No, Stretch
-aspect_sort = false        # Persist aspect grouping (a / :aspect)
-
-[display.fill_color]       # Padding color (RGBA)
-r = 0
-g = 0
-b = 0
-a = 255
-
-[transition]
-transition_type = "fade"   # fade, wipe, grow, center, outer, none
-duration = 1.0
-fps = 60
-
-[thumbnails]
-width = 2560
-height = 1920
-quality = 92
-grid_columns = 3
-preload_count = 20
-
-[theme]
-mode = "auto"              # auto, light, dark
-check_interval_ms = 500
-
-[terminal]
-recommended_repaint_delay = 5
-recommended_input_delay = 1
-hint_shown = false
-kitty_safe_thumbnails = true  # Safe half-block mode in Kitty
-
-[session]
-last_selected_wallpaper = "/home/user/Pictures/wallpapers/forest.jpg" # legacy fallback
-last_active_screen = "DP-2" # optional, auto-managed by TUI
-last_selected_wallpaper_by_screen = { DP-2 = "/home/user/Pictures/wallpapers/forest.jpg", HDMI-A-1 = "/home/user/Pictures/wallpapers/mountain.jpg" } # optional, auto-managed by TUI
-
-[pairing]
-enabled = true             # Enable intelligent pairing
-auto_apply = false         # Auto-apply best suggestion to other screens
-undo_window_secs = 5       # Undo timeout after auto-apply
-auto_apply_threshold = 0.7 # Confidence needed for auto-apply
-max_history_records = 1000 # Maximum pairing records to keep
-preview_match_limit = 10   # Number of alternatives in pairing preview
-screen_context_weight = 8.0      # Screen-specific history weight
-visual_weight = 5.0              # Palette/brightness/saturation weight
-harmony_weight = 3.0             # Color harmony bonus weight
-tag_weight = 2.0                 # Per shared tag (up to 3 tags)
-semantic_weight = 7.0            # CLIP embedding similarity weight
-repetition_penalty_weight = 1.0  # Recent repetition penalty multiplier
-
-[clip]
-enabled = false           # CLIP auto-tagging opt-in flag (used for status hints)
-threshold = 0.25
-show_in_filter = true
-cache_embeddings = true
-# visual_model_url = "https://huggingface.co/.../model.onnx"   # optional custom model URL
-# visual_model_sha256 = "<sha256-hex>"                         # recommended with custom URL
-
-[time_profiles]
-enabled = false            # Enable time-based wallpaper selection
-
-[time_profiles.morning]
-brightness_range = [0.5, 0.9]
-preferred_tags = ["nature", "bright", "pastel"]
-
-[time_profiles.afternoon]
-brightness_range = [0.4, 0.8]
-preferred_tags = ["nature", "ocean", "mountain"]
-
-[time_profiles.evening]
-brightness_range = [0.2, 0.6]
-preferred_tags = ["sunset", "autumn", "cyberpunk"]
-
-[time_profiles.night]
-brightness_range = [0.0, 0.4]
-preferred_tags = ["dark", "space", "minimal"]
-```
-
-### Pairing Weight Rationale (Defaults)
-
-Default weights are tuned so ranking is stable first, expressive second:
-
-- `screen_context_weight = 8.0`: strongest signal, because repeated pairings reflect explicit user choices.
-- `semantic_weight = 7.0`: high to keep content/style matches competitive even when palettes differ.
-- `visual_weight = 5.0`: strong visual anchor, but below learned history to avoid churn.
-- `harmony_weight = 3.0`: secondary bonus for pleasing combinations, not a dominant factor.
-- `tag_weight = 2.0`: lightweight hint to avoid noisy tag overlaps overpowering better matches.
-- `repetition_penalty_weight = 1.0`: conservative anti-repeat behavior by default.
-
-## Keybindings (TUI)
+## TUI Cheat Sheet
 
 | Key | Action |
 |-----|--------|
 | `h` / `←` | Previous wallpaper |
 | `l` / `→` | Next wallpaper |
-| `Enter` | Apply selected wallpaper |
-| `p` | **Pairing preview** - split-view with suggestions |
-| `r` | Random wallpaper (apply immediately) |
-| `R` | Incremental rescan (preserves tags & pairing) |
-| `:` | **Command mode** (vim-style) |
-| `m` | Toggle match mode (Strict/Flexible/All) |
-| `f` | Toggle resize mode (Crop/Fit/No/Stretch) |
-| `s` | Toggle sort mode (Name/Size/Date) |
-| `a` | Toggle aspect grouping (persisted in config) |
-| `c` | Show/hide color palette |
-| `C` | Open color filter picker |
-| `t` | Cycle tag filter |
-| `T` | Clear tag filter |
-| `w` | Export pywal colors |
-| `i` | Toggle thumbnail protocol (HB safe / KTY) |
-| `W` | Toggle auto pywal export |
-| `u` | Undo latest pairing auto-apply (if undo window is active) |
-| `Tab` | Next screen (remembers position) |
-| `Shift+Tab` | Previous screen (remembers position) |
-| `?` | Show help popup |
+| `Enter` | Apply wallpaper |
+| `Tab` / `Shift+Tab` | Switch screen |
+| `p` | Open pairing preview |
+| `r` | Random wallpaper |
+| `R` | Incremental rescan |
+| `:` | Command mode |
+| `m` | Toggle match mode |
+| `f` | Toggle resize mode |
+| `a` | Toggle aspect grouping |
+| `c` | Toggle palette view |
+| `C` | Open color filter |
+| `t` / `T` | Cycle / clear tag filter |
+| `w` / `W` | Export / auto-export pywal |
+| `i` | Toggle thumbnail protocol |
+| `u` | Undo pairing auto-apply |
+| `?` | Help |
 | `q` / `Esc` | Quit |
 
-### Pairing Preview Mode (`p`)
+Pairing preview:
 
-| Key | Action |
-|-----|--------|
-| `←` / `→` | Cycle through alternatives (up to `preview_match_limit`) |
-| `1`-`9`, `0` | Jump to alternative index (`0` = 10th) |
-| `Enter` | Apply all wallpapers (selected + suggestions) |
-| `y` | Toggle style match mode (`Off` → `Soft` → `Strict`) |
-| `p` / `Esc` | Close pairing preview |
+- `←` / `→`: cycle alternatives
+- `1`-`9`, `0`: jump to a specific alternative
+- `y`: cycle style mode `Off -> Soft -> Strict`
+- `Enter`: apply the selected pairing
 
-Style mode behavior:
-- `Off`: No style filter, pure score ranking.
-- `Soft`: Prefers style overlap but still allows non-overlap candidates.
-- `Strict`: Requires stronger style/content overlap, boosts semantic similarity (`what the image depicts`), and downweights history bias.
+## Optional Features
 
-## Architecture
+### CLIP Auto-Tagging
 
-```
-src/
-  main.rs              # CLI entry point (clap)
-  app.rs               # App state container + module wiring
-  screen.rs            # Screen detection (niri/wlr-randr)
-  wallpaper.rs         # Wallpaper types + module exports
-  pairing.rs           # Pairing types + module exports
-  wallpaper_backend.rs # Backend abstraction + common backend types
-  wallpaper_backend/
-    awww.rs            # awww backend implementation
-  thumbnail.rs         # SIMD thumbnail generation & disk cache
-  pywal.rs             # pywal color export
-  profile.rs           # Profile management
-  collections.rs       # Wallpaper collections/presets
-  timeprofile.rs       # Time-based wallpaper profiles
-  webimport.rs         # Web gallery import (Unsplash/Wallhaven)
-  utils.rs             # Color utilities and LAB matching
-  watch.rs             # Watch daemon with inotify
-  init.rs              # Interactive setup wizard
-  clip.rs              # CLIP auto-tagging (optional feature)
-  clip_embeddings_bin.rs # Binary CLIP text embedding loader
-  app/
-    runtime.rs         # Event loop + terminal lifecycle
-    navigation.rs      # Wallpaper/screen cursor movement + persistence hooks
-    commands.rs        # Vim-style command parser/dispatch
-    actions.rs         # Apply/random/undo behaviors
-    filters.rs         # Sort/tag/color filter state updates
-    thumbnails.rs      # Thumbnail request queue + in-memory cache
-    pairing_ui.rs      # Pairing preview orchestration
-    config.rs          # Config schema + load/save
-  wallpaper/
-    cache.rs           # Scan/load/save cache paths + metadata merge
-    model.rs           # Wallpaper model helpers (tags/matching/sort)
-  pairing/
-    history.rs         # Persistent pairing history + affinity rebuild
-    scoring.rs         # Ranking/scoring helpers
-    style_tags.rs      # Style/content tag normalization
-  ui/
-    mod.rs              # UI module exports
-    theme.rs            # Frost theme (light/dark auto-detection)
-    layout.rs           # Main frame composition
-    layout/
-      header.rs         # Header/footer/error rendering
-      carousel.rs       # Wallpaper carousel rendering
-      pairing.rs        # Pairing preview panel rendering
-      popups.rs         # Help/color/undo popups
-```
-
-### Data Flow
-
-1. **Startup**: Detect screens via `niri msg outputs` or `wlr-randr`
-2. **Scan**: Load wallpaper metadata (dimensions, colors, tags, optional auto-tags/embeddings) into cache
-3. **Filter**: Match wallpapers to selected screen's aspect category
-4. **Pair**: Calculate pairing suggestions based on history + color similarity
-5. **Preview**: Split-view shows selected wallpaper + thumbnail suggestions
-6. **Apply**: Call the configured wallpaper backend with transition parameters for all screens
-
-### Performance Profiling
-
-Enable runtime + thumbnail-worker perf logs:
+Build with `clip` to unlock:
 
 ```bash
-env FROSTWALL_PERF=1 /path/to/frostwall
+cargo install --path . --features clip
+frostwall auto-tag --incremental
 ```
 
-You will see periodic logs like:
-- `[perf][runtime]` - draw time, batch/event counts, event processing time
-- `[perf][thumb-worker]` - thumbnail decode latency, batch size, failure count
-
-### Cache Locations
-
-- **Config**: `~/.config/frostwall/config.toml`
-- **Wallpaper metadata**: `~/.cache/frostwall/wallpaper_cache.json`
-- **Thumbnails**: `~/.cache/frostwall/thumbs_v3_<width>x<height>_q<quality>/`
-- **Pairing history**: `~/.cache/frostwall/pairing_history.json`
-- **Collections**: `~/.local/share/frostwall/collections.json`
-
-## Theme Integration
-
-FrostWall automatically detects terminal theme by checking:
-1. `~/.config/alacritty/.current-theme` marker file
-2. Kitty/Alacritty config headers for "frostglow" or "light"/"dark" keywords
-3. `ALACRITTY_THEME` environment variable
-
-Two built-in themes:
-- **Frostglow Light** - For light terminal backgrounds
-- **Deep Cracked Ice** - For dark terminal backgrounds
-
-Both use transparent backgrounds (`Color::Reset`) to inherit terminal colors.
-
-## Integration Examples
-
-### Keybinding (niri)
-
-```kdl
-binds {
-    Mod+W { spawn "frostwall" "random"; }
-    Mod+Shift+W { spawn "frostwall"; }
-}
-```
-
-### Startup Script
+### Watch Daemon
 
 ```bash
-#!/bin/bash
-awww-daemon &
-sleep 0.5
-frostwall random
+frostwall watch --interval 30m
+frostwall watch --interval 1h --shuffle false
+frostwall watch --watch-dir false
 ```
 
-### Cron Job for Time-Based Rotation
+### Override the Wallpaper Directory
 
 ```bash
-# Change wallpaper based on time of day every hour
-0 * * * * frostwall time-profile apply
+frostwall --dir ~/Pictures/wallpapers
+frostwall --dir ~/Pictures/wallpapers random
 ```
 
-## Wallpaper Data Format
+## Config
 
-Each wallpaper stores metadata including colors, tags, and optional CLIP embeddings:
+- Main config: `~/.config/frostwall/config.toml`
+- Profiles: `~/.config/frostwall/profiles.toml`
 
-```json
-{
-  "path": "/home/user/wallpapers/forest.jpg",
-  "width": 3840,
-  "height": 2160,
-  "aspect_category": "Landscape",
-  "colors": ["#1a2b3c", "#4d5e6f", "#7a8b9c", "#adbccd", "#d0e1f2"],
-  "color_weights": [0.35, 0.25, 0.20, 0.12, 0.08],
-  "tags": ["nature", "forest"],
-  "auto_tags": [
-    {"name": "forest", "confidence": 0.85},
-    {"name": "nature", "confidence": 0.72},
-    {"name": "dark", "confidence": 0.45}
-  ],
-  "embedding": [0.023, -0.041, ...],
-  "file_size": 2458624,
-  "modified_at": 1706889600
-}
-```
+If the config file does not exist, FrostWall creates it automatically.
 
-## Changelog
+## Docs
 
-### v0.5.0
-
-- **CLIP AI auto-tagging** - Semantic image tagging using CLIP ViT-B/32 (optional `--features clip`)
-  - 67 semantic categories (57 base + 10 library mixes) covering nature, urban, abstract, style, mood, anime, fantasy, and composition
-  - Binary embeddings format (114 KB) replaces 13K lines of inlined Rust source
-  - SHA256 model verification for integrity
-  - Auto-downloads visual model from HuggingFace on first use
-  - **CUDA GPU acceleration** - Optional `--features clip-cuda` for 10-50x faster tagging
-- **Visual pairing preview** - 50/50 split-view with larger, dynamic thumbnails for multi-monitor pairing
-- **Manual pairing control** - Press `p` to preview and select matching wallpapers
-- **Pairing overhaul** - Fixed double-counting, normalized scoring, strengthened repetition penalty, affinity auto-rebuild
-- **Strict style filtering** - Pairing `Strict` mode enforces style overlap (anime with anime, pixel art with pixel art, etc.)
-- **Strict semantic priority** - In `Strict`, semantic/content similarity is weighted higher than pairing history
-- **Configurable pairing scoring** - Tune history/visual/harmony/tag/semantic/repetition weights in config
-- **Incremental rescan** - `R` key / `:rescan` reloads wallpaper directory while preserving all tags, embeddings, and pairing data
-- **Terminal resize handling** - Thumbnail cache resets cleanly on terminal resize
-- **Dynamic thumbnail cache** - LRU cache scales with grid size instead of a hardcoded limit
-- **Cache versioning** - Automatic cache invalidation when format changes
-- **`:pair-reset`** - Reset pairing history from command mode
-- **109 unit tests + 5 integration tests** - Comprehensive test coverage across all modules
-
-### v0.4.0
-
-- **Command mode** - Vim-style `:` commands in TUI
-- **Auto-tagging** - Color-based automatic tag assignment
-- **Time-based profiles** - Wallpapers based on time of day
-- **Web gallery import** - Download from Unsplash/Wallhaven
-- **Collections** - Save/restore multi-screen presets
-- **Image similarity** - Find wallpapers with similar colors
-- **LAB color matching** - Perceptually accurate color comparison
-- **2-phase scanning** - Faster startup with parallel processing
+- [Usage Guide](docs/USAGE.md)
+- [Configuration Guide](docs/CONFIGURATION.md)
+- [Contributing](CONTRIBUTING.md)
 
 ## License
 
 GPL-2.0
-
-## Author
-
-MrMattias & Claude
