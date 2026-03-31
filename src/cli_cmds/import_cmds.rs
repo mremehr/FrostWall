@@ -58,14 +58,7 @@ fn direct_unsplash_image(url: &str) -> GalleryImage {
         .next()
         .unwrap_or("unsplash");
     let id = sanitize_filename_token(tail);
-    GalleryImage {
-        id,
-        url: url.to_string(),
-        width: 0,
-        height: 0,
-        author: None,
-        source: Gallery::Unsplash,
-    }
+    GalleryImage::unsplash(id, url.to_string(), 0, 0, None)
 }
 
 fn normalize_wallhaven_id(value: &str) -> Option<String> {
@@ -94,14 +87,7 @@ fn wallhaven_image_url(id: &str, extension: &str) -> String {
 }
 
 fn wallhaven_image_from_id(id: String, extension: &str) -> GalleryImage {
-    GalleryImage {
-        id: id.clone(),
-        url: wallhaven_image_url(&id, extension),
-        width: 0,
-        height: 0,
-        author: None,
-        source: Gallery::Wallhaven,
-    }
+    GalleryImage::wallhaven(id.clone(), wallhaven_image_url(&id, extension), 0, 0)
 }
 
 pub async fn cmd_import(action: ImportAction, wallpaper_dir: &Path) -> Result<()> {
@@ -223,10 +209,7 @@ pub async fn cmd_import(action: ImportAction, wallpaper_dir: &Path) -> Result<()
                     // Try alternative URL formats for Wallhaven
                     if image.source == Gallery::Wallhaven {
                         // Try PNG format
-                        let png_image = GalleryImage {
-                            url: wallhaven_image_url(&image.id, "png"),
-                            ..image.clone()
-                        };
+                        let png_image = image.with_url(wallhaven_image_url(&image.id, "png"));
                         if let Ok(path) = importer.download(&png_image, wallpaper_dir).await {
                             println!("Downloaded to: {}", path.display());
                             println!("\nRun 'frostwall scan' to add it to the cache.");
