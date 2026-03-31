@@ -4,6 +4,25 @@ use rand::Rng;
 use walkdir::WalkDir;
 
 impl WallpaperCache {
+    fn cycling_match_for_screen(
+        &mut self,
+        screen: &Screen,
+        resolve_next: impl FnOnce(Option<usize>, usize) -> usize,
+    ) -> Option<&Wallpaper> {
+        let current_pos = self.screen_indices.get(&screen.name).copied();
+        let (next_pos, cache_idx) = {
+            let matching = self.matching_indices_for_screen(screen);
+            if matching.is_empty() {
+                return None;
+            }
+
+            let next_pos = resolve_next(current_pos, matching.len());
+            (next_pos, matching[next_pos])
+        };
+        self.screen_indices.insert(screen.name.clone(), next_pos);
+        self.wallpapers.get(cache_idx)
+    }
+
     pub(super) fn validate(&self) -> bool {
         self.validate_impl(true)
     }
@@ -132,35 +151,16 @@ impl WallpaperCache {
     }
 
     pub fn next_for_screen(&mut self, screen: &Screen) -> Option<&Wallpaper> {
-        let current_pos = self.screen_indices.get(&screen.name).copied();
-        let (next_pos, cache_idx) = {
-            let matching = self.matching_indices_for_screen(screen);
-            if matching.is_empty() {
-                return None;
-            }
-            let current = current_pos.unwrap_or_else(|| matching.len().saturating_sub(1));
-            let next = (current + 1) % matching.len();
-            (next, matching[next])
-        };
-        self.screen_indices.insert(screen.name.clone(), next_pos);
-        self.wallpapers.get(cache_idx)
+        self.cycling_match_for_screen(screen, |current_pos, len| {
+            let current = current_pos.unwrap_or_else(|| len.saturating_sub(1));
+            (current + 1) % len
+        })
     }
 
     pub fn prev_for_screen(&mut self, screen: &Screen) -> Option<&Wallpaper> {
-        let current_pos = self.screen_indices.get(&screen.name).copied().unwrap_or(0);
-        let (prev_pos, cache_idx) = {
-            let matching = self.matching_indices_for_screen(screen);
-            if matching.is_empty() {
-                return None;
-            }
-            let prev = if current_pos == 0 {
-                matching.len() - 1
-            } else {
-                current_pos - 1
-            };
-            (prev, matching[prev])
-        };
-        self.screen_indices.insert(screen.name.clone(), prev_pos);
-        self.wallpapers.get(cache_idx)
+        self.cycling_match_for_screen(screen, |current_pos, len| match current_pos.unwrap_or(0) {
+            0 => len - 1,
+            current => current - 1,
+        })
     }
 }
