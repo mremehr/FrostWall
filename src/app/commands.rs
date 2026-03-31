@@ -212,22 +212,7 @@ impl App {
 
             Command::Screen(args) => {
                 if let Ok(n) = args.parse::<usize>() {
-                    if n > 0 && n <= self.screens.len() {
-                        self.selection
-                            .screen_positions
-                            .insert(self.selection.screen_idx, self.selection.wallpaper_idx);
-                        self.selection.screen_idx = n - 1;
-                        self.update_filtered_wallpapers();
-                        if let Some(&pos) = self
-                            .selection
-                            .screen_positions
-                            .get(&self.selection.screen_idx)
-                        {
-                            if pos < self.selection.filtered_wallpapers.len() {
-                                self.selection.wallpaper_idx = pos;
-                            }
-                        }
-                    } else {
+                    if n == 0 || !self.switch_to_screen(n - 1) {
                         self.ui.status_message = Some(format!("Screen {} not found", n));
                     }
                 }

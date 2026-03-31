@@ -67,12 +67,18 @@ impl App {
     }
 
     /// Recompute the filtered wallpaper list based on screen, tag, and color filters.
-    /// Full update: filter, sort, reset thumbnail cache, schedule suggestions.
-    pub fn update_filtered_wallpapers(&mut self) {
+    /// Refresh filter/sort state without scheduling pairing suggestions.
+    pub(super) fn refresh_filtered_wallpapers_view(&mut self) {
         self.update_filtered_wallpapers_core();
         self.filters.available_colors = self.get_unique_colors();
         // Clear thumbnail state after filter changes so IDs don't drift/wrap.
         self.reset_thumbnail_cache();
+    }
+
+    /// Recompute the filtered wallpaper list based on screen, tag, and color filters.
+    /// Full update: filter, sort, reset thumbnail cache, schedule suggestions.
+    pub fn update_filtered_wallpapers(&mut self) {
+        self.refresh_filtered_wallpapers_view();
         self.schedule_pairing_suggestions_update();
     }
 

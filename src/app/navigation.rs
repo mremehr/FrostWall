@@ -18,6 +18,24 @@ fn find_position_by_path(
 }
 
 impl App {
+    fn remember_current_screen_position(&mut self) {
+        self.selection
+            .screen_positions
+            .insert(self.selection.screen_idx, self.selection.wallpaper_idx);
+    }
+
+    fn restore_saved_position_for_active_screen(&mut self) {
+        if let Some(&pos) = self
+            .selection
+            .screen_positions
+            .get(&self.selection.screen_idx)
+        {
+            if pos < self.selection.filtered_wallpapers.len() {
+                self.selection.wallpaper_idx = pos;
+            }
+        }
+    }
+
     /// Return the currently selected wallpaper, if any.
     pub fn selected_wallpaper(&self) -> Option<&Wallpaper> {
         self.selection
@@ -29,6 +47,22 @@ impl App {
     /// Return the currently selected screen, if any.
     pub fn selected_screen(&self) -> Option<&Screen> {
         self.screens.get(self.selection.screen_idx)
+    }
+
+    pub fn switch_to_screen(&mut self, screen_idx: usize) -> bool {
+        if self.screens.is_empty() || screen_idx >= self.screens.len() {
+            return false;
+        }
+        if screen_idx == self.selection.screen_idx {
+            return true;
+        }
+
+        self.remember_current_screen_position();
+        self.selection.screen_idx = screen_idx;
+        self.refresh_filtered_wallpapers_view();
+        self.restore_saved_position_for_active_screen();
+        self.schedule_pairing_suggestions_update();
+        true
     }
 
     /// Select the next wallpaper in the filtered list.
@@ -55,56 +89,20 @@ impl App {
     /// Switch to the next screen, preserving cursor position per screen.
     pub fn next_screen(&mut self) {
         if !self.screens.is_empty() {
-            // Save current position.
-            self.selection
-                .screen_positions
-                .insert(self.selection.screen_idx, self.selection.wallpaper_idx);
-
-            self.selection.screen_idx = (self.selection.screen_idx + 1) % self.screens.len();
-            self.update_filtered_wallpapers();
-
-            // Restore position for new screen (if saved).
-            if let Some(&pos) = self
-                .selection
-                .screen_positions
-                .get(&self.selection.screen_idx)
-            {
-                if pos < self.selection.filtered_wallpapers.len() {
-                    self.selection.wallpaper_idx = pos;
-                }
-            }
-
-            self.schedule_pairing_suggestions_update();
+            let next_screen_idx = (self.selection.screen_idx + 1) % self.screens.len();
+            let _ = self.switch_to_screen(next_screen_idx);
         }
     }
 
     /// Switch to the previous screen, preserving cursor position per screen.
     pub fn prev_screen(&mut self) {
         if !self.screens.is_empty() {
-            // Save current position.
-            self.selection
-                .screen_positions
-                .insert(self.selection.screen_idx, self.selection.wallpaper_idx);
-
-            self.selection.screen_idx = if self.selection.screen_idx == 0 {
+            let prev_screen_idx = if self.selection.screen_idx == 0 {
                 self.screens.len() - 1
             } else {
                 self.selection.screen_idx - 1
             };
-            self.update_filtered_wallpapers();
-
-            // Restore position for new screen (if saved).
-            if let Some(&pos) = self
-                .selection
-                .screen_positions
-                .get(&self.selection.screen_idx)
-            {
-                if pos < self.selection.filtered_wallpapers.len() {
-                    self.selection.wallpaper_idx = pos;
-                }
-            }
-
-            self.schedule_pairing_suggestions_update();
+            let _ = self.switch_to_screen(prev_screen_idx);
         }
     }
 
@@ -169,17 +167,9 @@ impl App {
             .or(first_restored_screen_idx)
             .unwrap_or(original_screen_idx);
 
-        self.update_filtered_wallpapers();
-
-        if let Some(&pos) = self
-            .selection
-            .screen_positions
-            .get(&self.selection.screen_idx)
-        {
-            if pos < self.selection.filtered_wallpapers.len() {
-                self.selection.wallpaper_idx = pos;
-            }
-        }
+        self.refresh_filtered_wallpapers_view();
+        self.restore_saved_position_for_active_screen();
+        self.schedule_pairing_suggestions_update();
     }
 
     /// Persist selection for every visited screen and remember active monitor.
@@ -195,9 +185,7 @@ impl App {
         }
 
         // Capture current screen position too, even if user exits without switching.
-        self.selection
-            .screen_positions
-            .insert(self.selection.screen_idx, self.selection.wallpaper_idx);
+        self.remember_current_screen_position();
 
         let original_screen_idx = self
             .selection
