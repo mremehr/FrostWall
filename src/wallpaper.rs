@@ -98,10 +98,18 @@ pub struct Wallpaper {
 /// Current cache format version — bump when the serialized shape changes
 const CACHE_VERSION: u32 = 1;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum CachePayload {
+    #[default]
+    Full,
+    Startup,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum CacheLoadMode {
     Full,
     MetadataOnly,
+    Startup,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,6 +131,9 @@ pub struct WallpaperCache {
     /// Precomputed palette features per wallpaper index for fast similarity search.
     #[serde(skip)]
     pub similarity_profiles: Vec<crate::utils::PaletteProfile>,
+    /// Tracks whether this instance was loaded from the lightweight startup cache.
+    #[serde(skip, default)]
+    pub(crate) payload: CachePayload,
 }
 
 #[derive(Debug, Default)]

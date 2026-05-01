@@ -70,11 +70,11 @@ ort = { version = "2.0.0-rc.11", optional = true }
 ndarray = { version = "0.16", optional = true }
 indicatif = { version = "0.17", optional = true }
 futures-util = { version = "0.3", optional = true }
-sha2 = { version = "0.10", optional = true }
+sha2 = "0.10"
 
 [features]
 default = []
-clip = ["dep:ort", "dep:ndarray", "dep:indicatif", "dep:futures-util", "dep:sha2"]
+clip = ["dep:ort", "dep:ndarray", "dep:indicatif", "dep:futures-util"]
 clip-cuda = ["clip", "ort/cuda"]
 
 [dev-dependencies]

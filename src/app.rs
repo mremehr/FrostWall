@@ -198,7 +198,7 @@ impl App {
         let cache = WallpaperCache::load_or_scan(
             &wallpaper_dir,
             config.wallpaper.recursive,
-            CacheLoadMode::MetadataOnly,
+            CacheLoadMode::Startup,
         )?;
 
         // Try to create image picker for thumbnail rendering

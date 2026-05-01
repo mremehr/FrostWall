@@ -243,7 +243,7 @@ mod tests {
     };
     use crate::pairing::{PairingHistory, PairingStyleMode};
     use crate::screen::AspectCategory;
-    use crate::wallpaper::{Wallpaper, WallpaperCache};
+    use crate::wallpaper::{CachePayload, Wallpaper, WallpaperCache};
     use lru::LruCache;
     use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
@@ -281,6 +281,7 @@ mod tests {
                 recursive: false,
                 screen_match_indices: HashMap::new(),
                 similarity_profiles: Vec::new(),
+                payload: CachePayload::Full,
             },
             config: Config::default(),
             ui: UiState::default(),

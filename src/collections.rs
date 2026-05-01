@@ -67,6 +67,26 @@ impl CollectionStore {
         Ok(())
     }
 
+    /// Rewrite wallpaper paths after files have been renamed on disk.
+    pub fn remap_paths(&mut self, mapping: &HashMap<PathBuf, PathBuf>) -> Result<usize> {
+        let mut updated = 0;
+
+        for collection in &mut self.collections {
+            for path in collection.wallpapers.values_mut() {
+                if let Some(new_path) = mapping.get(path) {
+                    *path = new_path.clone();
+                    updated += 1;
+                }
+            }
+        }
+
+        if updated > 0 {
+            self.save()?;
+        }
+
+        Ok(updated)
+    }
+
     /// Add a new collection
     pub fn add(
         &mut self,

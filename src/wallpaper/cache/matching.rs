@@ -1,6 +1,7 @@
 use crate::screen::Screen;
-use crate::wallpaper::{Wallpaper, WallpaperCache};
+use crate::wallpaper::{CachePayload, Wallpaper, WallpaperCache};
 use rand::Rng;
+use std::path::Path;
 use walkdir::WalkDir;
 
 impl WallpaperCache {
@@ -24,14 +25,19 @@ impl WallpaperCache {
     }
 
     pub(super) fn validate(&self) -> bool {
-        self.validate_impl(true)
+        self.validate_impl(true, &Self::cache_path())
     }
 
     pub(super) fn validate_for_ai(&self) -> bool {
-        self.validate_impl(false)
+        let cache_path = if self.payload == CachePayload::Startup {
+            Self::startup_cache_path()
+        } else {
+            Self::cache_path()
+        };
+        self.validate_impl(false, &cache_path)
     }
 
-    fn validate_impl(&self, require_color_data: bool) -> bool {
+    fn validate_impl(&self, require_color_data: bool, cache_path: &Path) -> bool {
         if !self.source_dir.exists() {
             return false;
         }
@@ -67,7 +73,7 @@ impl WallpaperCache {
         }
 
         if self.recursive {
-            if let Ok(cache_meta) = std::fs::metadata(Self::cache_path()) {
+            if let Ok(cache_meta) = std::fs::metadata(cache_path) {
                 if let Ok(cache_mtime) = cache_meta.modified() {
                     let cache_mtime_secs = cache_mtime
                         .duration_since(std::time::UNIX_EPOCH)

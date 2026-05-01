@@ -1,5 +1,6 @@
 use super::*;
 use crate::screen::Screen;
+use crate::wallpaper::CachePayload;
 
 /// Create a minimal Wallpaper for testing without filesystem access.
 fn test_wallpaper(width: u32, height: u32) -> Wallpaper {
@@ -320,6 +321,7 @@ fn test_next_for_screen_starts_from_first_matching_wallpaper() {
         recursive: false,
         screen_match_indices: HashMap::new(),
         similarity_profiles: Vec::new(),
+        payload: CachePayload::Full,
     };
 
     let selected = cache
@@ -342,6 +344,7 @@ fn test_prev_for_screen_starts_from_last_matching_wallpaper() {
         recursive: false,
         screen_match_indices: HashMap::new(),
         similarity_profiles: Vec::new(),
+        payload: CachePayload::Full,
     };
 
     let selected = cache
@@ -374,6 +377,7 @@ fn test_wallpaper_cache_serde_roundtrip_preserves_fields() {
         recursive: true,
         screen_match_indices: HashMap::new(),
         similarity_profiles: Vec::new(),
+        payload: CachePayload::Full,
     };
     cache.screen_indices.insert("DP-1".into(), 1);
 

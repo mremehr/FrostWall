@@ -13,6 +13,10 @@ impl WallpaperCache {
         project_cache_dir(PathBuf::from("/tmp")).join("wallpaper_cache.json")
     }
 
+    pub(super) fn startup_cache_path() -> PathBuf {
+        project_cache_dir(PathBuf::from("/tmp")).join("wallpaper_startup_cache.json")
+    }
+
     pub(super) fn rebuild_similarity_profiles(&mut self) {
         self.similarity_profiles = self
             .wallpapers

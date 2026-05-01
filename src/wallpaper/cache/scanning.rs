@@ -1,4 +1,4 @@
-use crate::wallpaper::{Wallpaper, WallpaperCache, CACHE_VERSION};
+use crate::wallpaper::{CachePayload, Wallpaper, WallpaperCache, CACHE_VERSION};
 use anyhow::{Context, Result};
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -90,6 +90,7 @@ fn build_cache(source_dir: &Path, recursive: bool, wallpapers: Vec<Wallpaper>) -
         recursive,
         screen_match_indices: HashMap::new(),
         similarity_profiles: Vec::new(),
+        payload: CachePayload::Full,
     };
     cache.rebuild_similarity_profiles();
     cache

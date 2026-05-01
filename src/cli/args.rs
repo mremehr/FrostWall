@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+use crate::organize::RenameScheme;
+
 #[derive(Parser)]
 #[command(name = "frostwall")]
 #[command(author = "MrMattias")]
@@ -107,6 +109,11 @@ pub(crate) enum Commands {
     Import {
         #[command(subcommand)]
         action: ImportAction,
+    },
+    /// Organize and normalize wallpaper filenames
+    Organize {
+        #[command(subcommand)]
+        action: OrganizeAction,
     },
 }
 
@@ -253,5 +260,27 @@ pub(crate) enum ImportAction {
     Download {
         /// Image URL or Wallhaven ID (e.g., "w8x7y9")
         url: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum OrganizeAction {
+    /// Rename wallpapers to a consistent aspect-based scheme
+    Rename {
+        /// Preview the rename plan without touching files
+        #[arg(short = 'n', long)]
+        dry_run: bool,
+
+        /// Repack numbering densely from 1 within each aspect bucket
+        #[arg(short, long)]
+        compact: bool,
+
+        /// Hash files and warn when two files have identical content
+        #[arg(short = 'w', long)]
+        warn_content_dupes: bool,
+
+        /// Naming scheme to use
+        #[arg(long, value_enum, default_value_t = RenameScheme::Native)]
+        scheme: RenameScheme,
     },
 }

@@ -2,6 +2,7 @@ use super::sections::Config;
 use crate::utils::project_config_dir;
 use crate::wallpaper_backend::Transition;
 use anyhow::Result;
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -49,6 +50,31 @@ impl Config {
         let data = toml::to_string_pretty(self)?;
         fs::write(&path, data)?;
         Ok(())
+    }
+
+    /// Rewrite persisted TUI session paths after wallpaper files are renamed.
+    pub fn remap_session_paths(&mut self, mapping: &HashMap<PathBuf, PathBuf>) -> Result<usize> {
+        let mut updated = 0;
+
+        if let Some(path) = self.session.last_selected_wallpaper.as_mut() {
+            if let Some(new_path) = mapping.get(path) {
+                *path = new_path.clone();
+                updated += 1;
+            }
+        }
+
+        for path in self.session.last_selected_wallpaper_by_screen.values_mut() {
+            if let Some(new_path) = mapping.get(path) {
+                *path = new_path.clone();
+                updated += 1;
+            }
+        }
+
+        if updated > 0 {
+            self.save()?;
+        }
+
+        Ok(updated)
     }
 
     /// Check if running in Kitty terminal.

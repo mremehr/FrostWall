@@ -83,6 +83,9 @@ pub(crate) async fn run() -> Result<()> {
         Some(Commands::Import { action }) => {
             cmd_import(action, &wallpaper_dir).await?;
         }
+        Some(Commands::Organize { action }) => {
+            cmd_organize(action, &wallpaper_dir)?;
+        }
         None => {
             // TUI mode
             app::run_tui(wallpaper_dir).await?;

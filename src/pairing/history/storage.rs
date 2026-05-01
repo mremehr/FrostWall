@@ -40,6 +40,37 @@ impl PairingHistory {
         Ok(())
     }
 
+    /// Rewrite wallpaper paths after a file rename operation.
+    pub fn remap_paths(&mut self, mapping: &HashMap<PathBuf, PathBuf>) -> Result<usize> {
+        let mut updated = 0;
+
+        for record in &mut self.data.records {
+            for path in record.wallpapers.values_mut() {
+                if let Some(new_path) = mapping.get(path) {
+                    *path = new_path.clone();
+                    updated += 1;
+                }
+            }
+        }
+
+        for score in &mut self.data.affinity_scores {
+            if let Some(new_path) = mapping.get(&score.wallpaper_a) {
+                score.wallpaper_a = new_path.clone();
+                updated += 1;
+            }
+            if let Some(new_path) = mapping.get(&score.wallpaper_b) {
+                score.wallpaper_b = new_path.clone();
+                updated += 1;
+            }
+        }
+
+        if updated > 0 {
+            self.save()?;
+        }
+
+        Ok(updated)
+    }
+
     /// Record a new pairing.
     pub fn record_pairing(&mut self, wallpapers: HashMap<String, PathBuf>, manual: bool) {
         self.end_current_pairing();

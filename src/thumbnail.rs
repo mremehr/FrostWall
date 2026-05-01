@@ -19,7 +19,6 @@ pub const MIN_THUMB_HEIGHT: u32 = 240;
 const JPEG_QUALITY: u8 = 92;
 const UNSHARP_SIGMA: f32 = 0.5;
 const UNSHARP_THRESHOLD: i32 = 1;
-#[cfg(any(test, feature = "clip"))]
 const THUMBNAIL_CACHE_PREFIX: &str = "thumbs_v";
 const THUMBNAIL_CACHE_VERSION: u32 = 3;
 
@@ -76,12 +75,15 @@ impl ThumbnailCache {
         format!("{:016x}.jpg", hasher.finish())
     }
 
+    pub fn cache_file_name_for_source(source_path: &Path) -> String {
+        Self::thumb_file_name(source_path)
+    }
+
     /// Generate a hash-based filename for the thumbnail
     fn thumb_filename(&self, source_path: &Path) -> PathBuf {
         self.cache_dir.join(Self::thumb_file_name(source_path))
     }
 
-    #[cfg(any(test, feature = "clip"))]
     fn cache_variant_dirs(root: &Path) -> Vec<PathBuf> {
         let mut variant_dirs: Vec<PathBuf> = match fs::read_dir(root) {
             Ok(entries) => entries
@@ -112,6 +114,29 @@ impl ThumbnailCache {
             b_version.cmp(&a_version).then_with(|| b_name.cmp(a_name))
         });
         variant_dirs
+    }
+
+    /// Remove cached thumbnails for renamed source files across all cache
+    /// variants so the cache does not accumulate stale entries.
+    pub fn purge_cache_file_names(file_names: &[String]) -> usize {
+        if file_names.is_empty() {
+            return 0;
+        }
+
+        let root = Self::cache_root();
+        let variant_dirs = Self::cache_variant_dirs(&root);
+        let mut removed = 0;
+
+        for file_name in file_names {
+            for dir in &variant_dirs {
+                let thumb_path = dir.join(file_name);
+                if thumb_path.exists() && fs::remove_file(&thumb_path).is_ok() {
+                    removed += 1;
+                }
+            }
+        }
+
+        removed
     }
 
     /// Check if a cached thumbnail exists and is valid
@@ -210,7 +235,6 @@ impl ThumbnailCache {
     }
 }
 
-#[cfg(any(test, feature = "clip"))]
 fn parse_thumbnail_cache_version(dir_name: &str) -> u32 {
     dir_name
         .strip_prefix(THUMBNAIL_CACHE_PREFIX)
