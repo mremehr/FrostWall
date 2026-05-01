@@ -132,6 +132,9 @@ pub struct ClipConfig {
     pub enabled: bool,
     /// Confidence threshold for tags (0.0-1.0)
     pub threshold: f32,
+    /// Number of images to send per CLIP inference pass
+    #[serde(default = "super::defaults::default_clip_batch_size")]
+    pub batch_size: usize,
     /// Include auto-tags in tag filter UI
     pub show_in_filter: bool,
     /// Cache embeddings for similarity search

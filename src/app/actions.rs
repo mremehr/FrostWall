@@ -85,7 +85,9 @@ impl App {
     pub fn rescan(&mut self) -> Result<String> {
         let recursive = self.config.wallpaper.recursive;
         let (added, removed) = self.cache.incremental_rescan(recursive)?;
+        self.reset_analysis_state();
         self.update_filtered_wallpapers();
+        self.queue_initial_color_analysis();
 
         let total = self.cache.wallpapers.len();
         let mut parts = vec![format!("{} wallpapers", total)];

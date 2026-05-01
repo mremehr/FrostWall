@@ -137,5 +137,7 @@ pub struct CacheStats {
 mod cache;
 mod model;
 
+pub(crate) use model::color::{extract_palette_from_image, extract_palette_from_path};
+
 #[cfg(test)]
 mod tests;

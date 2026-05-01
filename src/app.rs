@@ -6,13 +6,14 @@ use anyhow::Result;
 use crossterm::event;
 use lru::LruCache;
 use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::mpsc::SyncSender;
 use std::time::{Duration, Instant};
 
 mod actions;
+mod analysis;
 mod commands;
 mod config;
 mod filters;
@@ -29,7 +30,8 @@ pub use runtime::run_tui;
 pub struct ThumbnailRequest {
     pub cache_idx: usize,
     pub source_path: PathBuf,
-    pub generation: u64,
+    pub thumbnail_generation: u64,
+    pub analysis_generation: Option<u64>,
 }
 
 /// Response from thumbnail loading
@@ -39,10 +41,40 @@ pub struct ThumbnailResponse {
     pub generation: u64,
 }
 
+/// Failure while loading a thumbnail in the background.
+pub struct ThumbnailFailure {
+    pub cache_idx: usize,
+    pub generation: u64,
+}
+
+/// Request to extract color data in background.
+pub struct AnalysisRequest {
+    pub cache_idx: usize,
+    pub source_path: PathBuf,
+    pub generation: u64,
+}
+
+/// Response from background color analysis.
+pub struct AnalysisResponse {
+    pub cache_idx: usize,
+    pub colors: Vec<String>,
+    pub color_weights: Vec<f32>,
+    pub generation: u64,
+}
+
+/// Failure while extracting color data in the background.
+pub struct AnalysisFailure {
+    pub cache_idx: usize,
+    pub generation: u64,
+}
+
 /// Events from background threads
 pub enum AppEvent {
     Key(event::KeyEvent),
     ThumbnailReady(ThumbnailResponse),
+    ThumbnailFailed(ThumbnailFailure),
+    AnalysisReady(AnalysisResponse),
+    AnalysisFailed(AnalysisFailure),
     Resize,
     Tick,
 }
@@ -135,8 +167,15 @@ pub struct PairingState {
 pub struct ThumbnailState {
     pub image_picker: Option<Picker>,
     pub cache: LruCache<usize, Box<dyn StatefulProtocol>>,
-    pub loading: std::collections::HashSet<usize>,
+    pub loading: HashSet<usize>,
     request_tx: Option<SyncSender<ThumbnailRequest>>,
+    generation: u64,
+}
+
+/// Background color-analysis state used for fast-start TUI sessions.
+pub struct AnalysisState {
+    loading: HashSet<usize>,
+    request_tx: Option<SyncSender<AnalysisRequest>>,
     generation: u64,
 }
 
@@ -148,6 +187,7 @@ pub struct App {
     pub selection: SelectionState,
     pub filters: FilterState,
     pub thumbnails: ThumbnailState,
+    pub analysis: AnalysisState,
     pub pairing: PairingState,
 }
 
@@ -158,7 +198,7 @@ impl App {
         let cache = WallpaperCache::load_or_scan(
             &wallpaper_dir,
             config.wallpaper.recursive,
-            CacheLoadMode::Full,
+            CacheLoadMode::MetadataOnly,
         )?;
 
         // Try to create image picker for thumbnail rendering
@@ -189,7 +229,12 @@ impl App {
             thumbnails: ThumbnailState {
                 image_picker,
                 cache: LruCache::new(THUMBNAIL_CACHE_HARD_CAP),
-                loading: std::collections::HashSet::new(),
+                loading: HashSet::new(),
+                request_tx: None,
+                generation: 0,
+            },
+            analysis: AnalysisState {
+                loading: HashSet::new(),
                 request_tx: None,
                 generation: 0,
             },

@@ -68,6 +68,19 @@ fn handle_app_event<B: ratatui::backend::Backend>(
                 Ok(false)
             }
         }
+        AppEvent::ThumbnailFailed(failure) => {
+            app.handle_thumbnail_failed(failure);
+            *pending_thumbnail_redraw = false;
+            Ok(true)
+        }
+        AppEvent::AnalysisReady(response) => {
+            app.handle_analysis_ready(response);
+            Ok(true)
+        }
+        AppEvent::AnalysisFailed(failure) => {
+            app.handle_analysis_failed(failure);
+            Ok(true)
+        }
         AppEvent::Resize => {
             app.handle_resize();
             terminal.clear()?;

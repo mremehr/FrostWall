@@ -7,15 +7,15 @@
 //! (data/embeddings.bin) loaded at compile time via clip_embeddings_bin.rs.
 
 #[cfg(feature = "clip")]
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 #[cfg(feature = "clip")]
 use futures_util::StreamExt;
 #[cfg(feature = "clip")]
 use indicatif::{ProgressBar, ProgressStyle};
 #[cfg(feature = "clip")]
-use ndarray::Array4;
-#[cfg(feature = "clip")]
 use ort::session::Session;
+#[cfg(feature = "clip")]
+use rayon::prelude::*;
 #[cfg(feature = "clip")]
 use sha2::{Digest, Sha256};
 #[cfg(feature = "clip")]
@@ -35,6 +35,10 @@ use crate::utils::project_cache_dir;
 /// CLIP image input size (ViT-B/32)
 #[cfg(feature = "clip")]
 pub const CLIP_IMAGE_SIZE: u32 = 224;
+#[cfg(feature = "clip")]
+const CLIP_CHANNELS: usize = 3;
+#[cfg(feature = "clip")]
+const CLIP_SAMPLE_LEN: usize = CLIP_CHANNELS * CLIP_IMAGE_SIZE as usize * CLIP_IMAGE_SIZE as usize;
 
 /// Auto-generated tag with confidence score
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -297,6 +301,8 @@ pub struct ClipTagger {
     visual_session: Session,
     category_embeddings: Vec<(String, Vec<f32>)>,
     thumbnail_lookup: ThumbnailLookup,
+    batch_size: usize,
+    gpu_accelerated: bool,
 }
 
 #[cfg(feature = "clip")]
@@ -316,31 +322,40 @@ impl ClipTagger {
 
         // Try CUDA first, fall back to CPU
         #[cfg(feature = "clip-cuda")]
-        let visual_session = {
+        let (visual_session, gpu_accelerated) = {
             use ort::execution_providers::{CUDAExecutionProvider, ExecutionProvider};
 
             let cuda_available = CUDAExecutionProvider::default().is_available()?;
 
             if cuda_available {
                 eprintln!("Using CUDA GPU acceleration");
-                Session::builder()?
-                    .with_execution_providers([CUDAExecutionProvider::default().build()])?
-                    .commit_from_file(&visual_path)
-                    .context("Failed to load visual model with CUDA")?
+                (
+                    Session::builder()?
+                        .with_execution_providers([CUDAExecutionProvider::default().build()])?
+                        .commit_from_file(&visual_path)
+                        .context("Failed to load visual model with CUDA")?,
+                    true,
+                )
             } else {
                 eprintln!("CUDA not available, using CPU");
-                Session::builder()?
-                    .with_intra_threads(4)?
-                    .commit_from_file(&visual_path)
-                    .context("Failed to load visual model")?
+                (
+                    Session::builder()?
+                        .with_intra_threads(4)?
+                        .commit_from_file(&visual_path)
+                        .context("Failed to load visual model")?,
+                    false,
+                )
             }
         };
 
         #[cfg(not(feature = "clip-cuda"))]
-        let visual_session = Session::builder()?
-            .with_intra_threads(4)?
-            .commit_from_file(&visual_path)
-            .context("Failed to load visual model")?;
+        let (visual_session, gpu_accelerated) = (
+            Session::builder()?
+                .with_intra_threads(4)?
+                .commit_from_file(&visual_path)
+                .context("Failed to load visual model")?,
+            false,
+        );
 
         eprintln!("CLIP model loaded successfully");
 
@@ -352,116 +367,118 @@ impl ClipTagger {
                 config.thumbnails.height,
                 config.thumbnails.quality,
             ),
+            batch_size: config.clip.batch_size.max(1),
+            gpu_accelerated,
         })
     }
 
-    fn preprocess_image(&self, path: &Path) -> Result<Array4<f32>> {
-        // Prefer cached thumbnails over full-resolution originals.
-        let img = if let Some(thumb_path) = self.thumbnail_lookup.find(path) {
-            image::open(&thumb_path)
-                .or_else(|_| image::open(path))
-                .context("Failed to open image")?
-        } else {
-            image::open(path).context("Failed to open image")?
-        };
+    pub fn batch_size(&self) -> usize {
+        self.batch_size
+    }
 
-        // Resize to CLIP input size (Triangle is fast and good enough for 224x224)
-        let img = img.resize_exact(
-            CLIP_IMAGE_SIZE,
-            CLIP_IMAGE_SIZE,
-            image::imageops::FilterType::Triangle,
-        );
-        let rgb = img.to_rgb8();
+    pub fn is_gpu_accelerated(&self) -> bool {
+        self.gpu_accelerated
+    }
 
-        // CLIP normalization constants (ImageNet stats used by CLIP)
-        let mean = [0.481_454_66, 0.457_827_5, 0.408_210_73];
-        let std = [0.268_629_54, 0.261_302_6, 0.275_777_1];
+    pub fn analyze_images_batch_verbose(
+        &mut self,
+        image_paths: &[PathBuf],
+        threshold: f32,
+        verbose_first: bool,
+    ) -> Vec<Result<ClipAnalysis>> {
+        if image_paths.is_empty() {
+            return Vec::new();
+        }
 
-        let mut data = Vec::with_capacity(3 * CLIP_IMAGE_SIZE as usize * CLIP_IMAGE_SIZE as usize);
+        let lookup = &self.thumbnail_lookup;
+        let mut results: Vec<Option<Result<ClipAnalysis>>> = std::iter::repeat_with(|| None)
+            .take(image_paths.len())
+            .collect();
+        let preprocessed: Vec<_> = image_paths
+            .par_iter()
+            .map(|path| preprocess_image_with_lookup(lookup, path))
+            .collect();
+        let mut successful = Vec::with_capacity(image_paths.len());
 
-        // Convert to CHW format (channels first) and normalize
-        for c in 0..3 {
-            for y in 0..CLIP_IMAGE_SIZE {
-                for x in 0..CLIP_IMAGE_SIZE {
-                    let pixel = rgb.get_pixel(x, y);
-                    let value = (pixel[c] as f32 / 255.0 - mean[c]) / std[c];
-                    data.push(value);
+        for (index, prepared) in preprocessed.into_iter().enumerate() {
+            match prepared {
+                Ok(input) => successful.push((index, input)),
+                Err(err) => results[index] = Some(Err(err)),
+            }
+        }
+
+        if !successful.is_empty() {
+            let batch_result = self.run_batch_inference(&successful, threshold, verbose_first);
+            match batch_result {
+                Ok(analyses) => {
+                    for ((index, _), analysis) in successful.into_iter().zip(analyses) {
+                        results[index] = Some(Ok(analysis));
+                    }
+                }
+                Err(err) => {
+                    let message = format!("{err:#}");
+                    for (index, _) in successful {
+                        results[index] = Some(Err(anyhow::anyhow!(message.clone())));
+                    }
                 }
             }
         }
 
-        Ok(Array4::from_shape_vec(
-            (1, 3, CLIP_IMAGE_SIZE as usize, CLIP_IMAGE_SIZE as usize),
-            data,
-        )?)
+        results
+            .into_iter()
+            .map(|result| result.expect("batch analysis should populate every result"))
+            .collect()
     }
 
-    /// Analyze image with optional verbose output for debugging.
-    pub fn analyze_image_verbose(
+    fn run_batch_inference(
         &mut self,
-        image_path: &Path,
+        prepared: &[(usize, Vec<f32>)],
         threshold: f32,
-        verbose: bool,
-    ) -> Result<ClipAnalysis> {
-        // 1. Preprocess image to CLIP format
-        let input = self.preprocess_image(image_path)?;
+        verbose_first: bool,
+    ) -> Result<Vec<ClipAnalysis>> {
+        let batch_len = prepared.len();
+        let mut input_data = Vec::with_capacity(batch_len * CLIP_SAMPLE_LEN);
+        for (_, input) in prepared {
+            input_data.extend_from_slice(input);
+        }
 
-        // 2. Create input tensor from ndarray
-        let (input_data, _offset) = input.into_raw_vec_and_offset();
         let input_tensor = ort::value::Tensor::<f32>::from_array((
             [
-                1usize,
-                3,
+                batch_len,
+                CLIP_CHANNELS,
                 CLIP_IMAGE_SIZE as usize,
                 CLIP_IMAGE_SIZE as usize,
             ],
             input_data,
         ))?;
+        let embeddings = {
+            let outputs = self.visual_session.run(ort::inputs![input_tensor])?;
+            let (_, output_value) = outputs.iter().next().context("No output tensor found")?;
+            let tensor_ref = output_value
+                .try_extract_tensor::<f32>()
+                .context("Failed to extract embedding tensor")?;
 
-        // 3. Run visual encoder inference
-        let outputs = self.visual_session.run(ort::inputs![input_tensor])?;
+            let shape: Vec<usize> = tensor_ref.0.iter().map(|&x| x as usize).collect();
+            let embedding_data: &[f32] = tensor_ref.1;
 
-        // 4. Extract image embedding from output
-        // Get first output tensor
-        let (_, output_value) = outputs.iter().next().context("No output tensor found")?;
-
-        let tensor_ref = output_value
-            .try_extract_tensor::<f32>()
-            .context("Failed to extract embedding tensor")?;
-
-        let shape: Vec<usize> = tensor_ref.0.iter().map(|&x| x as usize).collect();
-        let embedding_data: &[f32] = tensor_ref.1;
-
-        if verbose {
-            eprintln!("  Output shape: {:?}", shape);
-            eprintln!("  Output data length: {}", embedding_data.len());
-        }
-
-        // Get the [CLS] token embedding (first token) or pooled output
-        let embedding: Vec<f32> = if shape.len() == 3 {
-            // Shape: [batch, seq_len, hidden_dim] - take first token (CLS)
-            let hidden_dim = shape[2];
-            if verbose {
-                eprintln!(
-                    "  3D tensor, taking first {} values (CLS token)",
-                    hidden_dim
-                );
+            if verbose_first {
+                eprintln!("  Output shape: {:?}", shape);
+                eprintln!("  Output data length: {}", embedding_data.len());
             }
-            embedding_data[..hidden_dim].to_vec()
-        } else if shape.len() == 2 {
-            // Shape: [batch, hidden_dim]
-            let hidden_dim = shape[1];
-            if verbose {
-                eprintln!("  2D tensor, taking {} values", hidden_dim);
-            }
-            embedding_data[..hidden_dim].to_vec()
-        } else {
-            if verbose {
-                eprintln!("  Using all {} values", embedding_data.len());
-            }
-            embedding_data.to_vec()
+
+            extract_batch_embeddings(&shape, embedding_data, batch_len, verbose_first)?
         };
+        let analyses = embeddings
+            .into_iter()
+            .enumerate()
+            .map(|(index, embedding)| {
+                self.build_analysis(embedding, threshold, verbose_first && index == 0)
+            })
+            .collect();
+        Ok(analyses)
+    }
 
+    fn build_analysis(&self, embedding: Vec<f32>, threshold: f32, verbose: bool) -> ClipAnalysis {
         if verbose {
             eprintln!("  Embedding dimension: {}", embedding.len());
             eprintln!("  Expected dimension: {}", EMBEDDING_DIM);
@@ -471,10 +488,7 @@ impl ClipTagger {
             );
         }
 
-        // 4. Project to CLIP embedding space if needed (512 dim)
         let projected = if embedding.len() != EMBEDDING_DIM {
-            // The raw hidden state is 768 dim, but we compare against 512-dim text embeddings
-            // For now, truncate or warn - ideally we'd have the projection layer
             eprintln!(
                 "WARNING: embedding dim {} != expected {}! Model may be incompatible.",
                 embedding.len(),
@@ -485,15 +499,7 @@ impl ClipTagger {
             embedding
         };
 
-        // 5. Normalize embedding
-        let norm: f32 = projected.iter().map(|x| x * x).sum::<f32>().sqrt();
-        let normalized: Vec<f32> = if norm > 0.0 {
-            projected.iter().map(|x| x / norm).collect()
-        } else {
-            projected
-        };
-
-        // 6. Compute cosine similarity with each category embedding
+        let normalized = normalize_embedding(projected);
         let mut tags = Vec::new();
         let mut all_scores: Vec<(&str, f32, f32)> = Vec::new();
 
@@ -505,13 +511,10 @@ impl ClipTagger {
                     .map(|(a, b)| a * b)
                     .sum()
             } else {
-                // Dimension mismatch - skip or use partial
                 0.0
             };
 
-            // CLIP similarities are typically in range [-1, 1], normalize to [0, 1]
             let confidence = (similarity + 1.0) / 2.0;
-
             all_scores.push((name, similarity, confidence));
 
             if confidence >= threshold {
@@ -524,7 +527,7 @@ impl ClipTagger {
 
         if verbose {
             eprintln!("  Raw similarities (top 5):");
-            let mut sorted_scores = all_scores.clone();
+            let mut sorted_scores = all_scores;
             sorted_scores
                 .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             for (name, sim, conf) in sorted_scores.iter().take(5) {
@@ -533,17 +536,16 @@ impl ClipTagger {
             eprintln!("  Tags above threshold {}: {}", threshold, tags.len());
         }
 
-        // Sort by confidence descending
         tags.sort_by(|a, b| {
             b.confidence
                 .partial_cmp(&a.confidence)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        Ok(ClipAnalysis {
+        ClipAnalysis {
             tags,
             embedding: normalized,
-        })
+        }
     }
 
     /// Get list of available tag categories
@@ -621,4 +623,146 @@ fn build_category_embeddings() -> Vec<(String, Vec<f32>)> {
     }
 
     categories
+}
+
+#[cfg(feature = "clip")]
+fn preprocess_image_with_lookup(
+    thumbnail_lookup: &ThumbnailLookup,
+    path: &Path,
+) -> Result<Vec<f32>> {
+    let img = if let Some(thumb_path) = thumbnail_lookup.find(path) {
+        image::open(&thumb_path)
+            .or_else(|_| image::open(path))
+            .context("Failed to open image")?
+    } else {
+        image::open(path).context("Failed to open image")?
+    };
+
+    let img = img.resize_exact(
+        CLIP_IMAGE_SIZE,
+        CLIP_IMAGE_SIZE,
+        image::imageops::FilterType::Triangle,
+    );
+    let rgb = img.to_rgb8();
+
+    let mean = [0.481_454_66, 0.457_827_5, 0.408_210_73];
+    let std = [0.268_629_54, 0.261_302_6, 0.275_777_1];
+    let mut data = Vec::with_capacity(CLIP_SAMPLE_LEN);
+
+    for channel in 0..CLIP_CHANNELS {
+        for y in 0..CLIP_IMAGE_SIZE {
+            for x in 0..CLIP_IMAGE_SIZE {
+                let pixel = rgb.get_pixel(x, y);
+                let value = (pixel[channel] as f32 / 255.0 - mean[channel]) / std[channel];
+                data.push(value);
+            }
+        }
+    }
+
+    Ok(data)
+}
+
+#[cfg(feature = "clip")]
+fn extract_batch_embeddings(
+    shape: &[usize],
+    embedding_data: &[f32],
+    batch_size: usize,
+    verbose: bool,
+) -> Result<Vec<Vec<f32>>> {
+    match shape {
+        [reported_batch, seq_len, hidden_dim] => {
+            ensure!(
+                *reported_batch == batch_size,
+                "Model returned batch {} for {} inputs",
+                reported_batch,
+                batch_size
+            );
+            let per_image = seq_len * hidden_dim;
+            ensure!(
+                embedding_data.len() == batch_size * per_image,
+                "Unexpected 3D output length {} for shape {:?}",
+                embedding_data.len(),
+                shape
+            );
+            if verbose {
+                eprintln!(
+                    "  3D tensor, taking first {} values per batch item (CLS token)",
+                    hidden_dim
+                );
+            }
+            Ok((0..batch_size)
+                .map(|batch_index| {
+                    let start = batch_index * per_image;
+                    embedding_data[start..start + hidden_dim].to_vec()
+                })
+                .collect())
+        }
+        [reported_batch, hidden_dim] => {
+            ensure!(
+                *reported_batch == batch_size,
+                "Model returned batch {} for {} inputs",
+                reported_batch,
+                batch_size
+            );
+            ensure!(
+                embedding_data.len() == batch_size * hidden_dim,
+                "Unexpected 2D output length {} for shape {:?}",
+                embedding_data.len(),
+                shape
+            );
+            if verbose {
+                eprintln!("  2D tensor, taking {} values per batch item", hidden_dim);
+            }
+            Ok((0..batch_size)
+                .map(|batch_index| {
+                    let start = batch_index * hidden_dim;
+                    embedding_data[start..start + hidden_dim].to_vec()
+                })
+                .collect())
+        }
+        [_] if batch_size == 1 => {
+            if verbose {
+                eprintln!("  Using all {} values", embedding_data.len());
+            }
+            Ok(vec![embedding_data.to_vec()])
+        }
+        _ => anyhow::bail!(
+            "Unsupported CLIP output shape {:?} for batch size {}",
+            shape,
+            batch_size
+        ),
+    }
+}
+
+#[cfg(all(test, feature = "clip"))]
+mod tests {
+    use super::extract_batch_embeddings;
+
+    #[test]
+    fn extract_batch_embeddings_reads_cls_token_per_item() {
+        let embeddings = extract_batch_embeddings(
+            &[2, 3, 4],
+            &[
+                1.0, 2.0, 3.0, 4.0, 40.0, 41.0, 42.0, 43.0, 80.0, 81.0, 82.0, 83.0, 5.0, 6.0, 7.0,
+                8.0, 50.0, 51.0, 52.0, 53.0, 90.0, 91.0, 92.0, 93.0,
+            ],
+            2,
+            false,
+        )
+        .expect("extract embeddings");
+
+        assert_eq!(
+            embeddings,
+            vec![vec![1.0, 2.0, 3.0, 4.0], vec![5.0, 6.0, 7.0, 8.0]]
+        );
+    }
+
+    #[test]
+    fn extract_batch_embeddings_reads_pooled_2d_output() {
+        let embeddings =
+            extract_batch_embeddings(&[2, 3], &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, false)
+                .expect("extract embeddings");
+
+        assert_eq!(embeddings, vec![vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]]);
+    }
 }

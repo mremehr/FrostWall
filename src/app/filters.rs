@@ -154,6 +154,25 @@ impl App {
     /// Toggle color display for selected wallpaper.
     pub fn toggle_colors(&mut self) {
         self.ui.show_colors = !self.ui.show_colors;
+        if self.ui.show_colors {
+            if let Some(cache_idx) = self
+                .selection
+                .filtered_wallpapers
+                .get(self.selection.wallpaper_idx)
+                .copied()
+            {
+                if self
+                    .cache
+                    .wallpapers
+                    .get(cache_idx)
+                    .is_some_and(|wp| wp.colors.is_empty())
+                {
+                    self.request_color_analysis(cache_idx);
+                    self.ui.status_message =
+                        Some("Analyzing colors for selected wallpaper…".to_string());
+                }
+            }
+        }
     }
 
     /// Cycle through available tags as filter.
@@ -197,6 +216,18 @@ impl App {
 
     /// Toggle color picker popup.
     pub fn toggle_color_picker(&mut self) {
+        if self.filters.available_colors.is_empty() {
+            if let Some(cache_idx) = self
+                .selection
+                .filtered_wallpapers
+                .get(self.selection.wallpaper_idx)
+                .copied()
+            {
+                self.request_color_analysis(cache_idx);
+            }
+            self.ui.status_message = Some("Color index is still warming up…".to_string());
+            return;
+        }
         self.filters.color_picker_idx = 0;
         self.ui.show_color_picker = !self.ui.show_color_picker;
     }

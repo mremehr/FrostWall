@@ -1,5 +1,5 @@
 use super::{
-    App, Config, ThumbnailRequest, ThumbnailResponse, THUMBNAIL_CACHE_HARD_CAP,
+    App, Config, ThumbnailFailure, ThumbnailRequest, ThumbnailResponse, THUMBNAIL_CACHE_HARD_CAP,
     THUMBNAIL_CACHE_MULTIPLIER,
 };
 use ratatui_image::{
@@ -12,6 +12,33 @@ const THUMBNAIL_MAX_IN_FLIGHT_MULTIPLIER: usize = 2;
 const CAROUSEL_VISIBLE_TARGET: usize = 5;
 
 impl App {
+    pub(super) fn current_thumbnail_priority_indices(&self) -> Vec<usize> {
+        let total = self.selection.filtered_wallpapers.len();
+        if total == 0 {
+            return Vec::new();
+        }
+
+        let visible = self
+            .config
+            .thumbnails
+            .grid_columns
+            .max(CAROUSEL_VISIBLE_TARGET)
+            .max(1);
+        let preload = self.config.thumbnails.preload_count;
+        let center = self.selection.wallpaper_idx.min(total.saturating_sub(1));
+        let radius = preload.saturating_add(visible / 2);
+        let start = center.saturating_sub(radius);
+        let end = (center + radius + 1).min(total);
+
+        self.selection.filtered_wallpapers[start..end].to_vec()
+    }
+
+    pub fn queue_initial_thumbnail_warmup(&mut self) {
+        for cache_idx in self.current_thumbnail_priority_indices() {
+            self.request_thumbnail(cache_idx);
+        }
+    }
+
     /// Request a thumbnail to be loaded in background.
     pub fn request_thumbnail(&mut self, cache_idx: usize) {
         // Bounds check.
@@ -32,13 +59,23 @@ impl App {
 
         if let Some(wp) = self.cache.wallpapers.get(cache_idx) {
             if let Some(tx) = &self.thumbnails.request_tx {
+                let analysis_generation =
+                    if wp.colors.is_empty() && !self.analysis.loading.contains(&cache_idx) {
+                        self.analysis.loading.insert(cache_idx);
+                        Some(self.analysis.generation)
+                    } else {
+                        None
+                    };
                 let request = ThumbnailRequest {
                     cache_idx,
                     source_path: wp.path.clone(),
-                    generation: self.thumbnails.generation,
+                    thumbnail_generation: self.thumbnails.generation,
+                    analysis_generation,
                 };
                 if tx.try_send(request).is_ok() {
                     self.thumbnails.loading.insert(cache_idx);
+                } else if analysis_generation.is_some() {
+                    self.analysis.loading.remove(&cache_idx);
                 }
             }
         }
@@ -126,6 +163,23 @@ impl App {
         }
     }
 
+    pub fn handle_thumbnail_failed(&mut self, failure: ThumbnailFailure) {
+        if failure.generation != self.thumbnails.generation {
+            return;
+        }
+
+        self.thumbnails.loading.remove(&failure.cache_idx);
+
+        let selected_cache_idx = self
+            .selection
+            .filtered_wallpapers
+            .get(self.selection.wallpaper_idx)
+            .copied();
+        if selected_cache_idx == Some(failure.cache_idx) {
+            self.ui.status_message = Some("Failed to load thumbnail".to_string());
+        }
+    }
+
     /// Purge all Kitty graphics protocol images from the terminal.
     ///
     /// Sends `APC G a=d,d=A ST` which deletes every stored image and its
@@ -184,7 +238,9 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{FilterState, PairingState, SelectionState, ThumbnailState, UiState};
+    use crate::app::{
+        AnalysisState, FilterState, PairingState, SelectionState, ThumbnailState, UiState,
+    };
     use crate::pairing::{PairingHistory, PairingStyleMode};
     use crate::screen::AspectCategory;
     use crate::wallpaper::{Wallpaper, WallpaperCache};
@@ -233,6 +289,11 @@ mod tests {
             thumbnails: ThumbnailState {
                 image_picker: None,
                 cache: LruCache::new(THUMBNAIL_CACHE_HARD_CAP),
+                loading: HashSet::new(),
+                request_tx: None,
+                generation: 0,
+            },
+            analysis: AnalysisState {
                 loading: HashSet::new(),
                 request_tx: None,
                 generation: 0,

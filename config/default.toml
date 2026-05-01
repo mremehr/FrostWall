@@ -60,6 +60,22 @@ mode = "auto"
 # How often to check for theme changes (ms)
 check_interval_ms = 500
 
+[clip]
+# Enable CLIP auto-tagging and semantic embeddings
+enabled = false
+
+# Confidence threshold for auto-generated tags
+threshold = 0.25
+
+# Images per inference pass. Larger batches help CUDA throughput.
+batch_size = 16
+
+# Show auto-tags in filter UI
+show_in_filter = true
+
+# Persist CLIP embeddings for semantic similarity and pairing
+cache_embeddings = true
+
 [keybindings]
 # Navigation
 next = "l"

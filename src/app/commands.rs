@@ -258,6 +258,12 @@ impl App {
             let Some(current_wp) = self.cache.wallpapers.get(current_cache_idx) else {
                 return;
             };
+            if current_wp.colors.is_empty() {
+                self.request_color_analysis(current_cache_idx);
+                self.ui.status_message =
+                    Some("Analyzing colors for selected wallpaper…".to_string());
+                return;
+            }
             let Some(current_profile) = self.cache.similarity_profiles.get(current_cache_idx)
             else {
                 return;

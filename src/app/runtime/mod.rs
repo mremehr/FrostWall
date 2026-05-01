@@ -3,8 +3,8 @@ mod input;
 mod workers;
 
 use self::event_loop::run_app;
-use self::workers::{input_worker, thumbnail_worker};
-use super::{App, AppEvent, ThumbnailRequest};
+use self::workers::{analysis_worker, input_worker, thumbnail_worker};
+use super::{AnalysisRequest, App, AppEvent, ThumbnailRequest};
 use crate::thumbnail::{effective_thumbnail_bounds, ThumbnailCache};
 use anyhow::Result;
 use crossterm::{
@@ -19,6 +19,7 @@ use std::thread;
 use std::time::Duration;
 
 const THUMBNAIL_REQUEST_QUEUE_CAPACITY: usize = 512;
+const ANALYSIS_REQUEST_QUEUE_CAPACITY: usize = 4096;
 const APP_EVENT_QUEUE_CAPACITY: usize = 1024;
 pub(super) const THUMBNAIL_REDRAW_INTERVAL: Duration = Duration::from_millis(16);
 
@@ -57,10 +58,13 @@ pub async fn run_tui(wallpaper_dir: PathBuf) -> Result<()> {
     // Bounded queue prevents unlimited backlog during rapid scrolling.
     let (thumb_tx, thumb_rx) =
         mpsc::sync_channel::<ThumbnailRequest>(THUMBNAIL_REQUEST_QUEUE_CAPACITY);
+    let (analysis_tx, analysis_rx) =
+        mpsc::sync_channel::<AnalysisRequest>(ANALYSIS_REQUEST_QUEUE_CAPACITY);
     // Bounded event queue avoids unbounded memory growth during heavy thumbnail churn.
     let (event_tx, event_rx) = mpsc::sync_channel::<AppEvent>(APP_EVENT_QUEUE_CAPACITY);
 
     app.set_thumb_channel(thumb_tx);
+    app.set_analysis_channel(analysis_tx);
 
     // Spawn thumbnail worker thread.
     let event_tx_thumb = event_tx.clone();
@@ -71,11 +75,21 @@ pub async fn run_tui(wallpaper_dir: PathBuf) -> Result<()> {
         thumbnail_worker(thumb_rx, event_tx_thumb, disk_cache);
     });
 
+    // Spawn background color-analysis worker so cold starts can render
+    // immediately and fill in palette/similarity data progressively.
+    let event_tx_analysis = event_tx.clone();
+    thread::spawn(move || {
+        analysis_worker(analysis_rx, event_tx_analysis);
+    });
+
     // Spawn event polling thread.
     let event_tx_input = event_tx.clone();
     thread::spawn(move || {
         input_worker(event_tx_input);
     });
+
+    app.queue_initial_thumbnail_warmup();
+    app.queue_initial_color_analysis();
 
     let res = run_app(&mut terminal, &mut app, event_rx);
 

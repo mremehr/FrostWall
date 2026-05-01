@@ -36,45 +36,66 @@ pub async fn cmd_auto_tag(
         return Ok(());
     }
 
-    println!("Auto-tagging {} wallpapers...", to_process.len());
+    let batch_size = tagger.batch_size();
+    let backend = if tagger.is_gpu_accelerated() {
+        "CUDA"
+    } else {
+        "CPU"
+    };
+    println!(
+        "Auto-tagging {} wallpapers in batches of {} ({backend})...",
+        to_process.len(),
+        batch_size,
+    );
 
-    for (progress, idx) in to_process.iter().enumerate() {
-        let wp = &cache.wallpapers[*idx];
-        let path = wp.path.clone();
-
-        // Show verbose debug output only for first image
-        let show_debug = verbose && progress == 0;
+    for (batch_index, chunk) in to_process.chunks(batch_size).enumerate() {
+        let batch_paths: Vec<_> = chunk
+            .iter()
+            .map(|idx| cache.wallpapers[*idx].path.clone())
+            .collect();
+        let show_debug = verbose && batch_index == 0;
         if show_debug {
             eprintln!("\n=== Debug output for first image ===");
-            eprintln!("Image: {}", path.display());
+            if let Some(path) = batch_paths.first() {
+                eprintln!("Image: {}", path.display());
+            }
         }
 
-        match tagger.analyze_image_verbose(&path, threshold, show_debug) {
-            Ok(mut analysis) => {
-                // Limit to max_tags (tags are already sorted by confidence)
-                if max_tags > 0 && analysis.tags.len() > max_tags {
-                    analysis.tags.truncate(max_tags);
-                }
+        for (offset, (idx, result)) in chunk
+            .iter()
+            .copied()
+            .zip(tagger.analyze_images_batch_verbose(&batch_paths, threshold, show_debug))
+            .enumerate()
+        {
+            let progress = batch_index * batch_size + offset;
+            let path = batch_paths[offset].clone();
 
-                if verbose {
-                    let tag_names: Vec<_> = analysis.tags.iter().map(|t| &t.name).collect();
-                    println!(
-                        "[{}/{}] {}: {:?} (emb={})",
-                        progress + 1,
-                        to_process.len(),
-                        utils::display_path_name(&path),
-                        tag_names,
-                        analysis.embedding.len(),
-                    );
-                } else if (progress + 1) % 10 == 0 || progress + 1 == to_process.len() {
-                    eprint!("\rProgress: {}/{}", progress + 1, to_process.len());
-                }
+            match result {
+                Ok(mut analysis) => {
+                    if max_tags > 0 && analysis.tags.len() > max_tags {
+                        analysis.tags.truncate(max_tags);
+                    }
 
-                cache.wallpapers[*idx].set_auto_tags(analysis.tags);
-                cache.wallpapers[*idx].set_embedding(analysis.embedding);
-            }
-            Err(e) => {
-                eprintln!("\nWarning: Failed to tag {}: {}", path.display(), e);
+                    if verbose {
+                        let tag_names: Vec<_> = analysis.tags.iter().map(|t| &t.name).collect();
+                        println!(
+                            "[{}/{}] {}: {:?} (emb={})",
+                            progress + 1,
+                            to_process.len(),
+                            utils::display_path_name(&path),
+                            tag_names,
+                            analysis.embedding.len(),
+                        );
+                    } else if (progress + 1) % 10 == 0 || progress + 1 == to_process.len() {
+                        eprint!("\rProgress: {}/{}", progress + 1, to_process.len());
+                    }
+
+                    cache.wallpapers[idx].set_auto_tags(analysis.tags);
+                    cache.wallpapers[idx].set_embedding(analysis.embedding);
+                }
+                Err(e) => {
+                    eprintln!("\nWarning: Failed to tag {}: {}", path.display(), e);
+                }
             }
         }
     }

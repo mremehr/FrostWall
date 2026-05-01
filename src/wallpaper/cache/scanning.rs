@@ -217,7 +217,6 @@ impl WallpaperCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wallpaper::CacheLoadMode;
     use std::fs;
 
     fn make_test_image(dir: &std::path::Path, name: &str) {
@@ -311,17 +310,18 @@ mod tests {
     fn test_cache_save_load_roundtrip() {
         let dir = tempfile::tempdir().expect("create tempdir");
         make_test_image(dir.path(), "roundtrip.png");
-
-        // Override cache path via environment is not feasible without refactor;
-        // verify save() doesn't panic and returns Ok for a valid cache.
-        let cache = WallpaperCache::load_or_scan(dir.path(), false, CacheLoadMode::Full)
-            .expect("load_or_scan should succeed");
+        let cache =
+            WallpaperCache::scan_recursive(dir.path(), false).expect("scan_recursive should work");
 
         assert!(
             !cache.wallpapers.is_empty(),
             "should contain at least one wallpaper"
         );
-        // save() writes to the real project cache dir — just verify it succeeds.
-        cache.save().expect("save should not error");
+        let save_path = dir.path().join("cache.json");
+        cache
+            .save_to(&save_path)
+            .expect("save_to should persist in tempdir");
+        let roundtrip = WallpaperCache::load_from(&save_path).expect("load_from should work");
+        assert_eq!(roundtrip.wallpapers.len(), cache.wallpapers.len());
     }
 }

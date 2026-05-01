@@ -29,6 +29,7 @@ const DEFAULT_PAIRING_UNDO_WINDOW_SECS: u64 = 5;
 const DEFAULT_PAIRING_AUTO_APPLY_THRESHOLD: f32 = 0.7;
 const DEFAULT_PAIRING_MAX_HISTORY_RECORDS: usize = 1000;
 const DEFAULT_CLIP_THRESHOLD: f32 = 0.25;
+const DEFAULT_CLIP_BATCH_SIZE: usize = 16;
 const DEFAULT_WALLPAPER_EXTENSIONS: [&str; 6] = ["jpg", "jpeg", "png", "webp", "bmp", "gif"];
 const DEFAULT_KEY_NEXT: &str = "l";
 const DEFAULT_KEY_PREV: &str = "h";
@@ -82,6 +83,10 @@ pub(super) fn default_pairing_semantic_weight() -> f32 {
 
 pub(super) fn default_pairing_repetition_penalty_weight() -> f32 {
     DEFAULT_PAIRING_REPETITION_PENALTY_WEIGHT
+}
+
+pub(super) fn default_clip_batch_size() -> usize {
+    DEFAULT_CLIP_BATCH_SIZE
 }
 
 impl Default for WallpaperConfig {
@@ -173,6 +178,7 @@ impl Default for ClipConfig {
         Self {
             enabled: false,
             threshold: DEFAULT_CLIP_THRESHOLD,
+            batch_size: DEFAULT_CLIP_BATCH_SIZE,
             show_in_filter: true,
             cache_embeddings: true,
             visual_model_url: None,

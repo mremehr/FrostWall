@@ -25,6 +25,9 @@ pub(super) struct RuntimePerf {
     pub event_process_max: Duration,
     pub key_events: u64,
     pub thumbnail_events: u64,
+    pub thumbnail_fail_events: u64,
+    pub analysis_events: u64,
+    pub analysis_fail_events: u64,
     pub resize_events: u64,
     pub tick_events: u64,
 }
@@ -43,6 +46,9 @@ impl RuntimePerf {
             event_process_max: Duration::ZERO,
             key_events: 0,
             thumbnail_events: 0,
+            thumbnail_fail_events: 0,
+            analysis_events: 0,
+            analysis_fail_events: 0,
             resize_events: 0,
             tick_events: 0,
         }
@@ -76,6 +82,15 @@ impl RuntimePerf {
             AppEvent::ThumbnailReady(_) => {
                 self.thumbnail_events = self.thumbnail_events.saturating_add(1)
             }
+            AppEvent::ThumbnailFailed(_) => {
+                self.thumbnail_fail_events = self.thumbnail_fail_events.saturating_add(1)
+            }
+            AppEvent::AnalysisReady(_) => {
+                self.analysis_events = self.analysis_events.saturating_add(1)
+            }
+            AppEvent::AnalysisFailed(_) => {
+                self.analysis_fail_events = self.analysis_fail_events.saturating_add(1)
+            }
             AppEvent::Resize => self.resize_events = self.resize_events.saturating_add(1),
             AppEvent::Tick => self.tick_events = self.tick_events.saturating_add(1),
         }
@@ -103,7 +118,7 @@ impl RuntimePerf {
         };
 
         eprintln!(
-            "[perf][runtime] draws={} draw_avg={:.2}ms draw_max={:.2}ms batches={} events={} ev/batch={:.2} process_avg={:.2}ms process_max={:.2}ms key={} thumb={} resize={} tick={}",
+            "[perf][runtime] draws={} draw_avg={:.2}ms draw_max={:.2}ms batches={} events={} ev/batch={:.2} process_avg={:.2}ms process_max={:.2}ms key={} thumb={} thumb_fail={} analysis={} analysis_fail={} resize={} tick={}",
             self.draw_count,
             draw_avg_ms,
             self.draw_max.as_secs_f64() * 1000.0,
@@ -114,6 +129,9 @@ impl RuntimePerf {
             self.event_process_max.as_secs_f64() * 1000.0,
             self.key_events,
             self.thumbnail_events,
+            self.thumbnail_fail_events,
+            self.analysis_events,
+            self.analysis_fail_events,
             self.resize_events,
             self.tick_events
         );
