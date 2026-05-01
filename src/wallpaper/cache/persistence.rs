@@ -1,6 +1,7 @@
 use crate::wallpaper::{CacheLoadMode, WallpaperCache, CACHE_VERSION};
 use anyhow::Result;
 use std::fs;
+use std::io::{BufReader, BufWriter, Write};
 use std::path::Path;
 
 impl WallpaperCache {
@@ -9,8 +10,7 @@ impl WallpaperCache {
         let cache_path = Self::cache_path();
 
         if cache_path.exists() {
-            let data = fs::read_to_string(&cache_path)?;
-            if let Ok(mut cache) = serde_json::from_str::<WallpaperCache>(&data) {
+            if let Ok(mut cache) = Self::read_cache_file(&cache_path) {
                 if cache.version != CACHE_VERSION {
                     eprintln!(
                         "Cache format changed (v{} -> v{}), rescanning...",
@@ -86,33 +86,40 @@ impl WallpaperCache {
 
     pub fn save(&self) -> Result<()> {
         let cache_path = Self::cache_path();
+        Self::write_cache_file(&cache_path, self)
+    }
 
-        if let Some(parent) = cache_path.parent() {
+    fn write_cache_file(path: &Path, cache: &Self) -> Result<()> {
+        if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
 
-        let file = fs::File::create(&cache_path)?;
-        serde_json::to_writer_pretty(std::io::BufWriter::new(file), self)?;
-
+        let temp_path = path.with_extension("json.tmp");
+        let file = fs::File::create(&temp_path)?;
+        let mut writer = BufWriter::new(file);
+        serde_json::to_writer(&mut writer, cache)?;
+        writer.flush()?;
+        drop(writer);
+        fs::rename(temp_path, path)?;
         Ok(())
+    }
+
+    fn read_cache_file(path: &Path) -> Result<Self> {
+        let file = fs::File::open(path)?;
+        let reader = BufReader::new(file);
+        Ok(serde_json::from_reader(reader)?)
     }
 
     /// Serialize cache to a caller-specified path (used in tests).
     #[cfg(test)]
     pub(crate) fn save_to(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let file = fs::File::create(path)?;
-        serde_json::to_writer_pretty(std::io::BufWriter::new(file), self)?;
-        Ok(())
+        Self::write_cache_file(path, self)
     }
 
     /// Deserialize cache from a caller-specified path (used in tests).
     #[cfg(test)]
     pub(crate) fn load_from(path: &Path) -> Result<Self> {
-        let data = fs::read_to_string(path)?;
-        Ok(serde_json::from_str(&data)?)
+        Self::read_cache_file(path)
     }
 }
 
@@ -168,6 +175,16 @@ mod tests {
         assert_eq!(loaded.wallpapers[0].colors, original.wallpapers[0].colors);
         assert_eq!(loaded.source_dir, original.source_dir);
         assert_eq!(loaded.recursive, original.recursive);
+    }
+
+    #[test]
+    fn test_save_writes_compact_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = minimal_cache(dir.path());
+        let path = dir.path().join("cache.json");
+        cache.save_to(&path).unwrap();
+        let contents = fs::read_to_string(&path).unwrap();
+        assert!(!contents.contains('\n'));
     }
 
     #[test]
