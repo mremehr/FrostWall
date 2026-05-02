@@ -194,45 +194,15 @@ fn fit_slot_widths(
         sum = widths.iter().copied().sum();
     }
     if sum < max_slots_width {
-        let mut selected_streak: u8 = 0;
-        while sum < max_slots_width {
-            let selected_candidate = if selected_streak < 3 {
-                widths
-                    .get(selected_slot)
-                    .copied()
-                    .filter(|width| *width < selected_cap)
-                    .map(|_| selected_slot)
-            } else {
-                None
-            };
-            let non_selected_candidate = widths
-                .iter()
-                .enumerate()
-                .filter(|(idx, width)| {
-                    *idx != selected_slot
-                        && **width < slot_max_widths.get(*idx).copied().unwrap_or(1)
-                })
-                .max_by_key(|(_, width)| *width)
-                .map(|(idx, _)| idx);
-            let fallback_candidate = widths
-                .get(selected_slot)
-                .copied()
-                .filter(|width| *width < selected_cap)
-                .map(|_| selected_slot);
-
-            let Some(idx) = selected_candidate
-                .or(non_selected_candidate)
-                .or(fallback_candidate)
-            else {
-                break;
-            };
-            widths[idx] = widths[idx].saturating_add(1);
-            sum = sum.saturating_add(1);
-            if idx == selected_slot {
-                selected_streak = selected_streak.saturating_add(1);
-            } else {
-                selected_streak = 0;
-            }
+        // Keep side thumbnails at stable sizes across adjacent scroll steps.
+        // ratatui-image performs resize/encode on size changes, so spreading
+        // spare columns across non-selected slots forces most visible images
+        // to be re-encoded whenever the selection moves.
+        if let Some(width) = widths.get_mut(selected_slot) {
+            let grow_by = max_slots_width
+                .saturating_sub(sum)
+                .min(selected_cap.saturating_sub(*width));
+            *width = width.saturating_add(grow_by);
         }
         return widths;
     } else if sum <= max_slots_width {
@@ -386,7 +356,7 @@ pub(super) fn build_carousel_plan(app: &App, area: Rect) -> Option<CarouselPlan>
             .unwrap_or(selected_min_width),
     );
 
-    let mut base_slot_widths: Vec<u16> = slot_specs
+    let base_slot_widths: Vec<u16> = slot_specs
         .iter()
         .enumerate()
         .map(|(offset, spec)| {
@@ -400,31 +370,6 @@ pub(super) fn build_carousel_plan(app: &App, area: Rect) -> Option<CarouselPlan>
                 .max(1)
         })
         .collect();
-    if visible > 1 {
-        let center = visible / 2;
-        for (idx, width) in base_slot_widths.iter_mut().enumerate() {
-            if idx == selected_slot {
-                continue;
-            }
-            let distance = idx.abs_diff(center);
-            let scale = match distance {
-                0 => 1.0,
-                1 => 0.90,
-                _ => 0.78,
-            };
-            let cap = slot_max_widths
-                .get(idx)
-                .copied()
-                .unwrap_or(MAX_SLOT_WIDTH)
-                .max(1);
-            let cap = coupled_slot_max_widths
-                .get(idx)
-                .copied()
-                .unwrap_or(cap)
-                .max(1);
-            *width = ((*width as f32) * scale).round().clamp(1.0, cap as f32) as u16;
-        }
-    }
     let slot_widths = fit_slot_widths(
         &base_slot_widths,
         &coupled_slot_max_widths,
@@ -432,7 +377,7 @@ pub(super) fn build_carousel_plan(app: &App, area: Rect) -> Option<CarouselPlan>
         selected_slot,
         selected_min_width,
     );
-    let mut slot_heights: Vec<u16> = slot_widths
+    let slot_heights: Vec<u16> = slot_widths
         .iter()
         .zip(slot_specs.iter())
         .enumerate()
@@ -441,32 +386,6 @@ pub(super) fn build_carousel_plan(app: &App, area: Rect) -> Option<CarouselPlan>
             content_height_for_slot(*width, spec.ratio, slot_cap, cell_aspect)
         })
         .collect();
-
-    if visible > 1 {
-        let center = visible / 2;
-        for (idx, (height, spec)) in slot_heights.iter_mut().zip(slot_specs.iter()).enumerate() {
-            let distance = idx.abs_diff(center);
-            if idx == selected_slot {
-                continue;
-            }
-            let scale = match distance {
-                0 => 1.0,
-                1 => 0.90,
-                _ => {
-                    if spec.ratio >= 2.0 {
-                        0.80
-                    } else {
-                        0.75
-                    }
-                }
-            };
-            let scaled = ((*height as f32) * scale).round() as u16;
-            let slot_cap = slot_height_cap(idx, false);
-            *height = scaled
-                .clamp(MIN_THUMB_CONTENT_HEIGHT.min(slot_cap), slot_cap)
-                .max(1);
-        }
-    }
 
     let total_thumbs_width: u16 =
         slot_widths.iter().copied().sum::<u16>().saturating_add(
@@ -497,7 +416,7 @@ pub(super) fn build_carousel_plan(app: &App, area: Rect) -> Option<CarouselPlan>
 
 #[cfg(test)]
 mod tests {
-    use super::{centered_window_start, fit_slot_widths};
+    use super::{centered_window_start, fit_slot_widths, slot_width_for_ratio};
 
     #[test]
     fn centered_window_clamps_to_left_edge() {
@@ -519,5 +438,18 @@ mod tests {
         let widths = fit_slot_widths(&[40, 60, 40], &[40, 60, 40], 120, 1, 50);
         assert!(widths[1] >= 50);
         assert!(widths.iter().copied().sum::<u16>() <= 120);
+    }
+
+    #[test]
+    fn fit_slot_widths_only_expands_selected_slot_when_underfilled() {
+        let widths = fit_slot_widths(&[30, 50, 30], &[35, 80, 35], 140, 1, 50);
+        assert_eq!(widths[0], 35);
+        assert_eq!(widths[2], 35);
+        assert_eq!(widths[1], 66);
+    }
+
+    #[test]
+    fn selected_slot_keeps_width_boost() {
+        assert!(slot_width_for_ratio(16.0 / 9.0, true) > slot_width_for_ratio(16.0 / 9.0, false));
     }
 }
