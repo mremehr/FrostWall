@@ -65,6 +65,23 @@ fn request_thumbnails_for_plan(app: &mut App, plan: &CarouselPlan) {
     }
 }
 
+/// Pick a braille spinner glyph based on wall-clock time.
+///
+/// The runtime forces a redraw every `SPINNER_TICK` while any thumbnail is
+/// loading, so the value cycles ~8 frames per second without us tracking
+/// frame counts in app state.
+fn spinner_glyph() -> &'static str {
+    const FRAMES: &[&str] = &[
+        "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
+    ];
+    let elapsed_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let idx = ((elapsed_ms / 120) % FRAMES.len() as u128) as usize;
+    FRAMES[idx]
+}
+
 fn fade_level(slot_idx: usize, center_slot: usize, visible: usize) -> usize {
     if visible <= 1 {
         return 0;
@@ -280,7 +297,7 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
             let image = StatefulImage::new(None).resize(Resize::Fit(None));
             f.render_stateful_widget(image, inner, protocol);
         } else if is_loading {
-            let loading = Paragraph::new("...")
+            let loading = Paragraph::new(spinner_glyph())
                 .style(Style::default().fg(theme.accent_primary))
                 .alignment(Alignment::Center);
             f.render_widget(loading, center_vertically(inner, 1));

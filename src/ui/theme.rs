@@ -1,5 +1,7 @@
 use ratatui::style::Color;
 use std::fs;
+use std::sync::Mutex;
+use std::time::SystemTime;
 
 /// Frost theme colors - inspired by Nord/Catppuccin ice palette
 #[derive(Clone, Copy)]
@@ -93,20 +95,61 @@ impl Default for FrostTheme {
     }
 }
 
-/// Auto-detect terminal theme from Alacritty/Kitty config
+struct DetectionCache {
+    marker_mtime: Option<SystemTime>,
+    last_result: bool,
+    initialized: bool,
+}
+
+static DETECTION_CACHE: Mutex<DetectionCache> = Mutex::new(DetectionCache {
+    marker_mtime: None,
+    last_result: false,
+    initialized: false,
+});
+
+fn alacritty_marker_path() -> Option<String> {
+    std::env::var("HOME")
+        .ok()
+        .map(|h| format!("{}/.config/alacritty/.current-theme", h))
+}
+
+/// Auto-detect terminal theme from Alacritty/Kitty config.
+///
+/// The full scan touches up to four files; we cache the result keyed on the
+/// Alacritty marker file's mtime so theme polling only re-reads when the user
+/// actually swaps themes. The fallback path is run unconditionally when the
+/// marker doesn't exist (rare — default install ships with one).
 fn detect_light_theme() -> bool {
-    // Check Alacritty theme marker file
-    if let Ok(theme_marker) = fs::read_to_string(
-        std::env::var("HOME")
-            .map(|h| format!("{}/.config/alacritty/.current-theme", h))
-            .unwrap_or_default(),
-    ) {
-        let theme = theme_marker.trim().to_lowercase();
-        if theme.contains("light") || theme.contains("frostglow") {
-            return true;
+    let marker_mtime = alacritty_marker_path()
+        .as_deref()
+        .and_then(|p| fs::metadata(p).ok())
+        .and_then(|m| m.modified().ok());
+
+    if let Ok(mut cache) = DETECTION_CACHE.lock() {
+        if cache.initialized && cache.marker_mtime == marker_mtime && marker_mtime.is_some() {
+            return cache.last_result;
         }
-        if theme.contains("dark") || theme.contains("cracked") || theme.contains("ice") {
-            return false;
+        let result = detect_light_theme_uncached();
+        cache.marker_mtime = marker_mtime;
+        cache.last_result = result;
+        cache.initialized = true;
+        return result;
+    }
+
+    detect_light_theme_uncached()
+}
+
+fn detect_light_theme_uncached() -> bool {
+    // Check Alacritty theme marker file
+    if let Some(marker) = alacritty_marker_path() {
+        if let Ok(theme_marker) = fs::read_to_string(marker) {
+            let theme = theme_marker.trim().to_lowercase();
+            if theme.contains("light") || theme.contains("frostglow") {
+                return true;
+            }
+            if theme.contains("dark") || theme.contains("cracked") || theme.contains("ice") {
+                return false;
+            }
         }
     }
 

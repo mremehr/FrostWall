@@ -219,6 +219,13 @@ impl App {
         self.thumbnails.loading.contains(&cache_idx)
     }
 
+    /// Whether any thumbnail decode is currently in flight.
+    /// Used by the event loop to drive periodic redraws so the loading
+    /// spinner animates while work is pending.
+    pub fn has_loading_thumbnails(&self) -> bool {
+        !self.thumbnails.loading.is_empty()
+    }
+
     /// Set the thumbnail request channel.
     pub fn set_thumb_channel(&mut self, tx: SyncSender<ThumbnailRequest>) {
         self.thumbnails.request_tx = Some(tx);

@@ -112,9 +112,17 @@ pub(super) fn run_app<B: ratatui::backend::Backend>(
     let theme_check_interval = Duration::from_millis(app.config.theme.check_interval_ms.max(100));
     let event_wait_timeout = theme_check_interval.min(Duration::from_millis(100));
 
+    // Spinner animation cadence — fast enough to look alive, slow enough to
+    // avoid burning CPU on idle redraws when nothing is loading.
+    const SPINNER_TICK: Duration = Duration::from_millis(120);
+
     loop {
         if pending_thumbnail_redraw && last_draw_at.elapsed() >= THUMBNAIL_REDRAW_INTERVAL {
             pending_thumbnail_redraw = false;
+            needs_redraw = true;
+        }
+
+        if app.has_loading_thumbnails() && last_draw_at.elapsed() >= SPINNER_TICK {
             needs_redraw = true;
         }
 

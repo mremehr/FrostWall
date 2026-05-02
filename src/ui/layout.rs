@@ -204,7 +204,11 @@ fn draw_color_palette(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) 
 
     if !wp.tags.is_empty() {
         spans.push(Span::styled(
-            "  │  Tags: ",
+            " │ ",
+            Style::default().fg(theme.fg_muted),
+        ));
+        spans.push(Span::styled(
+            "Tags: ",
             Style::default().fg(theme.fg_secondary),
         ));
         for (i, tag) in wp.tags.iter().enumerate() {
@@ -224,15 +228,7 @@ fn draw_color_palette(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) 
 }
 
 fn parse_hex_color(hex: &str) -> Option<ratatui::style::Color> {
-    let hex = hex.trim_start_matches('#');
-    if hex.len() >= 6 {
-        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-        Some(ratatui::style::Color::Rgb(r, g, b))
-    } else {
-        None
-    }
+    crate::utils::hex_to_rgb(hex).map(|(r, g, b)| ratatui::style::Color::Rgb(r, g, b))
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@ use super::{center_vertically, parse_hex_color};
 use crate::app::App;
 use crate::ui::theme::FrostTheme;
 use ratatui::{
-    layout::{Alignment, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
@@ -18,17 +18,39 @@ pub(super) fn draw_carousel_placeholder(f: &mut Frame, area: Rect, theme: &Frost
     f.render_widget(text, centered);
 }
 
+// Color-picker swatch geometry: each cell is `SWATCH_WIDTH` cells wide
+// followed by a one-cell gutter. Heights are 1 cell with a one-row gutter.
+const SWATCH_WIDTH: u16 = 6;
+const SWATCH_HEIGHT: u16 = 1;
+const SWATCH_GAP: u16 = 1;
+// Stay short of 16 columns; otherwise the popup hits the screen edge on
+// ultrawide monitors and dwarfs the rest of the UI.
+const MAX_COLOR_PICKER_COLS: usize = 16;
+const MIN_COLOR_PICKER_COLS: usize = 1;
+const COLOR_PICKER_PADDING: u16 = 4;
+const COLOR_PICKER_CHROME_HEIGHT: u16 = 6;
+
 pub(super) fn draw_color_picker(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
     let colors = &app.filters.available_colors;
     if colors.is_empty() {
         return;
     }
 
-    // Calculate popup size based on color count
-    let cols = 8; // Colors per row
+    // Fit the grid to the available space: prefer wider rows on big terminals,
+    // collapse gracefully on small ones. The +SWATCH_GAP in the divisor makes
+    // the math account for the trailing gutter on each row.
+    let max_inner_width = area.width.saturating_sub(COLOR_PICKER_PADDING + 2);
+    let cells_per_swatch = SWATCH_WIDTH + SWATCH_GAP;
+    let fit_cols = ((max_inner_width + SWATCH_GAP) / cells_per_swatch) as usize;
+    let cols = fit_cols
+        .clamp(MIN_COLOR_PICKER_COLS, MAX_COLOR_PICKER_COLS)
+        .min(colors.len().max(1));
     let rows = colors.len().div_ceil(cols);
-    let popup_width = 60.min(area.width.saturating_sub(4));
-    let popup_height = (rows as u16 * 2 + 6).min(area.height.saturating_sub(4));
+
+    let grid_width = (cols as u16) * cells_per_swatch - SWATCH_GAP;
+    let popup_width = (grid_width + COLOR_PICKER_PADDING).min(area.width.saturating_sub(4));
+    let popup_height = ((rows as u16) * (SWATCH_HEIGHT + SWATCH_GAP) + COLOR_PICKER_CHROME_HEIGHT)
+        .min(area.height.saturating_sub(4));
     let popup_x = (area.width.saturating_sub(popup_width)) / 2;
     let popup_y = (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
@@ -59,9 +81,9 @@ pub(super) fn draw_color_picker(f: &mut Frame, app: &App, area: Rect, theme: &Fr
     f.render_widget(block, popup_area);
 
     // Draw color swatches in a grid
-    let swatch_width = 6;
-    let swatch_height = 1;
-    let spacing = 1;
+    let swatch_width = SWATCH_WIDTH;
+    let swatch_height = SWATCH_HEIGHT;
+    let spacing = SWATCH_GAP;
 
     for (i, color_hex) in colors.iter().enumerate() {
         let col = i % cols;
@@ -118,19 +140,131 @@ pub(super) fn draw_color_picker(f: &mut Frame, app: &App, area: Rect, theme: &Fr
     }
 }
 
+type HelpEntry = (&'static str, &'static str);
+type HelpSection = (&'static str, &'static [HelpEntry]);
+
+const NAV_HELP: HelpSection = (
+    "Navigation",
+    &[
+        ("h/←", "Previous wallpaper"),
+        ("l/→", "Next wallpaper"),
+        ("Tab", "Next screen"),
+        ("S-Tab", "Previous screen"),
+    ],
+);
+
+const ACTIONS_HELP: HelpSection = (
+    "Actions",
+    &[
+        ("Enter", "Apply wallpaper"),
+        ("r", "Random wallpaper"),
+        (":", "Command mode (vim-style)"),
+    ],
+);
+
+const COMMANDS_HELP: HelpSection = (
+    "Commands (:)",
+    &[
+        (":t <tag>", "Filter by tag"),
+        (":clear", "Clear all filters"),
+        (":sim", "Find similar"),
+        (":sort n", "Sort (name/date/size)"),
+        (":aspect", "Aspect grouping (on/off)"),
+        (":rescan", "Rescan wallpaper dir"),
+        (":pair-reset", "Rebuild pairing data"),
+    ],
+);
+
+const OPTIONS_HELP: HelpSection = (
+    "Options",
+    &[
+        ("m", "Toggle match mode"),
+        ("f", "Toggle resize mode"),
+        ("s", "Toggle sort mode"),
+        ("a", "Toggle aspect grouping"),
+        ("c", "Show/hide colors"),
+        ("t", "Cycle tag filter"),
+        ("T", "Clear tag filter"),
+        ("C", "Open color picker"),
+        ("p", "Pairing preview"),
+        ("w", "Export pywal colors"),
+        ("W", "Toggle auto pywal"),
+        ("R", "Rescan wallpaper dir"),
+        ("q/Esc", "Quit"),
+    ],
+);
+
+const HELP_KEY_COL_WIDTH: usize = 11;
+
+fn append_section(
+    out: &mut Vec<Line<'static>>,
+    theme: &FrostTheme,
+    section: HelpSection,
+    leading_blank: bool,
+) {
+    if leading_blank {
+        out.push(Line::from(""));
+    }
+    out.push(Line::from(Span::styled(
+        section.0.to_string(),
+        Style::default()
+            .fg(theme.accent_highlight)
+            .add_modifier(Modifier::BOLD),
+    )));
+    for (key, desc) in section.1 {
+        out.push(Line::from(vec![
+            Span::styled(
+                format!("  {:<width$}", key, width = HELP_KEY_COL_WIDTH),
+                Style::default().fg(theme.accent_primary),
+            ),
+            Span::styled(
+                (*desc).to_string(),
+                Style::default().fg(theme.fg_secondary),
+            ),
+        ]));
+    }
+}
+
+fn build_help_lines(theme: &FrostTheme, sections: &[HelpSection]) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    for (i, section) in sections.iter().enumerate() {
+        append_section(&mut lines, theme, *section, i > 0);
+    }
+    lines
+}
+
+// Below this width the popup folds back to a single column. Two columns at
+// HELP_KEY_COL_WIDTH plus longest descriptions need ~76 cells; we leave a
+// little air around 70 to start scrolling instead of clipping descriptions.
+const HELP_TWO_COL_MIN_WIDTH: u16 = 76;
+
 pub(super) fn draw_help_popup(f: &mut Frame, area: Rect, theme: &FrostTheme) {
-    // Center the popup
-    let popup_width = 50.min(area.width.saturating_sub(4));
-    let popup_height = 35.min(area.height.saturating_sub(4));
+    let two_col = area.width >= HELP_TWO_COL_MIN_WIDTH + 4;
+
+    let (left_lines, right_lines, requested_height, requested_width) = if two_col {
+        let left = build_help_lines(theme, &[NAV_HELP, ACTIONS_HELP, COMMANDS_HELP]);
+        let right = build_help_lines(theme, &[OPTIONS_HELP]);
+        let height = left.len().max(right.len()) as u16;
+        (left, right, height, HELP_TWO_COL_MIN_WIDTH)
+    } else {
+        let combined = build_help_lines(
+            theme,
+            &[NAV_HELP, ACTIONS_HELP, COMMANDS_HELP, OPTIONS_HELP],
+        );
+        let height = combined.len() as u16;
+        (combined, Vec::new(), height, 50)
+    };
+
+    let popup_width = requested_width.min(area.width.saturating_sub(4));
+    // +2 for the popup border itself.
+    let popup_height = (requested_height + 2).min(area.height.saturating_sub(4));
     let popup_x = (area.width.saturating_sub(popup_width)) / 2;
     let popup_y = (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
 
-    // Clear background
     let clear = Block::default().style(Style::default().bg(theme.bg_dark));
     f.render_widget(clear, popup_area);
 
-    // Popup border
     let block = Block::default()
         .title(" ❄️ FrostWall Help ")
         .title_style(
@@ -145,180 +279,16 @@ pub(super) fn draw_help_popup(f: &mut Frame, area: Rect, theme: &FrostTheme) {
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
-    // Help content
-    let help_text = vec![
-        Line::from(vec![Span::styled(
-            "Navigation",
-            Style::default()
-                .fg(theme.accent_highlight)
-                .add_modifier(Modifier::BOLD),
-        )]),
-        Line::from(vec![
-            Span::styled("  h/←     ", Style::default().fg(theme.accent_primary)),
-            Span::styled(
-                "Previous wallpaper",
-                Style::default().fg(theme.fg_secondary),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("  l/→     ", Style::default().fg(theme.accent_primary)),
-            Span::styled("Next wallpaper", Style::default().fg(theme.fg_secondary)),
-        ]),
-        Line::from(vec![
-            Span::styled("  Tab     ", Style::default().fg(theme.accent_primary)),
-            Span::styled("Next screen", Style::default().fg(theme.fg_secondary)),
-        ]),
-        Line::from(vec![
-            Span::styled("  S-Tab   ", Style::default().fg(theme.accent_primary)),
-            Span::styled("Previous screen", Style::default().fg(theme.fg_secondary)),
-        ]),
-        Line::from(""),
-        Line::from(vec![Span::styled(
-            "Actions",
-            Style::default()
-                .fg(theme.accent_highlight)
-                .add_modifier(Modifier::BOLD),
-        )]),
-        Line::from(vec![
-            Span::styled("  Enter   ", Style::default().fg(theme.accent_primary)),
-            Span::styled("Apply wallpaper", Style::default().fg(theme.fg_secondary)),
-        ]),
-        Line::from(vec![
-            Span::styled("  r       ", Style::default().fg(theme.accent_primary)),
-            Span::styled("Random wallpaper", Style::default().fg(theme.fg_secondary)),
-        ]),
-        Line::from(vec![
-            Span::styled("  :       ", Style::default().fg(theme.accent_primary)),
-            Span::styled(
-                "Command mode (vim-style)",
-                Style::default().fg(theme.fg_secondary),
-            ),
-        ]),
-        Line::from(""),
-        Line::from(vec![Span::styled(
-            "Commands (:)",
-            Style::default()
-                .fg(theme.accent_highlight)
-                .add_modifier(Modifier::BOLD),
-        )]),
-        Line::from(vec![
-            Span::styled("  :t <tag>", Style::default().fg(theme.accent_primary)),
-            Span::styled(" Filter by tag", Style::default().fg(theme.fg_secondary)),
-        ]),
-        Line::from(vec![
-            Span::styled("  :clear  ", Style::default().fg(theme.accent_primary)),
-            Span::styled(
-                " Clear all filters",
-                Style::default().fg(theme.fg_secondary),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("  :sim    ", Style::default().fg(theme.accent_primary)),
-            Span::styled(" Find similar", Style::default().fg(theme.fg_secondary)),
-        ]),
-        Line::from(vec![
-            Span::styled("  :sort n ", Style::default().fg(theme.accent_primary)),
-            Span::styled(
-                " Sort (name/date/size)",
-                Style::default().fg(theme.fg_secondary),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("  :aspect ", Style::default().fg(theme.accent_primary)),
-            Span::styled(
-                " Aspect grouping (on/off)",
-                Style::default().fg(theme.fg_secondary),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("  :rescan ", Style::default().fg(theme.accent_primary)),
-            Span::styled(
-                " Rescan wallpaper dir",
-                Style::default().fg(theme.fg_secondary),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("  :pair-reset", Style::default().fg(theme.accent_primary)),
-            Span::styled(
-                " Rebuild pairing data",
-                Style::default().fg(theme.fg_secondary),
-            ),
-        ]),
-        Line::from(""),
-        Line::from(vec![Span::styled(
-            "Options",
-            Style::default()
-                .fg(theme.accent_highlight)
-                .add_modifier(Modifier::BOLD),
-        )]),
-        Line::from(vec![
-            Span::styled("  m       ", Style::default().fg(theme.accent_primary)),
-            Span::styled("Toggle match mode", Style::default().fg(theme.fg_secondary)),
-        ]),
-        Line::from(vec![
-            Span::styled("  f       ", Style::default().fg(theme.accent_primary)),
-            Span::styled(
-                "Toggle resize mode",
-                Style::default().fg(theme.fg_secondary),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("  s       ", Style::default().fg(theme.accent_primary)),
-            Span::styled("Toggle sort mode", Style::default().fg(theme.fg_secondary)),
-        ]),
-        Line::from(vec![
-            Span::styled("  a       ", Style::default().fg(theme.accent_primary)),
-            Span::styled(
-                "Toggle aspect grouping",
-                Style::default().fg(theme.fg_secondary),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("  c       ", Style::default().fg(theme.accent_primary)),
-            Span::styled("Show/hide colors", Style::default().fg(theme.fg_secondary)),
-        ]),
-        Line::from(vec![
-            Span::styled("  t       ", Style::default().fg(theme.accent_primary)),
-            Span::styled("Cycle tag filter", Style::default().fg(theme.fg_secondary)),
-        ]),
-        Line::from(vec![
-            Span::styled("  T       ", Style::default().fg(theme.accent_primary)),
-            Span::styled("Clear tag filter", Style::default().fg(theme.fg_secondary)),
-        ]),
-        Line::from(vec![
-            Span::styled("  C       ", Style::default().fg(theme.accent_primary)),
-            Span::styled("Open color picker", Style::default().fg(theme.fg_secondary)),
-        ]),
-        Line::from(vec![
-            Span::styled("  p       ", Style::default().fg(theme.accent_primary)),
-            Span::styled("Pairing preview", Style::default().fg(theme.fg_secondary)),
-        ]),
-        Line::from(vec![
-            Span::styled("  w       ", Style::default().fg(theme.accent_primary)),
-            Span::styled(
-                "Export pywal colors",
-                Style::default().fg(theme.fg_secondary),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("  W       ", Style::default().fg(theme.accent_primary)),
-            Span::styled("Toggle auto pywal", Style::default().fg(theme.fg_secondary)),
-        ]),
-        Line::from(vec![
-            Span::styled("  R       ", Style::default().fg(theme.accent_primary)),
-            Span::styled(
-                "Rescan wallpaper dir",
-                Style::default().fg(theme.fg_secondary),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("  q/Esc   ", Style::default().fg(theme.accent_primary)),
-            Span::styled("Quit", Style::default().fg(theme.fg_secondary)),
-        ]),
-    ];
-
-    let paragraph = Paragraph::new(help_text);
-    f.render_widget(paragraph, inner);
+    if two_col {
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .split(inner);
+        f.render_widget(Paragraph::new(left_lines), columns[0]);
+        f.render_widget(Paragraph::new(right_lines), columns[1]);
+    } else {
+        f.render_widget(Paragraph::new(left_lines), inner);
+    }
 }
 
 /// Draw undo popup at bottom of screen

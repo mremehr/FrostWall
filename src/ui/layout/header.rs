@@ -21,14 +21,28 @@ pub(super) fn draw_error(f: &mut Frame, app: &App, area: Rect, theme: &FrostThem
     }
 }
 
+// Width thresholds (in cells) above which lower-priority tags become visible.
+// Chosen so the always-shown core (FrostWall + screen + count + match-mode +
+// any active filters) never gets clipped on common terminal widths.
+const HEADER_SHOW_RESIZE_MIN: u16 = 80;
+const HEADER_SHOW_SORT_ASPECT_MIN: u16 = 100;
+const HEADER_SHOW_PROTOCOL_MIN: u16 = 120;
+const HEADER_SHOW_SCREEN_INFO_MIN: u16 = 70;
+
 pub(super) fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &FrostTheme) {
-    let screen_info = if let Some(screen) = app.selected_screen() {
-        format!(
-            "{} · {}x{} · {:?}",
-            screen.name, screen.width, screen.height, screen.aspect_category
-        )
+    let cols = area.width;
+
+    let screen_info = if cols >= HEADER_SHOW_SCREEN_INFO_MIN {
+        Some(if let Some(screen) = app.selected_screen() {
+            format!(
+                "{} · {}x{} · {:?}",
+                screen.name, screen.width, screen.height, screen.aspect_category
+            )
+        } else {
+            "No screens".to_string()
+        })
     } else {
-        "No screens".to_string()
+        None
     };
 
     let clamped = app
@@ -42,16 +56,9 @@ pub(super) fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &FrostThe
         format!("{}/{}", clamped + 1, total)
     };
 
-    // Show current modes
     let match_mode = app.config.display.match_mode.display_name();
-    let resize_mode = app.config.display.resize_mode.display_name();
-    let sort_mode = app.filters.sort_mode.display_name();
-    let aspect_sort = if app.filters.aspect_sort_enabled {
-        "asp:on"
-    } else {
-        "asp:off"
-    };
-    let thumb_protocol = thumbnail_protocol_label(app);
+
+    let sep = || Span::styled(" │ ", Style::default().fg(theme.fg_muted));
 
     let mut header_spans = vec![Span::styled(
         " FrostWall ",
@@ -60,54 +67,76 @@ pub(super) fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &FrostThe
             .add_modifier(Modifier::BOLD),
     )];
 
-    header_spans.extend(vec![
-        Span::styled("│ ", Style::default().fg(theme.fg_muted)),
-        Span::styled(screen_info, Style::default().fg(theme.fg_secondary)),
-        Span::styled(" │ ", Style::default().fg(theme.fg_muted)),
-        Span::styled(count_info, Style::default().fg(theme.accent_primary)),
-        Span::styled(" │ ", Style::default().fg(theme.fg_muted)),
-        Span::styled(
-            format!("[{}]", match_mode),
-            Style::default().fg(theme.accent_primary),
-        ),
-        Span::styled(" ", Style::default()),
-        Span::styled(
+    if let Some(info) = screen_info {
+        header_spans.push(Span::styled("│ ", Style::default().fg(theme.fg_muted)));
+        header_spans.push(Span::styled(info, Style::default().fg(theme.fg_secondary)));
+        header_spans.push(sep());
+    } else {
+        header_spans.push(sep());
+    }
+
+    header_spans.push(Span::styled(
+        count_info,
+        Style::default().fg(theme.accent_primary),
+    ));
+    header_spans.push(sep());
+    header_spans.push(Span::styled(
+        format!("[{}]", match_mode),
+        Style::default().fg(theme.accent_primary),
+    ));
+
+    if cols >= HEADER_SHOW_RESIZE_MIN {
+        let resize_mode = app.config.display.resize_mode.display_name();
+        header_spans.push(Span::raw(" "));
+        header_spans.push(Span::styled(
             format!("[{}]", resize_mode),
             Style::default().fg(theme.accent_secondary),
-        ),
-        Span::styled(" ", Style::default()),
-        Span::styled(
+        ));
+    }
+
+    if cols >= HEADER_SHOW_SORT_ASPECT_MIN {
+        let sort_mode = app.filters.sort_mode.display_name();
+        header_spans.push(Span::raw(" "));
+        header_spans.push(Span::styled(
             format!("[⇅{}]", sort_mode),
             Style::default().fg(theme.fg_secondary),
-        ),
-        Span::styled(" ", Style::default()),
-        Span::styled(
+        ));
+        let aspect_sort = if app.filters.aspect_sort_enabled {
+            "asp:on"
+        } else {
+            "asp:off"
+        };
+        header_spans.push(Span::raw(" "));
+        header_spans.push(Span::styled(
             format!("[{}]", aspect_sort),
             Style::default().fg(if app.filters.aspect_sort_enabled {
                 theme.accent_highlight
             } else {
                 theme.fg_muted
             }),
-        ),
-        Span::styled(" ", Style::default()),
-        Span::styled(
-            format!("[img:{}]", thumb_protocol),
-            Style::default().fg(theme.fg_secondary),
-        ),
-    ]);
+        ));
+    }
 
-    // Tag filter indicator
+    if cols >= HEADER_SHOW_PROTOCOL_MIN {
+        header_spans.push(Span::raw(" "));
+        header_spans.push(Span::styled(
+            format!("[img:{}]", thumbnail_protocol_label(app)),
+            Style::default().fg(theme.fg_secondary),
+        ));
+    }
+
+    // Always show contextual indicators (filters/exports/suggestions) — they
+    // describe state the user just toggled and would surprise them if hidden.
     if let Some(tag) = &app.filters.active_tag {
-        header_spans.push(Span::styled(" ", Style::default()));
+        header_spans.push(Span::raw(" "));
         header_spans.push(Span::styled(
             format!("[#{}]", tag),
             Style::default().fg(theme.accent_highlight),
         ));
     }
 
-    // Color filter indicator
     if let Some(color) = &app.filters.active_color {
-        header_spans.push(Span::styled(" ", Style::default()));
+        header_spans.push(Span::raw(" "));
         if let Some(c) = parse_hex_color(color) {
             header_spans.push(Span::styled("█", Style::default().fg(c)));
         }
@@ -117,24 +146,20 @@ pub(super) fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &FrostThe
         ));
     }
 
-    // Pywal indicator
     if app.ui.pywal_export {
-        header_spans.push(Span::styled(" ", Style::default()));
+        header_spans.push(Span::raw(" "));
         header_spans.push(Span::styled("[wal]", Style::default().fg(theme.success)));
     }
 
-    // Pairing suggestions indicator
     if !app.pairing.suggestions.is_empty() {
-        header_spans.push(Span::styled(" ", Style::default()));
+        header_spans.push(Span::raw(" "));
         header_spans.push(Span::styled(
             format!("[⚡{}]", app.pairing.suggestions.len()),
             Style::default().fg(theme.success),
         ));
     }
 
-    let header = Line::from(header_spans);
-
-    let paragraph = Paragraph::new(header).alignment(Alignment::Center);
+    let paragraph = Paragraph::new(Line::from(header_spans)).alignment(Alignment::Center);
     f.render_widget(paragraph, area);
 }
 
