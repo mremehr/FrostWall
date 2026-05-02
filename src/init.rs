@@ -28,7 +28,7 @@ pub async fn run_init() -> Result<()> {
     }
 
     // Step 1: Wallpaper directory
-    let default_dir = dirs::picture_dir()
+    let default_dir = crate::utils::picture_dir()
         .map(|p| p.join("wallpapers"))
         .unwrap_or_else(|| PathBuf::from("~/Pictures/wallpapers"));
 

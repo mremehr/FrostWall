@@ -9,7 +9,7 @@ use super::WalColors;
 
 /// Get pywal cache directory.
 pub fn wal_cache_dir() -> PathBuf {
-    dirs::cache_dir()
+    crate::utils::cache_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join("wal")
 }

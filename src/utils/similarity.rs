@@ -114,7 +114,7 @@ fn palette_similarity_normalized(
 ///
 /// Returns a weighted similarity score (0.0-1.0).
 #[cfg(test)]
-pub(crate) fn palette_similarity_weighted(
+fn palette_similarity_weighted(
     colors1: &[String],
     weights1: &[f32],
     colors2: &[String],
@@ -138,7 +138,7 @@ pub(crate) fn palette_similarity_weighted(
 /// Calculate overall image similarity based on color profile.
 /// Returns a score from 0.0 (very different) to 1.0 (very similar).
 #[cfg(test)]
-pub(crate) fn image_similarity(colors1: &[String], colors2: &[String]) -> f32 {
+fn image_similarity(colors1: &[String], colors2: &[String]) -> f32 {
     image_similarity_weighted(colors1, &[], colors2, &[])
 }
 
@@ -189,7 +189,7 @@ pub fn image_similarity_with_profiles(
 /// Keeps only top-k matches while iterating, so callers can avoid collecting
 /// large temporary vectors of candidates.
 #[cfg(test)]
-pub(crate) fn find_similar_wallpapers_iter<'a, I>(
+fn find_similar_wallpapers_iter<'a, I>(
     target_colors: &[String],
     all_wallpapers: I,
     limit: usize,
@@ -280,4 +280,156 @@ where
 
     top.sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     top
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- palette_similarity_weighted ---
+
+    #[test]
+    fn palette_similarity_weighted_same() {
+        let colors = vec!["#FF0000".into(), "#00FF00".into()];
+        let weights = vec![0.5, 0.5];
+        let sim = palette_similarity_weighted(&colors, &weights, &colors, &weights);
+        assert!(sim > 0.9, "got {sim}");
+    }
+
+    #[test]
+    fn palette_similarity_weighted_empty_inputs_zero() {
+        let empty: Vec<String> = vec![];
+        let colors = vec!["#FF0000".into()];
+        assert_eq!(
+            palette_similarity_weighted(&empty, &[], &colors, &[1.0]),
+            0.0
+        );
+        assert_eq!(
+            palette_similarity_weighted(&colors, &[1.0], &empty, &[]),
+            0.0
+        );
+    }
+
+    // --- image_similarity ---
+
+    #[test]
+    fn image_similarity_identical_palettes() {
+        let colors = vec!["#FF0000".into(), "#00FF00".into(), "#0000FF".into()];
+        let sim = image_similarity(&colors, &colors);
+        assert!(sim > 0.9, "got {sim}");
+    }
+
+    #[test]
+    fn image_similarity_empty_returns_zero() {
+        let empty: Vec<String> = vec![];
+        let colors = vec!["#FF0000".into()];
+        assert_eq!(image_similarity(&empty, &colors), 0.0);
+    }
+
+    // --- find_similar_wallpapers_iter ---
+
+    #[test]
+    fn find_similar_wallpapers_returns_sorted() {
+        let target = vec!["#FF0000".into()];
+        let c0 = [String::from("#0000FF")];
+        let c1 = [String::from("#FF0000")];
+        let c2 = [String::from("#FF1100")];
+        let candidates: Vec<(usize, &[String])> = vec![(0, &c0), (1, &c1), (2, &c2)];
+        let results =
+            find_similar_wallpapers_iter(&target, candidates.iter().map(|(idx, c)| (*idx, *c)), 3);
+        assert!(!results.is_empty());
+        assert_eq!(results[0].1, 1, "Identical color should be best match");
+        for w in results.windows(2) {
+            assert!(w[0].0 >= w[1].0, "Results not sorted descending");
+        }
+    }
+
+    // Hand-rolled A/B benchmark — run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore = "benchmark helper"]
+    fn bench_find_similar_wallpapers_ab_10k() {
+        fn pseudo_hex(seed: usize, offset: usize) -> String {
+            let r = ((seed.wrapping_mul(37) + offset.wrapping_mul(53)) & 0xff) as u8;
+            let g = ((seed.wrapping_mul(73) + offset.wrapping_mul(29)) & 0xff) as u8;
+            let b = ((seed.wrapping_mul(19) + offset.wrapping_mul(97)) & 0xff) as u8;
+            format!("#{r:02X}{g:02X}{b:02X}")
+        }
+
+        fn baseline_find_similar(
+            target_colors: &[String],
+            all_wallpapers: &[(usize, &[String])],
+            limit: usize,
+        ) -> Vec<(f32, usize)> {
+            if limit == 0 || all_wallpapers.is_empty() {
+                return Vec::new();
+            }
+
+            let mut similarities: Vec<(f32, usize)> = all_wallpapers
+                .iter()
+                .map(|(idx, colors)| (image_similarity(target_colors, colors), *idx))
+                .collect();
+
+            if similarities.len() > limit {
+                let pivot = limit - 1;
+                similarities.select_nth_unstable_by(pivot, |a, b| {
+                    b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                similarities.truncate(limit);
+            }
+
+            similarities
+                .sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            similarities
+        }
+
+        const CANDIDATES: usize = 10_000;
+        const COLORS_PER_PALETTE: usize = 6;
+        const LIMIT: usize = 20;
+
+        let target: Vec<String> = (0..COLORS_PER_PALETTE).map(|i| pseudo_hex(42, i)).collect();
+        let candidates: Vec<Vec<String>> = (0..CANDIDATES)
+            .map(|idx| {
+                (0..COLORS_PER_PALETTE)
+                    .map(|j| pseudo_hex(idx + 1, j + idx))
+                    .collect()
+            })
+            .collect();
+
+        let candidate_refs: Vec<(usize, &[String])> = candidates
+            .iter()
+            .enumerate()
+            .map(|(idx, c)| (idx, c.as_slice()))
+            .collect();
+        let target_profile = build_palette_profile(&target, &[]);
+        let candidate_profiles: Vec<PaletteProfile> = candidates
+            .iter()
+            .map(|c| build_palette_profile(c, &[]))
+            .collect();
+
+        let baseline_start = std::time::Instant::now();
+        let baseline_results = baseline_find_similar(&target, &candidate_refs, LIMIT);
+        let baseline_elapsed = baseline_start.elapsed();
+
+        let optimized_start = std::time::Instant::now();
+        let optimized_results = find_similar_wallpapers_with_profiles_iter(
+            &target,
+            &target_profile,
+            candidates
+                .iter()
+                .enumerate()
+                .map(|(idx, c)| (idx, c.as_slice(), &candidate_profiles[idx])),
+            LIMIT,
+        );
+        let optimized_elapsed = optimized_start.elapsed();
+
+        eprintln!(
+            "bench_find_similar_wallpapers_ab_10k: baseline={:?}, optimized={:?}, speedup={:.2}x",
+            baseline_elapsed,
+            optimized_elapsed,
+            baseline_elapsed.as_secs_f64() / optimized_elapsed.as_secs_f64()
+        );
+
+        assert_eq!(baseline_results.len(), LIMIT);
+        assert_eq!(optimized_results.len(), LIMIT);
+    }
 }

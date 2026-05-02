@@ -1,5 +1,5 @@
 use super::sections::Config;
-use crate::utils::project_config_dir;
+use crate::utils::{home_dir, project_config_dir};
 use crate::wallpaper_backend::Transition;
 use anyhow::Result;
 use std::collections::HashMap;
@@ -132,7 +132,7 @@ impl Config {
     pub fn wallpaper_dir(&self) -> PathBuf {
         let dir = &self.wallpaper.directory;
         if dir.starts_with("~") {
-            if let Some(home) = dirs::home_dir() {
+            if let Some(home) = home_dir() {
                 return home.join(dir.strip_prefix("~").unwrap_or(dir));
             }
         }

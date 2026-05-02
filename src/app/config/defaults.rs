@@ -92,7 +92,7 @@ pub(super) fn default_clip_batch_size() -> usize {
 impl Default for WallpaperConfig {
     fn default() -> Self {
         Self {
-            directory: dirs::picture_dir()
+            directory: crate::utils::picture_dir()
                 .map(|path| path.join("wallpapers"))
                 .unwrap_or_else(|| PathBuf::from("~/Pictures/wallpapers")),
             extensions: DEFAULT_WALLPAPER_EXTENSIONS

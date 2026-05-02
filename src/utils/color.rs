@@ -405,3 +405,220 @@ pub fn color_brightness(hex: &str) -> f32 {
 pub fn color_saturation(hex: &str) -> f32 {
     color_features(hex).map(|f| f.saturation).unwrap_or(0.0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- hex_to_rgb ---
+
+    #[test]
+    fn hex_to_rgb_with_hash() {
+        assert_eq!(hex_to_rgb("#FF0000"), Some((255, 0, 0)));
+        assert_eq!(hex_to_rgb("#00FF00"), Some((0, 255, 0)));
+        assert_eq!(hex_to_rgb("#0000FF"), Some((0, 0, 255)));
+        assert_eq!(hex_to_rgb("#000000"), Some((0, 0, 0)));
+        assert_eq!(hex_to_rgb("#FFFFFF"), Some((255, 255, 255)));
+    }
+
+    #[test]
+    fn hex_to_rgb_without_hash() {
+        assert_eq!(hex_to_rgb("FF0000"), Some((255, 0, 0)));
+        assert_eq!(hex_to_rgb("00ff00"), Some((0, 255, 0)));
+    }
+
+    #[test]
+    fn hex_to_rgb_lowercase() {
+        assert_eq!(hex_to_rgb("#ff8040"), Some((255, 128, 64)));
+    }
+
+    #[test]
+    fn hex_to_rgb_invalid() {
+        assert_eq!(hex_to_rgb("#FFF"), None);
+        assert_eq!(hex_to_rgb("#GGGGGG"), None);
+        assert_eq!(hex_to_rgb(""), None);
+        assert_eq!(hex_to_rgb("#FF00FF00"), None);
+    }
+
+    // --- hex_to_lab ---
+
+    #[test]
+    fn hex_to_lab_white() {
+        let lab = hex_to_lab("#FFFFFF").unwrap();
+        assert!((lab.l - 100.0).abs() < 1.0, "L was {}", lab.l);
+        assert!(lab.a.abs() < 1.0, "a was {}", lab.a);
+        assert!(lab.b.abs() < 1.0, "b was {}", lab.b);
+    }
+
+    #[test]
+    fn hex_to_lab_black() {
+        let lab = hex_to_lab("#000000").unwrap();
+        assert!(lab.l.abs() < 1.0, "L was {}", lab.l);
+    }
+
+    #[test]
+    fn hex_to_lab_invalid() {
+        assert!(hex_to_lab("#GGG").is_none());
+    }
+
+    // --- hex_to_hsl ---
+
+    #[test]
+    fn hex_to_hsl_red() {
+        let (h, s, l) = hex_to_hsl("#FF0000").unwrap();
+        assert!(h.abs() < 1.0 || (h - 360.0).abs() < 1.0, "h was {}", h);
+        assert!((s - 1.0).abs() < 0.01, "s was {}", s);
+        assert!((l - 0.5).abs() < 0.01, "l was {}", l);
+    }
+
+    #[test]
+    fn hex_to_hsl_gray() {
+        let (h, s, l) = hex_to_hsl("#808080").unwrap();
+        assert!(h.abs() < 0.01, "h was {}", h);
+        assert!(s.abs() < 0.01, "s was {}", s);
+        assert!((l - 0.502).abs() < 0.02, "l was {}", l);
+    }
+
+    #[test]
+    fn hex_to_hsl_blue() {
+        let (h, _s, _l) = hex_to_hsl("#0000FF").unwrap();
+        assert!((h - 240.0).abs() < 1.0, "h was {}", h);
+    }
+
+    #[test]
+    fn hex_to_hsl_invalid() {
+        assert!(hex_to_hsl("invalid").is_none());
+    }
+
+    // --- delta_e_2000 ---
+
+    #[test]
+    fn delta_e_2000_identical() {
+        let lab = hex_to_lab("#FF0000").unwrap();
+        assert!(delta_e_2000(&lab, &lab).abs() < 0.001);
+    }
+
+    #[test]
+    fn delta_e_2000_black_white() {
+        let black = hex_to_lab("#000000").unwrap();
+        let white = hex_to_lab("#FFFFFF").unwrap();
+        assert!(delta_e_2000(&black, &white) > 50.0);
+    }
+
+    #[test]
+    fn delta_e_2000_similar_colors() {
+        let c1 = hex_to_lab("#FF0000").unwrap();
+        let c2 = hex_to_lab("#FE0000").unwrap();
+        assert!(delta_e_2000(&c1, &c2) < 2.0);
+    }
+
+    #[test]
+    fn delta_e_2000_symmetry() {
+        let c1 = hex_to_lab("#FF0000").unwrap();
+        let c2 = hex_to_lab("#00FF00").unwrap();
+        assert!((delta_e_2000(&c1, &c2) - delta_e_2000(&c2, &c1)).abs() < 0.001);
+    }
+
+    // --- detect_harmony ---
+
+    #[test]
+    fn detect_harmony_analogous() {
+        let colors1 = vec!["#FF0000".into()];
+        let colors2 = vec!["#FF3300".into()];
+        let weights = vec![1.0];
+        let (harmony, strength) = detect_harmony(&colors1, &weights, &colors2, &weights);
+        assert_eq!(harmony, ColorHarmony::Analogous);
+        assert!(strength > 0.0);
+    }
+
+    #[test]
+    fn detect_harmony_complementary() {
+        let colors1 = vec!["#FF0000".into()];
+        let colors2 = vec!["#00FFFF".into()];
+        let weights = vec![1.0];
+        let (harmony, _) = detect_harmony(&colors1, &weights, &colors2, &weights);
+        assert_eq!(harmony, ColorHarmony::Complementary);
+    }
+
+    #[test]
+    fn detect_harmony_empty() {
+        let empty: Vec<String> = vec![];
+        let colors = vec!["#FF0000".into()];
+        let weights = vec![1.0];
+        let (harmony, strength) = detect_harmony(&empty, &[], &colors, &weights);
+        assert_eq!(harmony, ColorHarmony::None);
+        assert!(strength.abs() < 0.001);
+    }
+
+    // --- color_similarity ---
+
+    #[test]
+    fn color_similarity_identical() {
+        assert!((color_similarity("#FF0000", "#FF0000") - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn color_similarity_very_different() {
+        assert!(color_similarity("#000000", "#FFFFFF") < 0.5);
+    }
+
+    #[test]
+    fn color_similarity_invalid() {
+        assert!(color_similarity("invalid", "#FF0000").abs() < 0.001);
+    }
+
+    // --- color_brightness ---
+
+    #[test]
+    fn color_brightness_white() {
+        assert!((color_brightness("#FFFFFF") - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn color_brightness_black() {
+        assert!(color_brightness("#000000").abs() < 0.01);
+    }
+
+    #[test]
+    fn color_brightness_invalid_defaults_mid() {
+        assert!((color_brightness("invalid") - 0.5).abs() < 0.01);
+    }
+
+    // --- color_saturation ---
+
+    #[test]
+    fn color_saturation_pure_red() {
+        assert!((color_saturation("#FF0000") - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn color_saturation_gray() {
+        assert!(color_saturation("#808080").abs() < 0.01);
+    }
+
+    #[test]
+    fn color_saturation_white() {
+        assert!(color_saturation("#FFFFFF").abs() < 0.01);
+    }
+
+    // --- ColorHarmony ---
+
+    #[test]
+    fn color_harmony_bonus_ordering() {
+        assert!(ColorHarmony::Analogous.bonus() > ColorHarmony::None.bonus());
+        assert!(ColorHarmony::Complementary.bonus() > ColorHarmony::None.bonus());
+        assert_eq!(ColorHarmony::None.bonus(), 0.0);
+    }
+
+    #[test]
+    fn color_harmony_names() {
+        assert_eq!(ColorHarmony::Analogous.name(), "Analogous");
+        assert_eq!(ColorHarmony::Complementary.name(), "Complementary");
+        assert_eq!(ColorHarmony::Triadic.name(), "Triadic");
+        assert_eq!(
+            ColorHarmony::SplitComplementary.name(),
+            "Split-Complementary"
+        );
+        assert_eq!(ColorHarmony::None.name(), "None");
+    }
+}
