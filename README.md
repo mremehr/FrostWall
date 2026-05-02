@@ -58,6 +58,7 @@ frostwall prev            # Previous wallpaper
 frostwall screens         # Show detected screens
 frostwall scan            # Rescan wallpaper directory
 frostwall watch           # Background rotation daemon
+frostwall profile list    # Manage configuration profiles
 ```
 
 ### Common Workflows
@@ -90,6 +91,13 @@ frostwall pywal ~/Pictures/wallpapers/forest.jpg --apply
 # Web import
 frostwall import wallhaven "nature 4k"
 frostwall import download w8x7y9
+
+# Organize / rename
+frostwall organize rename --dry-run                 # preview the plan
+frostwall organize rename                           # rename + migrate cache/sessions/collections/pairing
+frostwall organize rename --warn-content-dupes      # also flag byte-identical files
+frostwall organize rename --compact                 # repack numbering densely from 1
+frostwall organize rename --scheme legacy           # widescreen/portrait/square (vs native ultrawide split)
 ```
 
 ## TUI Cheat Sheet
@@ -106,6 +114,7 @@ frostwall import download w8x7y9
 | `:` | Command mode |
 | `m` | Toggle match mode |
 | `f` | Toggle resize mode |
+| `s` | Toggle sort mode |
 | `a` | Toggle aspect grouping |
 | `c` | Toggle palette view |
 | `C` | Open color filter |
