@@ -13,6 +13,10 @@ use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::time::Duration;
 
 const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const THUMBNAIL_WORKER_MAX_THREADS: usize = 2;
+const THUMBNAIL_WORKER_RESERVED_CORES: usize = 2;
+const ANALYSIS_WORKER_MAX_THREADS: usize = 2;
+const ANALYSIS_WORKER_RESERVED_CORES: usize = 3;
 
 /// Background thread that loads thumbnails using fast_image_resize.
 pub(super) fn thumbnail_worker(
@@ -21,7 +25,10 @@ pub(super) fn thumbnail_worker(
     disk_cache: ThumbnailCache,
 ) {
     let mut perf = WorkerPerf::new(perf_enabled());
-    let pool = build_worker_pool(4, 1);
+    let pool = build_worker_pool(
+        THUMBNAIL_WORKER_MAX_THREADS,
+        THUMBNAIL_WORKER_RESERVED_CORES,
+    );
     while let Ok(first_request) = rx.recv() {
         // Drain available work and keep only the newest generation.
         // Also deduplicate by cache index so fast scrolling doesn't waste
@@ -112,7 +119,7 @@ pub(super) fn thumbnail_worker(
 
 pub(super) fn analysis_worker(rx: Receiver<AnalysisRequest>, tx: SyncSender<AppEvent>) {
     let mut perf = WorkerPerf::new(perf_enabled());
-    let pool = build_worker_pool(8, 2);
+    let pool = build_worker_pool(ANALYSIS_WORKER_MAX_THREADS, ANALYSIS_WORKER_RESERVED_CORES);
 
     while let Ok(first_request) = rx.recv() {
         let requests = collect_latest_analysis_requests(first_request, &rx);

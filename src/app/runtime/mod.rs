@@ -89,8 +89,6 @@ pub async fn run_tui(wallpaper_dir: PathBuf) -> Result<()> {
     });
 
     app.queue_initial_thumbnail_warmup();
-    app.queue_initial_color_analysis();
-
     let res = run_app(&mut terminal, &mut app, event_rx);
 
     restore_terminal(&mut terminal)?;

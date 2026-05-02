@@ -1,6 +1,5 @@
 use super::{AnalysisFailure, AnalysisRequest, AnalysisResponse, App};
 use crate::utils::build_palette_profile;
-use std::collections::HashSet;
 use std::sync::mpsc::SyncSender;
 
 impl App {
@@ -38,19 +37,6 @@ impl App {
     pub(super) fn reset_analysis_state(&mut self) {
         self.analysis.loading.clear();
         self.analysis.generation = self.analysis.generation.wrapping_add(1);
-    }
-
-    pub fn queue_initial_color_analysis(&mut self) {
-        let deferred: HashSet<_> = self
-            .current_thumbnail_priority_indices()
-            .into_iter()
-            .collect();
-
-        for cache_idx in 0..self.cache.wallpapers.len() {
-            if !deferred.contains(&cache_idx) {
-                self.request_color_analysis(cache_idx);
-            }
-        }
     }
 
     pub fn handle_analysis_ready(&mut self, response: AnalysisResponse) {

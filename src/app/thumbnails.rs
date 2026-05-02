@@ -46,26 +46,42 @@ impl App {
             return;
         }
 
+        let selected_cache_idx = self
+            .selection
+            .filtered_wallpapers
+            .get(self.selection.wallpaper_idx)
+            .copied();
+        let should_analyze_selected = self.cache.wallpapers.get(cache_idx).is_some_and(|wp| {
+            selected_cache_idx == Some(cache_idx)
+                && wp.colors.is_empty()
+                && !self.analysis.loading.contains(&cache_idx)
+        });
+
         // Skip if already loaded or loading.
         if self.thumbnails.cache.contains(&cache_idx)
             || self.thumbnails.loading.contains(&cache_idx)
         {
+            if should_analyze_selected {
+                self.request_color_analysis(cache_idx);
+            }
             return;
         }
 
         if self.thumbnails.loading.len() >= self.max_in_flight_thumbnail_requests() {
+            if should_analyze_selected {
+                self.request_color_analysis(cache_idx);
+            }
             return;
         }
 
         if let Some(wp) = self.cache.wallpapers.get(cache_idx) {
             if let Some(tx) = &self.thumbnails.request_tx {
-                let analysis_generation =
-                    if wp.colors.is_empty() && !self.analysis.loading.contains(&cache_idx) {
-                        self.analysis.loading.insert(cache_idx);
-                        Some(self.analysis.generation)
-                    } else {
-                        None
-                    };
+                let analysis_generation = if should_analyze_selected {
+                    self.analysis.loading.insert(cache_idx);
+                    Some(self.analysis.generation)
+                } else {
+                    None
+                };
                 let request = ThumbnailRequest {
                     cache_idx,
                     source_path: wp.path.clone(),
@@ -387,6 +403,50 @@ mod tests {
 
         app.request_thumbnail(1);
         assert!(!app.is_loading(1));
+    }
+
+    #[test]
+    fn request_thumbnail_only_piggybacks_analysis_for_selected_wallpaper() {
+        let mut app = test_app(2);
+        app.selection.filtered_wallpapers = vec![0, 1];
+        app.selection.wallpaper_idx = 0;
+
+        let (tx, rx) = mpsc::sync_channel(4);
+        app.set_thumb_channel(tx);
+
+        app.request_thumbnail(0);
+        let selected_request = rx.try_recv().expect("selected request should be queued");
+        assert_eq!(selected_request.cache_idx, 0);
+        assert_eq!(selected_request.analysis_generation, Some(0));
+        assert!(app.analysis.loading.contains(&0));
+
+        app.request_thumbnail(1);
+        let side_request = rx.try_recv().expect("side request should be queued");
+        assert_eq!(side_request.cache_idx, 1);
+        assert_eq!(side_request.analysis_generation, None);
+        assert!(!app.analysis.loading.contains(&1));
+    }
+
+    #[test]
+    fn selected_cached_thumbnail_can_still_trigger_color_analysis() {
+        let mut app = test_app(1);
+        app.selection.filtered_wallpapers = vec![0];
+        app.selection.wallpaper_idx = 0;
+
+        let (analysis_tx, analysis_rx) = mpsc::sync_channel(1);
+        app.set_analysis_channel(analysis_tx);
+
+        let mut picker = Picker::new((8, 16));
+        let protocol = picker.new_resize_protocol(image::DynamicImage::new_rgba8(1, 1));
+        let _ = app.thumbnails.cache.put(0, protocol);
+
+        app.request_thumbnail(0);
+
+        let request = analysis_rx
+            .try_recv()
+            .expect("selected cached thumbnail should queue analysis");
+        assert_eq!(request.cache_idx, 0);
+        assert!(app.analysis.loading.contains(&0));
     }
 
     #[test]
