@@ -65,7 +65,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // (ratatui-image renders directly to terminal, bypassing widget z-order)
     if popup_active {
         draw_carousel_placeholder(f, chunks[chunk_idx], &theme);
-    } else if app.pairing.show_preview && !app.pairing.preview_matches.is_empty() {
+    } else if app.pairing.show_preview {
+        // Always show the split when preview mode is on — even if the current
+        // style mode produced zero matches. Otherwise we'd silently fall back
+        // to the carousel while the input handler keeps interpreting keys as
+        // pairing-mode keys, which leaves the UI and input layer out of sync.
         // Split layout: adaptive width based on number of target preview screens.
         let preview_targets = app.pairing.preview_matches.len();
         let (left_percent, right_percent) = calculate_preview_split(preview_targets);

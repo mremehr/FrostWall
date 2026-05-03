@@ -201,12 +201,54 @@ impl App {
     }
 
     /// Cycle style matching behavior used in pairing preview.
+    /// Preserves the user's current selection across the cycle when the same
+    /// (screen, path) combination still appears in the new candidate list,
+    /// so toggling Off → Soft → Strict doesn't yank the focus back to slot 0
+    /// every time.
     pub fn toggle_pairing_style_mode(&mut self) {
+        let previous_paths = self.current_preview_paths();
         self.pairing.style_mode = self.pairing.style_mode.next();
         if self.pairing.show_preview {
             self.update_pairing_preview_matches();
-            self.pairing.preview_idx = 0;
+            self.pairing.preview_idx = self
+                .find_preview_idx_matching_paths(&previous_paths)
+                .unwrap_or(0);
         }
+    }
+
+    fn current_preview_paths(&self) -> HashMap<String, PathBuf> {
+        self.pairing
+            .preview_matches
+            .iter()
+            .filter_map(|(screen, matches)| {
+                let idx = self
+                    .pairing
+                    .preview_idx
+                    .min(matches.len().saturating_sub(1));
+                matches
+                    .get(idx)
+                    .map(|(path, _, _)| (screen.clone(), path.clone()))
+            })
+            .collect()
+    }
+
+    fn find_preview_idx_matching_paths(&self, target: &HashMap<String, PathBuf>) -> Option<usize> {
+        if target.is_empty() {
+            return None;
+        }
+        let max = self.preview_match_count();
+        (0..max).find(|&idx| {
+            target.iter().all(|(screen, path)| {
+                self.pairing
+                    .preview_matches
+                    .get(screen)
+                    .and_then(|matches| {
+                        let i = idx.min(matches.len().saturating_sub(1));
+                        matches.get(i).map(|(p, _, _)| p == path)
+                    })
+                    .unwrap_or(false)
+            })
+        })
     }
 
     /// Update pairing preview matches for all other screens.

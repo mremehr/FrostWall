@@ -91,6 +91,28 @@ fn handle_pairing_preview_popup(app: &mut App, code: KeyCode) -> bool {
     true
 }
 
+fn handle_undo_popup(app: &mut App, code: KeyCode) -> bool {
+    if !app.pairing.history.can_undo() {
+        return false;
+    }
+
+    match code {
+        KeyCode::Char('u') => {
+            if let Err(error) = app.do_undo() {
+                app.ui.status_message = Some(format!("Undo: {error}"));
+            }
+            true
+        }
+        KeyCode::Esc | KeyCode::Char('n') => {
+            app.pairing.history.dismiss_undo();
+            true
+        }
+        // Don't trap unrelated keys — let normal navigation/etc still work
+        // while the undo prompt is up. Esc/u/n are the only popup-owning keys.
+        _ => false,
+    }
+}
+
 fn handle_command_mode(app: &mut App, code: KeyCode) -> bool {
     if !app.ui.command_mode {
         return false;
@@ -157,11 +179,9 @@ fn handle_fallback_key_event(app: &mut App, code: KeyCode) {
         }
         KeyCode::Char('i') => app.toggle_thumbnail_protocol_mode(),
         KeyCode::Char('W') => app.toggle_pywal_export(),
-        KeyCode::Char('u') => {
-            if let Err(error) = app.do_undo() {
-                app.ui.status_message = Some(format!("Undo: {error}"));
-            }
-        }
+        // `u` is owned by the undo popup (see handle_undo_popup); when no undo
+        // is armed the key is intentionally a no-op rather than firing a
+        // misleading "Undo: nothing to undo" toast.
         KeyCode::Char('R') => match app.rescan() {
             Ok(message) => app.ui.status_message = Some(format!("Rescan: {message}")),
             Err(error) => app.ui.status_message = Some(format!("Rescan: {error}")),
@@ -176,6 +196,7 @@ pub(super) fn handle_key_event(app: &mut App, key: KeyEvent) {
         || handle_color_picker_popup(app, code)
         || handle_pairing_preview_popup(app, code)
         || handle_command_mode(app, code)
+        || handle_undo_popup(app, code)
     {
         return;
     }

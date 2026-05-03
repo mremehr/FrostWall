@@ -49,6 +49,12 @@ impl PairingHistory {
         }
     }
 
+    /// Dismiss the undo prompt without restoring anything.
+    /// Used when the user explicitly closes the popup (Esc / n).
+    pub fn dismiss_undo(&mut self) {
+        self.undo_state = None;
+    }
+
     /// Clear undo state (called when timeout expires).
     /// Returns true when state changed.
     pub fn clear_expired_undo(&mut self) -> bool {

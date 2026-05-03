@@ -5,6 +5,7 @@ use crate::utils::ColorHarmony;
 use ratatui::{
     layout::{Alignment, Rect},
     style::{Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame,
 };
@@ -14,14 +15,21 @@ use std::collections::HashMap;
 pub(super) fn draw_pairing_panel(f: &mut Frame, app: &mut App, area: Rect, theme: &FrostTheme) {
     let alternatives = app.pairing_preview_alternatives();
     let preview_idx = app.pairing.preview_idx;
+    let style = app.pairing.style_mode.display_name();
 
-    // Panel border
-    let title = format!(
-        " Pair {}/{} · Style {} ",
-        preview_idx + 1,
-        alternatives,
-        app.pairing.style_mode.display_name()
-    );
+    // Title shows the actual count so users immediately see when a stricter
+    // style mode has produced fewer matches (or none at all).
+    let position = if alternatives == 0 {
+        "0/0".to_string()
+    } else {
+        format!("{}/{}", preview_idx + 1, alternatives)
+    };
+    let title = format!(" Pair {} · Style: {} ", position, style);
+    let border_color = if alternatives == 0 {
+        theme.warning
+    } else {
+        theme.success
+    };
     let block = Block::default()
         .title(title)
         .title_style(
@@ -30,17 +38,49 @@ pub(super) fn draw_pairing_panel(f: &mut Frame, app: &mut App, area: Rect, theme
                 .add_modifier(Modifier::BOLD),
         )
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.success))
+        .border_style(Style::default().fg(border_color))
         .style(Style::default().bg(theme.bg_dark));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     if app.pairing.preview_matches.is_empty() {
-        let text = Paragraph::new("No suggestions")
-            .style(Style::default().fg(theme.fg_muted))
-            .alignment(Alignment::Center);
-        f.render_widget(text, center_vertically(inner, 1));
+        // Tell the user *why* the panel is empty and how to recover, instead
+        // of leaving them stuck cycling a mode that has no candidates.
+        let lines = vec![
+            Line::from(Span::styled(
+                format!("No matches in {} mode", style),
+                Style::default()
+                    .fg(theme.warning)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Press ", Style::default().fg(theme.fg_muted)),
+                Span::styled(
+                    "y",
+                    Style::default()
+                        .fg(theme.accent_primary)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    " to switch style mode",
+                    Style::default().fg(theme.fg_muted),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Press ", Style::default().fg(theme.fg_muted)),
+                Span::styled(
+                    "p / Esc",
+                    Style::default()
+                        .fg(theme.accent_primary)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" to close", Style::default().fg(theme.fg_muted)),
+            ]),
+        ];
+        let text = Paragraph::new(lines).alignment(Alignment::Center);
+        f.render_widget(text, center_vertically(inner, 4));
         return;
     }
 
