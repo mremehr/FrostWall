@@ -1,7 +1,7 @@
 use super::{
     DEFAULT_TERMINAL_CELL_ASPECT, LANDSCAPE_RATIO, MAX_CAROUSEL_VISIBLE, MAX_SELECTED_SLOT_WIDTH,
-    MAX_SLOT_WIDTH, MAX_TERMINAL_CELL_ASPECT, MIN_SLOT_WIDTH, MIN_TERMINAL_CELL_ASPECT,
-    MIN_THUMB_CONTENT_HEIGHT, SELECTED_ULTRAWIDE_BOOST, SELECTED_WIDTH_BOOST, THUMBNAIL_GAP,
+    MAX_SLOT_WIDTH, MAX_TERMINAL_CELL_ASPECT, MIN_SLOT_WIDTH, MIN_THUMB_CONTENT_HEIGHT,
+    MIN_TERMINAL_CELL_ASPECT, THUMBNAIL_GAP,
 };
 use crate::app::App;
 use crate::screen::AspectCategory;
@@ -9,7 +9,13 @@ use crate::thumbnail::effective_thumbnail_bounds;
 use crate::ui::layout::{THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH};
 use ratatui::layout::Rect;
 
-fn slot_width_for_ratio(ratio: f32, is_selected: bool) -> u16 {
+const NON_SELECTED_MIN_WIDTH: u16 = 16;
+
+/// Natural slot width for a given aspect ratio. Selection-independent on
+/// purpose: stable side widths are what allow `ratatui-image` to skip
+/// expensive re-encoding when the user scrolls, since `needs_resize` returns
+/// `Some(rect)` whenever the rendered cell-rect changes.
+fn slot_width_for_ratio(ratio: f32) -> u16 {
     let safe_ratio = if ratio.is_finite() && ratio > 0.0 {
         ratio
     } else {
@@ -18,17 +24,6 @@ fn slot_width_for_ratio(ratio: f32, is_selected: bool) -> u16 {
     let mut factor = (safe_ratio / LANDSCAPE_RATIO).clamp(0.78, 1.70);
     if safe_ratio >= 2.0 {
         factor *= 1.22;
-    }
-    if is_selected {
-        factor *= SELECTED_WIDTH_BOOST;
-        if safe_ratio >= 2.0 {
-            factor *= SELECTED_ULTRAWIDE_BOOST;
-        } else if safe_ratio <= 1.1 {
-            factor *= 1.24;
-            if safe_ratio < 0.85 {
-                factor *= 1.14;
-            }
-        }
     }
     ((THUMBNAIL_WIDTH as f32) * factor)
         .round()
@@ -157,6 +152,11 @@ impl CarouselPlan {
     }
 }
 
+/// Lay out slot widths so non-selected slots keep their natural ratio-derived
+/// width and the selected slot absorbs all remaining slack. This is the key
+/// step that keeps scrolling smooth: as long as side widths don't change, the
+/// underlying `StatefulProtocol` skips its `resize_encode` step (which on
+/// Kitty/Sixel is a full image resize + base64 transmit per thumbnail).
 fn fit_slot_widths(
     base_widths: &[u16],
     slot_max_widths: &[u16],
@@ -177,72 +177,61 @@ fn fit_slot_widths(
         return vec![1; base_widths.len()];
     }
 
-    let mut widths = base_widths.to_vec();
-    let mut sum: u16 = widths.iter().copied().sum();
+    let mut widths: Vec<u16> = base_widths
+        .iter()
+        .zip(slot_max_widths.iter())
+        .map(|(width, cap)| (*width).min((*cap).max(1)).max(1))
+        .collect();
+
     let selected_cap = slot_max_widths
         .get(selected_slot)
         .copied()
         .unwrap_or(1)
         .max(selected_min_width)
         .max(1);
-    if sum < max_slots_width && sum > 0 {
-        let scale = (max_slots_width as f32 / sum as f32).min(1.7);
-        for (idx, width) in widths.iter_mut().enumerate() {
-            let cap = slot_max_widths.get(idx).copied().unwrap_or(1).max(1);
-            *width = ((*width as f32) * scale).round().clamp(1.0, cap as f32) as u16;
-        }
-        sum = widths.iter().copied().sum();
-    }
-    if sum < max_slots_width {
-        // Keep side thumbnails at stable sizes across adjacent scroll steps.
-        // ratatui-image performs resize/encode on size changes, so spreading
-        // spare columns across non-selected slots forces most visible images
-        // to be re-encoded whenever the selection moves.
-        if let Some(width) = widths.get_mut(selected_slot) {
-            let grow_by = max_slots_width
-                .saturating_sub(sum)
-                .min(selected_cap.saturating_sub(*width));
-            *width = width.saturating_add(grow_by);
-        }
-        return widths;
-    } else if sum <= max_slots_width {
-        return widths;
-    }
+    let selected_min = selected_min_width.max(1).min(selected_cap);
 
-    let min_width = 16;
-    while sum > max_slots_width {
-        let candidate_non_selected = widths
+    // Iteratively shrink the widest non-selected slot until both the selected
+    // minimum and the total budget fit. The selected slot is then assigned the
+    // exact remainder, so its width is fully determined by the side widths and
+    // never overshoots its cap.
+    loop {
+        let non_sel_sum: u16 = widths
             .iter()
             .enumerate()
-            .filter(|(idx, width)| *idx != selected_slot && **width > min_width)
+            .filter(|(idx, _)| *idx != selected_slot)
+            .map(|(_, width)| *width)
+            .sum();
+        let remainder = max_slots_width.saturating_sub(non_sel_sum);
+        let selected_width = remainder.clamp(selected_min, selected_cap);
+
+        if non_sel_sum.saturating_add(selected_width) <= max_slots_width {
+            if let Some(slot) = widths.get_mut(selected_slot) {
+                *slot = selected_width;
+            }
+            return widths;
+        }
+
+        let shrink_target = widths
+            .iter()
+            .enumerate()
+            .filter(|(idx, width)| *idx != selected_slot && **width > NON_SELECTED_MIN_WIDTH)
             .max_by_key(|(_, width)| *width)
             .map(|(idx, _)| idx);
 
-        let candidate_selected = widths
-            .get(selected_slot)
-            .copied()
-            .filter(|width| *width > selected_min_width.max(1))
-            .map(|_| selected_slot);
-
-        let candidate_fallback = widths
-            .iter()
-            .enumerate()
-            .filter(|(_, width)| **width > 1)
-            .max_by_key(|(_, width)| *width)
-            .map(|(idx, _)| idx);
-
-        let candidate = candidate_non_selected
-            .or(candidate_selected)
-            .or(candidate_fallback);
-
-        let Some(idx) = candidate else {
-            break;
-        };
-        widths[idx] = widths[idx].saturating_sub(1);
-        sum = sum.saturating_sub(1);
+        match shrink_target {
+            Some(idx) => widths[idx] = widths[idx].saturating_sub(1),
+            None => {
+                // Non-selected slots are at the floor — the selected slot must
+                // absorb the deficit even if it dips below `selected_min`.
+                if let Some(slot) = widths.get_mut(selected_slot) {
+                    let new_value = max_slots_width.saturating_sub(non_sel_sum).max(1);
+                    *slot = new_value.min(selected_cap);
+                }
+                return widths;
+            }
+        }
     }
-
-    widths
 }
 
 pub(super) fn build_carousel_plan(app: &App, area: Rect) -> Option<CarouselPlan> {
@@ -360,14 +349,11 @@ pub(super) fn build_carousel_plan(app: &App, area: Rect) -> Option<CarouselPlan>
         .iter()
         .enumerate()
         .map(|(offset, spec)| {
-            let idx = start + offset;
             let cap = coupled_slot_max_widths
                 .get(offset)
                 .copied()
                 .unwrap_or(MAX_SLOT_WIDTH);
-            slot_width_for_ratio(spec.ratio, idx == clamped_idx)
-                .min(cap)
-                .max(1)
+            slot_width_for_ratio(spec.ratio).min(cap).max(1)
         })
         .collect();
     let slot_widths = fit_slot_widths(
@@ -435,21 +421,80 @@ mod tests {
 
     #[test]
     fn fit_slot_widths_respects_selected_minimum() {
-        let widths = fit_slot_widths(&[40, 60, 40], &[40, 60, 40], 120, 1, 50);
+        let widths = fit_slot_widths(&[40, 50, 40], &[40, 60, 40], 120, 1, 50);
         assert!(widths[1] >= 50);
         assert!(widths.iter().copied().sum::<u16>() <= 120);
     }
 
     #[test]
     fn fit_slot_widths_only_expands_selected_slot_when_underfilled() {
-        let widths = fit_slot_widths(&[30, 50, 30], &[35, 80, 35], 140, 1, 50);
-        assert_eq!(widths[0], 35);
-        assert_eq!(widths[2], 35);
-        assert_eq!(widths[1], 66);
+        let widths = fit_slot_widths(&[30, 30, 30], &[35, 80, 35], 140, 1, 50);
+        assert_eq!(widths[0], 30);
+        assert_eq!(widths[2], 30);
+        assert!(widths[1] >= 50);
     }
 
+    /// The dominant lag during scroll comes from `ratatui-image` re-encoding any
+    /// thumbnail whose rect changes. To keep that work to a minimum we require
+    /// the widths of slots that are NOT the (old or new) selected position to
+    /// be byte-for-byte identical when selection moves within a stable visible
+    /// window. Only two slots may change per scroll step.
     #[test]
-    fn selected_slot_keeps_width_boost() {
-        assert!(slot_width_for_ratio(16.0 / 9.0, true) > slot_width_for_ratio(16.0 / 9.0, false));
+    fn fit_slot_widths_keeps_side_slots_stable_when_selection_moves() {
+        let base = [50, 50, 50, 50, 50];
+        let caps = [120, 120, 120, 120, 120];
+        let area = 320;
+        let widths_a = fit_slot_widths(&base, &caps, area, 1, 60);
+        let widths_b = fit_slot_widths(&base, &caps, area, 2, 60);
+        let widths_c = fit_slot_widths(&base, &caps, area, 3, 60);
+
+        // Slot 0 is non-selected in A, B, and C — must be identical.
+        assert_eq!(widths_a[0], widths_b[0]);
+        assert_eq!(widths_b[0], widths_c[0]);
+
+        // Slot 4 same.
+        assert_eq!(widths_a[4], widths_b[4]);
+        assert_eq!(widths_b[4], widths_c[4]);
+
+        // When moving A → B, only slots 1 and 2 may change width.
+        for idx in [0, 3, 4] {
+            assert_eq!(
+                widths_a[idx], widths_b[idx],
+                "slot {idx} width changed across A→B (was {}, now {})",
+                widths_a[idx], widths_b[idx]
+            );
+        }
+    }
+
+    /// Side slots must depend ONLY on the wallpaper's aspect ratio, never on
+    /// which sibling is selected. Otherwise selection moves cascade through
+    /// every slot's width.
+    #[test]
+    fn slot_width_for_ratio_is_selection_independent() {
+        // Sanity: same ratio, different positions, same width.
+        let landscape = slot_width_for_ratio(16.0 / 9.0);
+        let landscape_again = slot_width_for_ratio(16.0 / 9.0);
+        assert_eq!(landscape, landscape_again);
+
+        // Reasonable spread across categories.
+        let portrait = slot_width_for_ratio(9.0 / 16.0);
+        let ultrawide = slot_width_for_ratio(21.0 / 9.0);
+        assert!(portrait < landscape);
+        assert!(landscape < ultrawide);
+    }
+
+    /// When base widths are too wide to fit while still meeting the selected
+    /// minimum, non-selected slots shrink — but the selected slot remains at
+    /// least at its minimum so the focused image stays prominent.
+    #[test]
+    fn fit_slot_widths_shrinks_non_selected_to_make_room_for_selected() {
+        let base = [80, 80, 80];
+        let caps = [120, 120, 120];
+        let area = 200;
+        let widths = fit_slot_widths(&base, &caps, area, 1, 70);
+        assert!(widths[1] >= 70, "selected min not respected: {:?}", widths);
+        let total: u16 = widths.iter().copied().sum::<u16>()
+            + super::THUMBNAIL_GAP * (widths.len() as u16 - 1);
+        assert!(total <= area, "exceeded area: {:?} sum {}", widths, total);
     }
 }

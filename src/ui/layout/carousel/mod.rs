@@ -13,5 +13,3 @@ const MIN_SLOT_WIDTH: u16 = 24;
 const MAX_CAROUSEL_VISIBLE: usize = 13; // ~338 terminal columns needed at MIN_SLOT_WIDTH
 const MAX_SLOT_WIDTH: u16 = 280;
 const MAX_SELECTED_SLOT_WIDTH: u16 = 360;
-const SELECTED_WIDTH_BOOST: f32 = 1.25;
-const SELECTED_ULTRAWIDE_BOOST: f32 = 1.12;

@@ -19,17 +19,22 @@ fn render_empty_state(f: &mut Frame, area: Rect, theme: &FrostTheme) {
     f.render_widget(empty, center_vertically(area, 1));
 }
 
-fn wallpaper_label(app: &App, cache_idx: usize) -> (String, bool) {
+/// Borrowed display label for a wallpaper, avoiding the per-frame `String`
+/// allocation that the previous `wallpaper_label` helper paid for every
+/// visible slot. Only the cold "no thumbnail loaded" branch ever reads it.
+fn wallpaper_label(app: &App, cache_idx: usize) -> std::borrow::Cow<'_, str> {
     app.cache
         .wallpapers
         .get(cache_idx)
-        .map(|wallpaper| {
-            (
-                display_path_name(&wallpaper.path).into_owned(),
-                app.is_pairing_suggestion(&wallpaper.path),
-            )
-        })
-        .unwrap_or_else(|| ("?".to_string(), false))
+        .map(|wallpaper| display_path_name(&wallpaper.path))
+        .unwrap_or(std::borrow::Cow::Borrowed("?"))
+}
+
+fn is_pairing_suggestion(app: &App, cache_idx: usize) -> bool {
+    app.cache
+        .wallpapers
+        .get(cache_idx)
+        .is_some_and(|wallpaper| app.is_pairing_suggestion(&wallpaper.path))
 }
 
 fn truncate_label(label: &str, max_chars: usize) -> String {
@@ -110,7 +115,6 @@ pub(in crate::ui::layout) fn draw_carousel_single(
         .wallpaper_idx
         .min(app.selection.filtered_wallpapers.len().saturating_sub(1));
     let cache_idx = app.selection.filtered_wallpapers[wallpaper_idx];
-    let filename = wallpaper_label(app, cache_idx).0;
 
     app.request_thumbnail(cache_idx);
 
@@ -149,6 +153,7 @@ pub(in crate::ui::layout) fn draw_carousel_single(
         let image = StatefulImage::new(None);
         f.render_stateful_widget(image, inner, protocol);
     } else {
+        let filename = wallpaper_label(app, cache_idx).into_owned();
         let label = Paragraph::new(filename)
             .style(Style::default().fg(theme.fg_secondary))
             .alignment(Alignment::Center);
@@ -239,7 +244,7 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
             .saturating_add(slot_width)
             .saturating_add(THUMBNAIL_GAP);
 
-        let (filename, is_suggestion) = wallpaper_label(app, cache_idx);
+        let is_suggestion = is_pairing_suggestion(app, cache_idx);
         let is_loading = app.is_loading(cache_idx);
         let thumb_x = cursor_x;
 
@@ -302,6 +307,7 @@ pub(super) fn draw_thumbnails(f: &mut Frame, app: &mut App, area: Rect, theme: &
                 .alignment(Alignment::Center);
             f.render_widget(loading, center_vertically(inner, 1));
         } else {
+            let filename = wallpaper_label(app, cache_idx);
             let label = Paragraph::new(truncate_label(&filename, inner.width as usize))
                 .style(Style::default().fg(theme.fg_secondary))
                 .alignment(Alignment::Center);
